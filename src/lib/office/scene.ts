@@ -15,6 +15,7 @@ import {
   KANBAN_BOARD,
   DART,
   LOUNGE,
+  ROOMS,
   HALF_D,
   HALF_W,
   visitorSpot,
@@ -49,6 +50,12 @@ export function createScene(
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
   renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  // Without an explicit tone mapping + exposure the standard materials render
+  // flat and muddy, which is what made the office look dim and lifeless.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.25
+  renderer.outputColorSpace = THREE.SRGBColorSpace
 
   const labelRenderer = new CSS2DRenderer({ element: labelHost })
   labelRenderer.domElement.style.position = 'absolute'
@@ -56,7 +63,7 @@ export function createScene(
   labelRenderer.domElement.style.pointerEvents = 'none'
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0f1418)
+  scene.background = new THREE.Color(0xdce9f4)
 
   const hour = Number(
     new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })
@@ -75,7 +82,9 @@ export function createScene(
   controls.maxDistance = 60
 
   // ---- Kanban board legend: makes the wall display readable as a board
-  const BOARD_COLUMNS = ['TODO', 'SIAP', 'JALAN', 'REVIEW', 'TERHAMBAT', 'SELESAI']
+  // Four columns, matching the 2D view: six labels cannot fit legibly on a
+  // 15-unit board and collided in the render.
+  const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI']
   {
     const titleEl = document.createElement('div')
     titleEl.className = 'vp-board-title'
@@ -116,7 +125,7 @@ export function createScene(
     const labelEl = document.createElement('div')
     labelEl.className = 'vp-label'
     const label = new CSS2DObject(labelEl)
-    label.position.set(0, 2.05, 0)
+    label.position.set(0, 2.25, 0)
     av.group.add(label)
 
     const a: SceneAgent = {
@@ -195,12 +204,16 @@ export function createScene(
     )
   }
 
+  // Spread across distinct zones so idle agents never stack on one spot.
   const IDLE_SPOTS = [
-    new THREE.Vector3(LOUNGE.x, 0, LOUNGE.z - 0.2),
-    new THREE.Vector3(DART.x - 2.2, 0, DART.z - 0.6),
-    new THREE.Vector3(HALF_W - 2.6, 0, HALF_D - 3.6),
-    new THREE.Vector3(-6.5, 0, 7.5),
-    new THREE.Vector3(6.5, 0, 7.5),
+    new THREE.Vector3(LOUNGE.x - 1.1, 0, LOUNGE.z - 0.15), // sofa
+    new THREE.Vector3(DART.x - 2.4, 0, DART.z - 0.8), // dartboard
+    new THREE.Vector3(HALF_W - 3.0, 0, HALF_D - 3.8), // water cooler
+    new THREE.Vector3(ROOMS.meeting.x2 - 1.6, 0, ROOMS.meeting.z2 + 1.6), // meeting doorway
+    new THREE.Vector3(ROOMS.work.x1 + 2.6, 0, ROOMS.corridor.z1 - 1.2), // print corner
+    new THREE.Vector3(ROOMS.work.x2 - 2.4, 0, ROOMS.corridor.z1 - 1.2), // lockers
+    new THREE.Vector3(-2.6, 0, ROOMS.corridor.z1 + 1.4), // corridor
+    new THREE.Vector3(2.6, 0, ROOMS.corridor.z1 + 1.4), // corridor
   ]
 
   /** Decide activity + destination for the coming frames. */
@@ -213,8 +226,11 @@ export function createScene(
   ) {
     const st = a.data.status
 
-    // 1. meeting wins over everything
-    if (meeting && meeting.participants.includes(a.data.name) && meeting.state !== 'done') {
+    // 1. meeting wins over everything — but ONLY while it is actually live. A
+    //    finished OR failed meeting must release its seats, otherwise every
+    //    participant stays parked at the table forever after a provider error.
+    const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
+    if (meeting && meetingLive && meeting.participants.includes(a.data.name)) {
       const seat = meetingSeat(meeting.participants.indexOf(a.data.name))
       a.target = seat
       a.activity = 'meeting'
@@ -252,17 +268,11 @@ export function createScene(
     }
 
     // 5. idle: pick a stable spot so avatars do not clump on the same furniture
-    const spot = IDLE_SPOTS[index % IDLE_SPOTS.length]
-    a.target = spot
-    if (index % IDLE_SPOTS.length === 0 && total > 1) {
-      const seat = index % 3
-      a.target = new THREE.Vector3(LOUNGE.x - 1.1 + seat * 1.1, 0, LOUNGE.z - 0.15)
-      a.activity = 'sofa'
-    } else if (index % IDLE_SPOTS.length === 1) {
-      a.activity = 'dart'
-    } else {
-      a.activity = 'idle'
-    }
+    const slot = index % IDLE_SPOTS.length
+    a.target = IDLE_SPOTS[slot].clone()
+    if (slot === 0) a.activity = 'sofa'
+    else if (slot === 1) a.activity = 'dart'
+    else a.activity = 'idle'
   }
 
   // ---- simulation ------------------------------------------------------------
@@ -402,8 +412,10 @@ export function createScene(
   }
 
   function setMeeting(m: Meeting | null) {
-    currentMeeting = m
-    if (!m) {
+    // A dead meeting must not keep holding seats: treat done/error as no meeting.
+    const live = m && (m.state === 'queued' || m.state === 'running') ? m : null
+    currentMeeting = live
+    if (!live) {
       for (const a of agents) {
         a.meetingTalking = false
         a.bubble.visible = false
@@ -424,7 +436,8 @@ export function createScene(
 
   function setHour(h: number) {
     office.applyPalette(h)
-    scene.background = new THREE.Color(h >= 18 || h < 6 ? 0x080c10 : 0x9fb4c4)
+    // daytime looks out onto a bright sky; night is a lit office, not black
+    scene.background = new THREE.Color(h >= 18 || h < 6 ? 0x76909e : 0xcfe0ee)
   }
   setHour(hour)
 

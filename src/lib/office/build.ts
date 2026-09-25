@@ -12,6 +12,7 @@ import {
   HALF_W,
   KANBAN_BOARD,
   LOUNGE,
+  ROOMS,
   WALL_H,
   paletteFor,
   type Desk,
@@ -101,7 +102,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   group.add(boardSurface)
   // Five dividers split the board into the SIX columns the labels name —
   // three dividers (four cells) under six labels reads as a broken grid.
-  const BOARD_COLUMNS = 6
+  const BOARD_COLUMNS = 4
   for (let i = 1; i < BOARD_COLUMNS; i++) {
     const div = box(0.05, KANBAN_BOARD.h - 0.7, 0.22, 0x1d5c42)
     div.position.set(
@@ -110,6 +111,121 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
       KANBAN_BOARD.z + 0.12,
     )
     group.add(div)
+  }
+
+  // ---- rooms: glass partitions carve the floor into actual rooms ---------
+  // Plain transparent glass renders as almost nothing without an environment
+  // map — the frames showed but the panes did not. A slight emissive tint plus
+  // higher opacity makes the partition actually read as a glass wall.
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0xbfe0ef,
+    transparent: true,
+    opacity: 0.55,
+    roughness: 0.05,
+    metalness: 0.0,
+    emissive: 0x9fc9de,
+    emissiveIntensity: 0.18,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+
+  /** One partition panel: a glass sheet with a slim frame. */
+  const panel = (w: number, h: number, frameColor = 0x8f9ea8) => {
+    const g = new THREE.Group()
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.05), glassMat)
+    glass.position.y = h / 2
+    g.add(glass)
+    const rail = box(w + 0.06, 0.12, 0.14, frameColor, { metal: 0.55 })
+    rail.position.y = h
+    g.add(rail)
+    const sill = box(w + 0.06, 0.12, 0.14, frameColor, { metal: 0.55 })
+    sill.position.y = 0.06
+    g.add(sill)
+    // Vertical mullions every ~1.8m: the frames are what actually read as a
+    // partition. Bare tinted glass alone was invisible in the render.
+    const bays = Math.max(1, Math.round(w / 1.8))
+    for (let i = 0; i <= bays; i++) {
+      const post = box(0.09, h, 0.13, frameColor, { metal: 0.55 })
+      post.position.set(-w / 2 + (w / bays) * i, h / 2, 0)
+      g.add(post)
+    }
+    return g
+  }
+
+  /** Wall run along X or Z with a door gap, made of framed glass panels. */
+  const glassRun = (
+    from: [number, number],
+    to: [number, number],
+    gap?: { at: number; width: number },
+  ) => {
+    const horizontal = Math.abs(to[0] - from[0]) > Math.abs(to[1] - from[1])
+    const total = horizontal ? Math.abs(to[0] - from[0]) : Math.abs(to[1] - from[1])
+    const start = horizontal ? Math.min(from[0], to[0]) : Math.min(from[1], to[1])
+    const fixed = horizontal ? from[1] : from[0]
+    const h = 3.1
+
+    // split the run into segments around the doorway
+    const cuts: [number, number][] = []
+    if (gap) {
+      const g0 = gap.at - gap.width / 2
+      const g1 = gap.at + gap.width / 2
+      if (g0 > start) cuts.push([start, g0])
+      if (g1 < start + total) cuts.push([g1, start + total])
+    } else {
+      cuts.push([start, start + total])
+    }
+
+    for (const [a, b] of cuts) {
+      const len = b - a
+      if (len < 0.2) continue
+      const seg = panel(len, h)
+      const mid = (a + b) / 2
+      if (horizontal) {
+        seg.position.set(mid, 0, fixed)
+      } else {
+        seg.position.set(fixed, 0, mid)
+        seg.rotation.y = Math.PI / 2
+      }
+      group.add(seg)
+    }
+  }
+
+  const M = ROOMS.meeting
+  const L = ROOMS.lounge
+  const DOOR_W = 2.2
+
+  // Meeting room: glass on the east face (doorway to the work area) and a
+  // partial south face that stops short of the corridor, so the room is
+  // enclosed but you can see into it from the hallway.
+  glassRun([M.x2, M.z1], [M.x2, M.z2], { at: M.z2 - 3.2, width: DOOR_W })
+  glassRun([M.x2, M.z2], [M.x2 - 3.0, M.z2])
+
+  // Lounge: mirrored.
+  glassRun([L.x1, L.z1], [L.x1, L.z2], { at: L.z2 - 3.2, width: DOOR_W })
+  glassRun([L.x1 + 3.0, L.z2], [L.x1, L.z2])
+
+  // ---- per-zone flooring so the rooms read as separate spaces
+  const zoneFloor = (x1: number, z1: number, x2: number, z2: number, color: number) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.abs(x2 - x1), Math.abs(z2 - z1)),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.92 }),
+    )
+    m.rotation.x = -Math.PI / 2
+    m.position.set((x1 + x2) / 2, 0.008, (z1 + z2) / 2)
+    group.add(m)
+  }
+  zoneFloor(M.x1, M.z1, M.x2, M.z2, 0xdccdb0) // meeting: warm timber
+  zoneFloor(L.x1, L.z1, L.x2, L.z2, 0xd8d4c6) // lounge: cool neutral
+  zoneFloor(-HALF_W + 0.4, ROOMS.corridor.z1, HALF_W - 0.4, ROOMS.corridor.z2, 0xc4ccd2) // corridor: tile
+
+  // ---- cubicle dividers between the four desk columns
+  for (const x of [-3.0, 0, 3.0]) {
+    const divider = box(0.07, 1.35, 7.4, 0xcfd8dd, { rough: 0.6 })
+    divider.position.set(x, 0.68, -1.2)
+    group.add(divider)
+    const cap = box(0.11, 0.06, 7.4, 0xaab7bf, { metal: 0.2 })
+    cap.position.set(x, 1.37, -1.2)
+    group.add(cap)
   }
 
   // ---- desks (8, in 4 facing pairs)
@@ -249,6 +365,131 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   coffeeLeg.position.set(LOUNGE.x, 0.2, LOUNGE.z - 1.6)
   group.add(coffeeLeg)
 
+  // ---- meeting room dressing (whiteboard, credenza, plant, window band)
+  const whiteboard = box(3.4, 1.7, 0.08, 0xfbfdff, { rough: 0.35 })
+  whiteboard.position.set(ROOMS.meeting.x1 + 0.22, 1.85, CONFERENCE.z - 2.6)
+  whiteboard.rotation.y = Math.PI / 2
+  group.add(whiteboard)
+  const wbFrame = box(3.55, 1.85, 0.05, 0xc3ccd4, { metal: 0.3 })
+  wbFrame.position.set(ROOMS.meeting.x1 + 0.16, 1.85, CONFERENCE.z - 2.6)
+  wbFrame.rotation.y = Math.PI / 2
+  group.add(wbFrame)
+
+  const credenza = box(2.6, 0.72, 0.5, 0xd8c3a2, { rough: 0.6 })
+  credenza.position.set(ROOMS.meeting.x1 + 1.5, 0.36, ROOMS.meeting.z1 + 0.7)
+  group.add(credenza)
+
+  const plantPot = (x: number, z: number) => {
+    const pot = cyl(0.24, 0.19, 0.36, 0xcfd6da, 12)
+    pot.position.set(x, 0.18, z)
+    group.add(pot)
+    const leaves = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.42, 0),
+      new THREE.MeshStandardMaterial({ color: 0x5f9e6b, flatShading: true, roughness: 0.8 }),
+    )
+    leaves.position.set(x, 0.78, z)
+    group.add(leaves)
+    const stem = cyl(0.04, 0.05, 0.3, 0x6b7a55, 8)
+    stem.position.set(x, 0.48, z)
+    group.add(stem)
+  }
+  plantPot(ROOMS.meeting.x2 - 0.9, ROOMS.meeting.z1 + 1.0)
+  plantPot(ROOMS.lounge.x1 + 0.9, ROOMS.lounge.z1 + 1.0)
+  plantPot(ROOMS.lounge.x2 - 0.9, ROOMS.lounge.z2 - 1.2)
+
+  // ---- lounge dressing (extra chair, rug, floor lamp, second table)
+  const loungeChair = new THREE.Group()
+  loungeChair.position.set(LOUNGE.x - 2.3, 0, LOUNGE.z + 0.6)
+  loungeChair.rotation.y = -0.5
+  const lcSeat = box(0.8, 0.14, 0.8, 0x8fb0d4, { rough: 0.85 })
+  lcSeat.position.y = 0.42
+  loungeChair.add(lcSeat)
+  const lcBack = box(0.8, 0.72, 0.2, 0x8fb0d4, { rough: 0.85 })
+  lcBack.position.set(0, 0.78, 0.32)
+  loungeChair.add(lcBack)
+  group.add(loungeChair)
+
+  const loungeRug = new THREE.Mesh(
+    new THREE.PlaneGeometry(4.6, 3.4),
+    new THREE.MeshStandardMaterial({ color: 0xbfae94, roughness: 0.95 }),
+  )
+  loungeRug.rotation.x = -Math.PI / 2
+  loungeRug.position.set(LOUNGE.x, 0.012, LOUNGE.z - 1.2)
+  group.add(loungeRug)
+
+  const floorLamp = new THREE.Group()
+  floorLamp.position.set(LOUNGE.x + 2.6, 0, LOUNGE.z - 2.6)
+  const pole = cyl(0.045, 0.06, 1.7, 0x8a949c, 10)
+  pole.position.y = 0.85
+  floorLamp.add(pole)
+  const shade = cyl(0.36, 0.24, 0.32, 0xf3e3c4, 14)
+  shade.position.y = 1.78
+  floorLamp.add(shade)
+  const base = cyl(0.24, 0.28, 0.05, 0x6f7981, 14)
+  base.position.y = 0.03
+  floorLamp.add(base)
+  group.add(floorLamp)
+
+  // ---- filling the floor: print corner, lockers, pantry, corridor rail
+  const printer = box(0.7, 0.9, 0.6, 0xdfe6ea, { rough: 0.5 })
+  printer.position.set(ROOMS.work.x1 + 1.4, 0.45, ROOMS.work.z2 - 1.2)
+  group.add(printer)
+  const printerStand = box(0.85, 0.35, 0.7, 0xb9c3ca, { metal: 0.3 })
+  printerStand.position.set(ROOMS.work.x1 + 1.4, 0.17, ROOMS.work.z2 - 1.2)
+  group.add(printerStand)
+
+  const lockers = new THREE.Group()
+  lockers.position.set(ROOMS.work.x2 - 1.3, 0, ROOMS.work.z2 - 1.1)
+  for (let i = 0; i < 4; i++) {
+    const lk = box(0.42, 1.7, 0.44, i % 2 ? 0x9fb4c2 : 0x8ba5b6, { metal: 0.35 })
+    lk.position.set(i * 0.44, 0.85, 0)
+    lockers.add(lk)
+  }
+  group.add(lockers)
+  const lockerTop = box(1.85, 0.07, 0.5, 0xd3dbe0, { metal: 0.4 })
+  lockerTop.position.set(ROOMS.work.x2 - 1.3 + 0.66, 1.73, ROOMS.work.z2 - 1.1)
+  group.add(lockerTop)
+
+  const pantry = new THREE.Group()
+  pantry.position.set(ROOMS.lounge.x2 - 1.6, 0, ROOMS.lounge.z2 - 1.8)
+  const counter = box(2.4, 0.9, 0.62, 0xd9c6a8, { rough: 0.6 })
+  counter.position.y = 0.45
+  pantry.add(counter)
+  const counterTop = box(2.5, 0.07, 0.7, 0xeee6d6, { rough: 0.4 })
+  counterTop.position.y = 0.92
+  pantry.add(counterTop)
+  const espresso = box(0.4, 0.5, 0.4, 0x4c545b, { metal: 0.5 })
+  espresso.position.set(-0.7, 1.2, 0)
+  pantry.add(espresso)
+  const kettle = cyl(0.12, 0.14, 0.26, 0xe8ecef, 12)
+  kettle.position.set(0.6, 1.08, 0)
+  pantry.add(kettle)
+  group.add(pantry)
+
+  // corridor rail separating the walkway from the work area
+  const rail = box(HALF_W * 2 - 1.2, 0.07, 0.09, 0x9aa8b2, { metal: 0.5 })
+  rail.position.set(0, 1.02, ROOMS.corridor.z1 + 0.08)
+  group.add(rail)
+  for (let i = -8; i <= 8; i++) {
+    if (Math.abs(i) < 2) continue // leave the doorway clear
+    const post = box(0.07, 1.0, 0.07, 0x9aa8b2, { metal: 0.5 })
+    post.position.set(i * 1.75, 0.5, ROOMS.corridor.z1 + 0.08)
+    group.add(post)
+  }
+
+  // window band on the north wall, either side of the Kanban board
+  for (const x of [-11.4, 11.4]) {
+    const frame = box(5.6, 2.5, 0.1, 0xa9b6bf, { metal: 0.4 })
+    frame.position.set(x, 2.6, -HALF_D + 0.22)
+    group.add(frame)
+    const sky = new THREE.Mesh(
+      new THREE.BoxGeometry(5.2, 2.2, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0xbcd8ea, emissive: 0x9dc4de, emissiveIntensity: 0.55 }),
+    )
+    sky.position.set(x, 2.6, -HALF_D + 0.3)
+    group.add(sky)
+  }
+
   // ---- dartboard + water cooler
   const db = cyl(0.62, 0.62, 0.08, 0xe8e2d6, 20)
   db.rotation.x = Math.PI / 2
@@ -277,12 +518,27 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   group.add(door)
 
   // ---- lights
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55))
-  const sun = new THREE.DirectionalLight(0xfff6e5, 1.1)
+  scene.add(new THREE.AmbientLight(0xffffff, 1.15))
+  const sun = new THREE.DirectionalLight(0xfff6e5, 1.9)
   sun.position.set(9, 14, 7)
   scene.add(sun)
-  const fill = new THREE.HemisphereLight(0xbfd8ff, 0x6b5b45, 0.5)
+  const fill = new THREE.HemisphereLight(0xeaf4ff, 0xcfc0a4, 1.05)
   scene.add(fill)
+  // ceiling strip lights: what makes it read as an office rather than a warehouse
+  for (const z of [-6.5, 0.5, 6.5]) {
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(9, 0.06, 0.32),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 1.0 }),
+    )
+    strip.position.set(0, 4.6, z)
+    group.add(strip)
+    const housing = box(9.3, 0.14, 0.44, 0xd7dde2, { metal: 0.3 })
+    housing.position.set(0, 4.7, z)
+    group.add(housing)
+    const light = new THREE.PointLight(0xfff6e6, 0.85, 18)
+    light.position.set(0, 4.4, z)
+    group.add(light)
+  }
 
   function applyPalette(h: number) {
     pal = paletteFor(h)
@@ -290,9 +546,11 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
     floor.material = new THREE.MeshStandardMaterial({ color: pal.floor, roughness: 0.9 })
     ;(rug.material as THREE.MeshStandardMaterial).color.setHex(pal.rug)
     wallMat.color.setHex(pal.wall)
-    sun.intensity = night ? 0.18 : 1.1
-    sun.color.setHex(night ? 0x9fb6d8 : 0xfff6e5)
-    fill.intensity = night ? 0.22 : 0.5
+    // Even at night this is a lit office, not a dark warehouse: the ceiling
+    // strips carry the room and the desks get their task lamps.
+    sun.intensity = night ? 1.15 : 1.9
+    sun.color.setHex(night ? 0xc9d8ee : 0xfff6e5)
+    fill.intensity = night ? 0.95 : 1.05
     for (const l of lamps) l.intensity = night ? 0.85 : 0
     for (const m of monitors) (m.material as THREE.MeshStandardMaterial).emissiveIntensity = night ? 1.6 : 1.1
   }

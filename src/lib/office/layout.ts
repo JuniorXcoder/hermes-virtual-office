@@ -47,6 +47,18 @@ export const DESKS: Desk[] = DESK_COLUMNS.flatMap((x, column) => [
   },
 ])
 
+/** Room rectangles. Partitions and per-zone flooring both read from here. */
+export const ROOMS = {
+  /** Meeting room: the whole west third, floor to ceiling glass on its east side. */
+  meeting: { x1: -HALF_W + 0.4, x2: -5.4, z1: -HALF_D + 0.4, z2: 9.0 },
+  /** Lounge: the whole east third, same treatment mirrored. */
+  lounge: { x1: 5.4, x2: HALF_W - 0.4, z1: -HALF_D + 0.4, z2: 9.0 },
+  /** Open-plan work area filling the middle third (cubicle dividers, no walls). */
+  work: { x1: -5.4, x2: 5.4, z1: -HALF_D + 0.4, z2: 9.0 },
+  /** Corridor along the south wall linking the entrance to both rooms. */
+  corridor: { z1: 9.0, z2: HALF_D - 0.4 },
+} as const
+
 export const KANBAN_BOARD = { x: 0, y: 3.6, z: -HALF_D + 1.2, w: 15, h: 5.4 }
 export const CONFERENCE = { x: -9.6, z: 4.0, radius: 2.3 }
 export const LOUNGE = { x: 9.6, z: 4.2 }
@@ -72,27 +84,31 @@ export type Palette = {
 }
 
 export const DAY_PALETTE: Palette = {
-  floor: 0xb9a67f,
-  wall: 0xdfe3e8,
-  deskTop: 0xcfd8dc,
-  deskLeg: 0x8d9aa5,
-  screen: 0x1b2a30,
-  chair: 0x5b6b74,
-  rug: 0x5d7a63,
-  sofa: 0x4f6d86,
-  wood: 0x8b6b45,
+  floor: 0xe8dcc2,
+  wall: 0xf7fafc,
+  deskTop: 0xf2f6f8,
+  deskLeg: 0xa8b6c0,
+  screen: 0x24343c,
+  chair: 0x8195a2,
+  rug: 0x9ebfa8,
+  sofa: 0x7fa3c9,
+  wood: 0xc39a69,
 }
 
+/**
+ * Evening styling. Deliberately NOT a dark scene: an occupied office at 19:00 is
+ * lit by ceiling strips and desk lamps. Only the sky outside the windows dims.
+ */
 export const NIGHT_PALETTE: Palette = {
-  floor: 0x6f6450,
-  wall: 0x3c4048,
-  deskTop: 0x8b959c,
-  deskLeg: 0x5c666e,
-  screen: 0x0d1418,
-  chair: 0x3e4a52,
-  rug: 0x3b4f40,
-  sofa: 0x33475a,
-  wood: 0x5a4630,
+  floor: 0xdcd2bc,
+  wall: 0xe9eef3,
+  deskTop: 0xe8eef2,
+  deskLeg: 0x9aa7b1,
+  screen: 0x1e2f38,
+  chair: 0x7b8e9a,
+  rug: 0x93b49c,
+  sofa: 0x7899bd,
+  wood: 0xbb9366,
 }
 
 export function paletteFor(hour: number): Palette {

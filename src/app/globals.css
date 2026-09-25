@@ -316,11 +316,12 @@ kbd {
   white-space: pre-wrap;
 }
 .vp-label {
+  /* opaque backdrop so tags do not visually collide through glass partitions */
   font: 10px/1 ui-monospace, monospace;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #cfe3ee;
-  background: #0b1218cc;
+  background: #0b1218f2;
   border: 1px solid #2b3b46;
   border-radius: 999px;
   padding: 2px 8px;

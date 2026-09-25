@@ -53,6 +53,9 @@ export const useOffice = create<State>((set, get) => ({
       const r = await fetch('/api/hermes/meeting', { cache: 'no-store' })
       const d = await r.json()
       const list: Meeting[] = d.meetings || []
+      // Only a live meeting may pin agents to the conference table. A finished or
+      // failed one still belongs in the panel for its transcript, but the office
+      // floor must let those avatars go.
       const active = list.find((m) => m.state === 'queued' || m.state === 'running') ?? null
       set({ meeting: active ?? list[0] ?? null, meetingConfigured: !!d.configured })
     } catch {
