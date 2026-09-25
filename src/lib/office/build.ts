@@ -25,11 +25,13 @@ import {
   KANBAN_BOARD,
   LOUNGE,
   PAINTINGS,
+  paintingPlacement,
   RECEPTION,
   ROOMS,
   WALL_H,
   WALL_T,
   WINDOWS,
+  SIDE_WINDOWS,
   paletteFor,
   type Desk,
   type Palette,
@@ -344,6 +346,8 @@ export type OfficeProps = {
   boardSurface: THREE.Mesh
   streaks: THREE.Mesh[]
   streetGroup: THREE.Group
+  /** Advance pedestrians and traffic. */
+  animateStreet: (dt: number, t: number) => void
   applyPalette: (hour: number) => void
   dispose: () => void
 }
@@ -454,19 +458,19 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   // north wall with the two window bands; south wall with the entrance
-  wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, -HALF_D, 0, [
-    { x: -12.4, y: WINDOWS[0].y, w: WINDOWS[0].w, h: WINDOWS[0].h },
-    { x: 12.4, y: WINDOWS[1].y, w: WINDOWS[1].w, h: WINDOWS[1].h },
-  ])
+  const northWindows = WINDOWS.filter((w) => !('west' in w) && !('east' in w)).map((w) => ({
+    x: w.x,
+    y: w.y,
+    w: w.w,
+    h: w.h,
+  }))
+  wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, -HALF_D, 0, northWindows)
   wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, HALF_D, 0, [
     { x: DOOR.x, y: 1.15, w: 3.4, h: 2.3 },
   ])
-  wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, [
-    { x: 0, y: WINDOWS[2].y, w: WINDOWS[2].w, h: WINDOWS[2].h },
-  ])
-  wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, [
-    { x: 0, y: WINDOWS[3].y, w: WINDOWS[3].w, h: WINDOWS[3].h },
-  ])
+  const sideHoles = SIDE_WINDOWS.map((z) => ({ x: z, y: 2.7, w: 2.2, h: 1.9 }))
+  wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
+  wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
 
   // interior partitions, each with a doorway to the lobby
   const partition = (x: number, zLen: number, doorX: number, doorW: number, ry: number) => {
@@ -560,15 +564,19 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // Sunk slightly into the wall opening so the glass shows on BOTH faces; a unit
   // centred in the wall is buried and invisible from outside.
   const wallN = -HALF_D + WALL_T / 2
-  windowUnit(-12.4, WINDOWS[0].y, wallN, WINDOWS[0].w, WINDOWS[0].h, 'x')
-  windowUnit(12.4, WINDOWS[1].y, wallN, WINDOWS[1].w, WINDOWS[1].h, 'x')
-  windowUnit(0, 1.9, wallN + 0.01, 3.0, 1.7, 'x') // lobby: one wide street-facing window
+  for (const w of WINDOWS) {
+    if ('west' in w || 'east' in w) continue
+    windowUnit(w.x, w.y, wallN, w.w, w.h, 'x')
+  }
   const wallW = -HALF_W + WALL_T / 2
   const wallE = HALF_W - WALL_T / 2
-  windowUnit(wallW, WINDOWS[2].y, -10.4, WINDOWS[2].h, WINDOWS[2].w, 'z')
-  windowUnit(wallW, WINDOWS[2].y, 8.0, WINDOWS[2].h, WINDOWS[2].w, 'z')
-  windowUnit(wallE, WINDOWS[3].y, -10.4, WINDOWS[3].h, WINDOWS[3].w, 'z')
-  windowUnit(wallE, WINDOWS[3].y, 8.0, WINDOWS[3].h, WINDOWS[3].w, 'z')
+  for (const z of SIDE_WINDOWS) {
+    windowUnit(wallW, 2.7, z, 2.2, 1.9, 'z')
+    windowUnit(wallE, 2.7, z, 2.2, 1.9, 'z')
+  }
+  // lobby: wide street-facing window beside the entrance
+  windowUnit(-5.4, 2.3, wallN, 3.2, 1.7, 'x')
+  windowUnit(5.4, 2.3, wallN, 3.2, 1.7, 'x')
 
   // Facade relief: horizontal banding and corner pilasters. A flat plaster slab
   // has no scale cue from outside, so the building read as an untextured box.
@@ -630,29 +638,45 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   /* ----------------------------------------------------------- paintings --- */
-  PAINTINGS.forEach((art, i) => {
+  // Placement comes from paintingPlacement(): it stands each frame and canvas off
+  // the wall's inner face, so nothing is buried in the wall or floating in front.
+  PAINTINGS.forEach((spec, i) => {
     const tex = track(artTexture(i))
+    const at = paintingPlacement(spec)
+
     const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(art.w + 0.12, art.h + 0.12, 0.05),
-      stdMat(0x7d6b52, { rough: 0.6 }),
+      new THREE.BoxGeometry(spec.w + 0.14, spec.h + 0.14, 0.06),
+      stdMat(0x6f5c45, { rough: 0.6 }),
     )
-    frame.position.set(art.x, art.y, art.z)
-    frame.rotation.y = art.ry
+    frame.position.set(at.frame.x, at.frame.y, at.frame.z)
+    frame.rotation.y = at.ry
     group.add(frame)
+
+    const matte = new THREE.Mesh(
+      new THREE.BoxGeometry(spec.w + 0.04, spec.h + 0.04, 0.02),
+      stdMat(0xece5d8, { rough: 0.9 }),
+    )
+    matte.position.set(at.canvas.x, at.canvas.y, at.canvas.z)
+    matte.rotation.y = at.ry
+    group.add(matte)
+
     const canvasMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(art.w, art.h),
+      new THREE.PlaneGeometry(spec.w, spec.h),
       new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }),
     )
-    canvasMesh.position.set(
-      art.x + Math.sin(art.ry) * 0.035,
-      art.y,
-      art.z + Math.cos(art.ry) * 0.035,
-    )
-    canvasMesh.rotation.y = art.ry
+    canvasMesh.position.set(at.canvas.x, at.canvas.y, at.canvas.z)
+    canvasMesh.rotation.y = at.ry
+    // nudge the picture plane just proud of its matte
+    canvasMesh.translateZ(0.012)
     group.add(canvasMesh)
-    // a soft picture light above each frame
-    const spot = new THREE.PointLight(0xffe9c8, 0.25, 3.5)
-    spot.position.set(art.x + Math.sin(art.ry) * 0.5, art.y + art.h / 2 + 0.4, art.z + Math.cos(art.ry) * 0.5)
+
+    // picture light on the wall above the frame
+    const spot = new THREE.PointLight(0xffe9c8, 0.28, 3.6)
+    spot.position.set(
+      at.frame.x + Math.sin(at.ry) * 0.45,
+      at.frame.y + spec.h / 2 + 0.5,
+      at.frame.z + Math.cos(at.ry) * 0.45,
+    )
     group.add(spot)
   })
 
@@ -1329,10 +1353,59 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup.add(lamp)
   }
 
-  const car = (x: number, z: number, color: number) => {
+  // (static parked cars replaced by the animated traffic below)
+
+  /* --------------------------------------------------- living street ------ */
+  // Pedestrians and traffic animated from the scene tick. They are collected in
+  // arrays the caller advances each frame, so nothing here needs a timer.
+  const walkers: { obj: THREE.Group; legs: THREE.Object3D[]; from: number; to: number; z: number; speed: number; t: number }[] = []
+  const vehicles: { obj: THREE.Group; x0: number; x1: number; z: number; speed: number }[] = []
+
+  const makeWalker = (color: number) => {
+    const g = new THREE.Group()
+    const body = box(0.34, 0.62, 0.22, color, { rough: 0.8 })
+    body.position.y = 1.05
+    g.add(body)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.26, 0.24), stdMat(0xe4b48c, { rough: 0.85 }))
+    head.position.y = 1.5
+    g.add(head)
+    const legs: THREE.Object3D[] = []
+    for (const side of [-1, 1]) {
+      const hip = new THREE.Group()
+      hip.position.set(side * 0.09, 0.74, 0)
+      const leg = box(0.12, 0.72, 0.12, 0x39424b)
+      leg.position.y = -0.36
+      hip.add(leg)
+      g.add(hip)
+      legs.push(hip)
+    }
+    const arms: THREE.Object3D[] = []
+    for (const side of [-1, 1]) {
+      const sh = new THREE.Group()
+      sh.position.set(side * 0.22, 1.32, 0)
+      const arm = box(0.1, 0.5, 0.1, color)
+      arm.position.y = -0.25
+      sh.add(arm)
+      g.add(sh)
+      arms.push(sh)
+    }
+    g.userData.arms = arms
+    return { g, legs }
+  }
+
+  const PED_COLORS = [0xc9553f, 0x3f6fc9, 0x4f9a63, 0xd8a83f, 0x8a5fc9, 0x3fa8a8]
+  for (let i = 0; i < 6; i++) {
+    const { g, legs } = makeWalker(PED_COLORS[i % PED_COLORS.length])
+    const sidewalkZ = HALF_D + 11.6
+    const from = -34 + i * 11
+    g.position.set(from, 0, sidewalkZ)
+    streetGroup.add(g)
+    walkers.push({ obj: g, legs, from, to: 38, z: sidewalkZ, speed: 1.1 + (i % 3) * 0.25, t: i * 0.7 })
+  }
+
+  const makeVehicle = (color: number) => {
     const c = new THREE.Group()
-    c.position.set(x, 0, z)
-    const body = box(4.0, 0.85, 1.8, color, { metal: 0.4, rough: 0.35 })
+    const body = box(4.0, 0.85, 1.8, color, { metal: 0.45, rough: 0.35 })
     body.position.y = 0.75
     c.add(body)
     const cabin = box(2.1, 0.65, 1.65, 0x9fb2bd, { metal: 0.3, rough: 0.2 })
@@ -1349,11 +1422,59 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       wheel.position.set(wx, 0.34, wz)
       c.add(wheel)
     }
-    streetGroup.add(c)
+    // headlights so the night read is a street, not a box
+    for (const hx of [-2.0, 2.0]) {
+      const lamp = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.16, 0.3),
+        stdMat(0xfff0cc, { emissive: 0xffe0a0, ei: 0.8 }),
+      )
+      lamp.position.set(hx, 0.85, 0)
+      c.add(lamp)
+    }
+    return c
   }
-  car(-9, HALF_D + 12.4, 0xb9563f)
-  car(4, HALF_D + 12.4, 0x3f6fb9)
-  car(17, HALF_D + 12.4, 0xd8d3c4)
+
+  const LANE_NORTH = HALF_D + 13.6
+  const LANE_SOUTH = HALF_D + 15.4
+  const CAR_COLORS = [0xb9563f, 0x3f6fb9, 0xd8d3c4, 0x4f7a5f, 0x8a8f95]
+  for (let i = 0; i < 5; i++) {
+    const forward = i % 2 === 0
+    const c = makeVehicle(CAR_COLORS[i % CAR_COLORS.length])
+    const z = forward ? LANE_NORTH : LANE_SOUTH
+    c.rotation.y = forward ? Math.PI / 2 : -Math.PI / 2
+    const x0 = forward ? -46 - i * 14 : 46 + i * 14
+    const x1 = forward ? 46 + i * 8 : -46 - i * 8
+    c.position.set(x0, 0, z)
+    streetGroup.add(c)
+    vehicles.push({ obj: c, x0, x1, z, speed: 6 + (i % 3) * 2 })
+  }
+
+  /** Advance the street. Called from the scene tick with the frame delta. */
+  function animateStreet(dt: number, t: number) {
+    for (const w of walkers) {
+      const span = w.to - w.from
+      w.t += (w.speed * dt) / span
+      if (w.t > 1) w.t -= 1
+      const x = w.from + span * w.t
+      w.obj.position.x = x
+      w.obj.position.z = w.z + Math.sin(x * 0.3) * 0.14
+      w.obj.rotation.y = Math.PI / 2
+      const swing = Math.sin(t * 7 * w.speed + x) * 0.5
+      w.legs[0].rotation.x = swing
+      w.legs[1].rotation.x = -swing
+      const arms = w.obj.userData.arms as THREE.Object3D[]
+      arms[0].rotation.x = -swing * 0.7
+      arms[1].rotation.x = swing * 0.7
+    }
+    for (const v of vehicles) {
+      const span = v.x1 - v.x0
+      v.obj.position.x += Math.sign(span) * v.speed * dt
+      if (Math.sign(span) > 0 ? v.obj.position.x > v.x1 : v.obj.position.x < v.x1) {
+        v.obj.position.x = v.x0
+      }
+      void v.z
+    }
+  }
 
   streetGroup.visible = true
 
@@ -1373,5 +1494,5 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const d of disposables) d.dispose()
   }
 
-  return { group, monitors, lamps, boardSurface, streaks, streetGroup, applyPalette, dispose }
+  return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, applyPalette, dispose }
 }

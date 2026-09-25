@@ -73,10 +73,20 @@ export const DESKS: Desk[] = DESK_COLUMNS.flatMap((x, column) => [
   { index: column, x, z: DESK_ROW_Z.near, facing: 0, column, side: 'near' as const },
 ])
 
-/** Local offset (in desk space) where the occupant's root sits. z = +0.92 is the chair. */
-export const DESK_SEAT = { x: 0, z: 0.92 }
-/** Local offset of the task chair, so chairs and sitters agree. */
+/**
+ * Chair and sitter share these numbers. The chair group sits at z = +1.0 with its
+ * back at +0.28, so the seated centre of mass is ~0.26 further back; placing the
+ * avatar at the chair's anchor left it perched 8 cm forward of the cushion.
+ */
 export const DESK_CHAIR = { x: 0, z: 1.0 }
+/**
+ * The task chair's backrest sits at local +0.28 from the chair anchor, so a
+ * sitter's centre of mass is just IN FRONT of the anchor (toward the desk) —
+ * placing the avatar behind the anchor left it straddling the backrest.
+ */
+export const SEAT_BACK_OFFSET = -0.06
+/** Local offset where the occupant's root sits. */
+export const DESK_SEAT = { x: 0, z: DESK_CHAIR.z + SEAT_BACK_OFFSET }
 
 export function deskSeatWorld(desk: Desk) {
   const s = Math.sin(desk.facing)
@@ -126,21 +136,75 @@ export const RECEPTION = { x: -8.4, z: 8.4 }
 export const WINDOWS = [
   { x: -12.4, y: 2.7, w: 4.6, h: 1.9 },
   { x: 12.4, y: 2.7, w: 4.6, h: 1.9 },
+  // a continuous band either side of the Kanban board so the north face reads
+  // as a glazed elevation rather than two punched holes
+  { x: -17.0, y: 2.7, w: 3.6, h: 1.9 },
+  { x: 17.0, y: 2.7, w: 3.6, h: 1.9 },
+  { x: -5.6, y: 2.7, w: 1.8, h: 1.9 },
+  { x: 5.6, y: 2.7, w: 1.8, h: 1.9 },
+  // side elevations
   { x: -16.2, y: 2.7, w: 1.6, h: 1.9, west: true },
   { x: 16.2, y: 2.7, w: 1.6, h: 1.9, east: true },
 ] as const
 
-/** Artwork on the interior walls: [x, y, z, w, h, facing]. */
-export const PAINTINGS = [
-  { x: -6.0, y: 1.9, z: -6.0, w: 1.5, h: 1.1, ry: Math.PI / 2 },
-  { x: -6.0, y: 1.9, z: 1.6, w: 1.1, h: 1.4, ry: Math.PI / 2 },
-  { x: 6.0, y: 1.9, z: -6.0, w: 1.5, h: 1.1, ry: -Math.PI / 2 },
-  { x: 6.0, y: 1.9, z: 1.6, w: 1.1, h: 1.4, ry: -Math.PI / 2 },
-  { x: -9.0, y: 1.95, z: -12.6, w: 1.8, h: 1.2, ry: 0 },
-  { x: 9.0, y: 1.95, z: -12.6, w: 1.8, h: 1.2, ry: 0 },
-  { x: -13.5, y: 1.9, z: 4.8, w: 1.3, h: 1.7, ry: Math.PI / 2 },
-  { x: 13.5, y: 1.9, z: 4.8, w: 1.3, h: 1.7, ry: -Math.PI / 2 },
-] as const
+/** Window positions along the side walls (world Z on the ±X elevations). */
+export const SIDE_WINDOWS = [-9.0, -4.0, 1.0, 6.0, 11.0] as const
+
+/**
+ * Artwork is defined by the WALL it hangs on, not by a hand-typed position: the
+ * first version placed frames at the wall's centre line (buried inside it) or
+ * tens of centimetres off it (floating). Each entry names the wall plane and the
+ * outward normal, and `paintingPlacement()` derives frame + canvas coordinates
+ * from the wall thickness.
+ */
+export type WallFace = { x: number; z: number; ry: number; span: number }
+export type PaintingSpec = { wall: WallFace; along: number; y: number; w: number; h: number }
+
+const WEST_PART: WallFace = { x: ROOMS.work.x1, z: 1, ry: Math.PI / 2, span: 16 }
+const EAST_PART: WallFace = { x: ROOMS.work.x2, z: 1, ry: -Math.PI / 2, span: 16 }
+const NORTH: WallFace = { x: 0, z: -HALF_D, ry: 0, span: 34 }
+const LOBBY_W: WallFace = { x: -HALF_W, z: 6, ry: Math.PI / 2, span: 12 }
+const LOBBY_E: WallFace = { x: HALF_W, z: 6, ry: -Math.PI / 2, span: 12 }
+
+/** Facing an inward normal: `ry` is 0 for a frame facing +Z, ±PI/2 for ±X. */
+export const PAINTINGS: PaintingSpec[] = [
+  // work bay, on both partitions
+  { wall: WEST_PART, along: -6.0, y: 1.9, w: 1.5, h: 1.1 },
+  { wall: WEST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
+  { wall: EAST_PART, along: -4.4, y: 1.9, w: 1.5, h: 1.1 },
+  { wall: EAST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
+  // north wall, either side of the Kanban board
+  { wall: NORTH, along: -9.0, y: 1.95, w: 1.8, h: 1.2 },
+  { wall: NORTH, along: 9.0, y: 1.95, w: 1.8, h: 1.2 },
+  { wall: NORTH, along: -15.2, y: 1.95, w: 1.4, h: 1.6 },
+  { wall: NORTH, along: 15.2, y: 1.95, w: 1.4, h: 1.6 },
+  // lobby side walls
+  { wall: LOBBY_W, along: -1.5, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_W, along: 2.2, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: -1.5, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: 2.2, y: 1.95, w: 1.3, h: 1.7 },
+]
+
+/** Frame + canvas world placement for a painting, clear of the wall surface. */
+export function paintingPlacement(spec: PaintingSpec) {
+  const { wall, along, y, w, h } = spec
+  const outward = 1 // distance from the wall centre to its inner surface
+  const half = WALL_T / 2
+  // slide `along` units along the wall, then stand `outward` off its surface
+  const nx = Math.sin(wall.ry)
+  const nz = Math.cos(wall.ry)
+  const tx = Math.cos(wall.ry)
+  const tz = -Math.sin(wall.ry)
+  const frameOut = half + 0.03
+  const canvasOut = half + 0.075
+  return {
+    frame: { x: wall.x + nx * frameOut + tx * along, z: wall.z + nz * frameOut + tz * along, y },
+    canvas: { x: wall.x + nx * canvasOut + tx * along, z: wall.z + nz * canvasOut + tz * along, y },
+    ry: wall.ry,
+    w,
+    h,
+  }
+}
 
 /* -------------------------------------------------------------- footprints -- */
 

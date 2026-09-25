@@ -35,6 +35,8 @@ export type SceneAgent = AnimAgent & {
   path: { x: number; z: number }[]
   destKey: string
   face: number
+  /** Facing to adopt at a seat; set when a desk target is chosen. */
+  seatYaw?: number
   walking: number
   meetingTalking: boolean
   bubble: CSS2DObject
@@ -212,6 +214,23 @@ export function createScene(
     return new THREE.Vector3(seat.x, 0, seat.z)
   }
 
+  /**
+   * Seat facing so a sitter squares up to the monitor.
+   *
+   * Derived from geometry, not from a `+Math.PI` guess: the chair is at local
+   * +z of the desk and the monitor at local -z, so the facing is simply the
+   * direction from the seat to the monitor. The avatar rig's forward is local
+   * +Z, which is why this is `atan2(dx, dz)` and not the atan2(x, z) form used
+   * for camera-space headings.
+   */
+  function deskSeatYaw(desk: Desk) {
+    const chair = deskSeatWorld(desk)
+    // monitor world position: local (0, -0.28) rotated by the desk's facing
+    const mx = desk.x + -0.28 * Math.sin(desk.facing)
+    const mz = desk.z + -0.28 * Math.cos(desk.facing)
+    return Math.atan2(mx - chair.x, mz - chair.z)
+  }
+
   /** Must mirror the chair ring drawn in build.ts — a mismatch parks agents on bare floor. */
   function meetingSeat(i: number) {
     const a = CONFERENCE_CHAIRS.offset + (i % CONFERENCE_CHAIRS.count) * (Math.PI * 2 / CONFERENCE_CHAIRS.count)
@@ -220,6 +239,14 @@ export function createScene(
       0,
       CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring,
     )
+  }
+
+  /** Facing for a conference chair: toward the table centre, same convention as the desk seat. */
+  function meetingSeatYaw(i: number) {
+    const a = CONFERENCE_CHAIRS.offset + (i % CONFERENCE_CHAIRS.count) * (Math.PI * 2 / CONFERENCE_CHAIRS.count)
+    const cx = CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring
+    const cz = CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring
+    return Math.atan2(CONFERENCE.x - cx, CONFERENCE.z - cz)
   }
 
   // Idle lounging spots. Each MUST be walkable — `nav.blocked()` validates them
@@ -251,8 +278,11 @@ export function createScene(
     //    participant stays parked at the table forever after a provider error.
     const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
     if (meeting && meetingLive && meeting.participants.includes(a.data.name)) {
-      const seat = meetingSeat(meeting.participants.indexOf(a.data.name))
+      const idx = meeting.participants.indexOf(a.data.name)
+      const seat = meetingSeat(idx)
       a.target = seat
+      // Face the table (the pose layer applies this on arrival).
+      a.seatYaw = meetingSeatYaw(idx)
       a.activity = 'meeting'
       a.meetingTalking = meeting.currentSpeaker === a.data.name
       return
@@ -275,6 +305,10 @@ export function createScene(
       const desk = DESKS[a.data.deskIndex]
       if (desk) {
         a.target = deskTarget(desk)
+        // Record the seat's facing: the pose layer turns the avatar to this once
+        // it arrives. Without it the avatar kept whatever heading it walked in
+        // with, so a sitter faced sideways.
+        a.seatYaw = deskSeatYaw(desk)
         a.activity = 'typing'
         return
       }
@@ -293,7 +327,19 @@ export function createScene(
       a.activity = 'idle'
       return
     }
-    const spot = IDLE_SPOTS[index % IDLE_SPOTS.length]
+    // Claim an idle spot no other agent holds. Sharing a spot deadlocks both:
+    // their bodies block each other in the corridor and neither ever arrives.
+    const taken = new Set(
+      agents.filter((x) => x !== a && x.target).map((x) => `${x.target!.x.toFixed(1)},${x.target!.z.toFixed(1)}`),
+    )
+    let spot = IDLE_SPOTS[index % IDLE_SPOTS.length]
+    for (let k = 0; k < IDLE_SPOTS.length; k++) {
+      const cand = IDLE_SPOTS[(index + k) % IDLE_SPOTS.length]
+      if (!taken.has(`${cand.x.toFixed(1)},${cand.z.toFixed(1)}`)) {
+        spot = cand
+        break
+      }
+    }
     a.target = new THREE.Vector3(spot.x, 0, spot.z)
     a.activity = spot.act
   }
@@ -377,16 +423,20 @@ export function createScene(
           // Slide along the surface when the next micro-step would enter a prop,
           // so a body never ends up inside furniture after a re-plan.
           const SPEED = 3.4 // m/s, brisk office walking pace
-          const nx = g.position.x + tmp.x * SPEED * dt
-          const nz = g.position.z + tmp.z * SPEED * dt
+          // Clamp the step to the distance left on THIS leg. Without it a long
+          // frame (dt up to 0.25 s -> 0.85 m) overshoots the waypoint, the next
+          // frame reverses, and the agent oscillates on the spot forever.
+          const step = Math.min(SPEED * dt, dist)
+          const nx = g.position.x + tmp.x * step
+          const nz = g.position.z + tmp.z * step
           // The A* path is already collision-free; this guard exists only to
           // absorb float drift, so a blocked micro-step nudges toward the
           // waypoint rather than freezing the agent in place.
           if (!blocked(nx, nz, BODY_R * 0.9)) {
             g.position.set(nx, g.position.y, nz)
           } else {
-            g.position.x += tmp.x * 0.02
-            g.position.z += tmp.z * 0.02
+            g.position.x += tmp.x * Math.min(0.05, step)
+            g.position.z += tmp.z * Math.min(0.05, step)
           }
           a.face = Math.atan2(tmp.x, tmp.z)
           a.walking = 1
@@ -401,6 +451,16 @@ export function createScene(
       while (diff < -Math.PI) diff += Math.PI * 2
       g.rotation.y += diff * Math.min(1, dt * 6)
       g.position.y = 0
+
+      // Square up to the desk once seated: the seat's yaw wins over the heading
+      // the avatar walked in with.
+      if (
+        (a.activity === 'typing' || a.activity === 'meeting') &&
+        a.walking < 0.5 &&
+        a.seatYaw !== undefined
+      ) {
+        a.face = a.seatYaw
+      }
 
       // walking overrides the seated pose until arrival
       const activity: Activity = a.walking > 0.5 ? 'walking' : a.activity
@@ -456,6 +516,8 @@ export function createScene(
       const pxH = Math.abs(tmpB.y - tmpA.y) * 0.5 * h
       if (pxW > 0 && pxH > 0) board.setBoardSize(pxW, pxH)
     }
+
+    office.animateStreet(dt, t)
 
     controls.update()
     renderer.render(scene, camera)

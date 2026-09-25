@@ -244,3 +244,41 @@ costs ~2 s per frame on a scene of this size. Every frame-rate number measured
 here is a property of the test rig. Before optimising further, check
 `WEBGL_debug_renderer_info` — optimising an application for a software
 rasteriser is wasted work.
+
+---
+
+## 9. Facade, artwork and a living street
+
+### Window cut-outs were silently impossible
+
+`wallPanel()` builds a wall as strips around its openings, but it treated
+`hole.y` as relative to the panel centre while `WINDOWS` stores it from the
+floor. Every cut-out therefore landed at y 2.65–4.55 on a 3.4 m wall: no opening
+was formed, and the window units sat inside the wall's thickness. Converting to a
+local offset (`hole.y - h/2`) and raising the walls to 4.6 m fixed it. The lesson
+generalises: when two files agree on a coordinate, write the frame of reference
+in the name (`yFromFloor`) so the mistake cannot be made twice.
+
+The facade is now 18 window units (6 north, 10 on the side elevations, 2 in the
+lobby), plus plinth, mid band, cornice, corner pilasters and entrance sconces.
+
+### Artwork is defined by its wall, not by coordinates
+
+Hand-typed frame positions put paintings at the wall centre line (buried) or tens
+of centimetres in front of it (floating). `PAINTINGS` now names the wall plane
+and outward normal, and `paintingPlacement()` derives both the frame and the
+canvas from the wall thickness. There is no coordinate left to get wrong.
+
+### Animation belongs to the scene tick, not to timers
+
+Pedestrians and traffic are plain arrays that `animateStreet(dt, t)` advances from
+the frame loop. No `setInterval`, so they pause with the tab, stay in step with
+`dt`, and cannot outlive the scene. Each walker swings its own legs and arms from
+`t`, and the vehicles loop along a lane with headlights that matter at night.
+
+### Trap: a long frame makes walkers oscillate
+
+With `dt` up to 0.25 s a 3.4 m/s walker advances 0.85 m in one step. If that
+overshoots the current waypoint, the next frame turns around and the avatar
+oscillates in place — which reads as "stuck at the door". The step is now clamped
+to the distance remaining on the leg (`Math.min(SPEED * dt, dist)`).
