@@ -162,3 +162,38 @@ cost real time here:
 
 Cards are also capped per column (3) and the overflow is summarised with a
 `+N lagi` chip, because a wall board is not a scroller.
+
+---
+
+## 7. Testing the meeting engine without a live provider
+
+Upstream LLM gateways go down. When that happened here, the meeting feature
+could not be exercised end to end — and "the provider is down" is not a useful
+thing to leave unverified, because it hides whether the orchestration itself
+works.
+
+`scripts/mock-provider.py` is a dependency-free OpenAI-compatible stub that
+**deliberately reproduces the awkward response shape** a real gateway returned
+(JSON with `data: [DONE]` glued on, no newline). A stub that answered
+cleanly would prove nothing about the parser.
+
+It also counts requests, which turns "did the meeting actually talk to anyone"
+into a measurable assertion:
+
+```bash
+python3 scripts/mock-provider.py 8799 &          # start the stub
+AI_BASE_URL=http://127.0.0.1:8799/v1 \
+AI_API_KEY=mock-key-1234567890 npm start         # point the office at it
+
+curl -s localhost:8799/                          # {"calls": N}
+# ... run a 2-participant meeting ...
+curl -s localhost:8799/                          # {"calls": N+6}
+```
+
+Verified outcome: 6 turns (opening + 4 speeches + minutes), state `done`, and a
+minutes file written to `data/meetings/`. Request counter moved 1 -> 7, so the
+turns were genuinely driven by the provider call and not fabricated locally.
+
+Product options (participant count, rounds, turn cap) are read from
+`process.env` at module load, so overriding them for a test must happen in the
+process environment, not by mutating `process.env` at runtime.
