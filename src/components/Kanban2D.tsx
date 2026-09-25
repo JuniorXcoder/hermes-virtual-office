@@ -13,7 +13,7 @@ const COLUMNS: { key: string; label: string }[] = [
 
 export default function Kanban2D() {
   const tasks = useOffice((s) => s.tasks)
-  const setPeek = useOffice((s) => s.setPeek)
+  const openTask = useOffice((s) => s.openTask)
 
   return (
     <div className="absolute inset-0 overflow-auto p-4 pt-20">
@@ -31,11 +31,7 @@ export default function Kanban2D() {
                   <article
                     key={t.id}
                     className="vp-card"
-                    onClick={() => {
-                      // surface the same detail the 3D monitor opens
-                      const idx = tasks.filter((x) => x.status === col.key).indexOf(t)
-                      if (col.key === 'running' || col.key === 'review') setPeek(idx)
-                    }}
+                    onClick={() => openTask(t.id)}
                   >
                     <div className="vp-card-title">{t.title}</div>
                     <div className="vp-card-meta">

@@ -140,3 +140,25 @@ Against a live board and a live worker:
 The `503` failures observed at the end were the provider being down entirely —
 verified independently with `curl` across 5 attempts and 3 model names — not an
 application fault.
+
+
+---
+
+## 6. CSS2D cards on a 3D board
+
+Rendering Kanban cards onto the wall board uses `CSS2DObject`, which is the
+cheapest way to get crisp text in WebGL — but its anchoring has two traps that
+cost real time here:
+
+- **The element is anchored as a POINT, and its parent is sized to its content.**
+  A 470px-wide grid therefore hangs off the anchor to the right. `margin-left`
+  only shifts it further; the fix is `transform: translate(-50%, -50%)` on the
+  grid, because percentage translate is relative to the element's own box.
+- **The grid must be scaled to the mesh, not chosen for readability alone.** A
+  grid that looks fine in isolation spilled past the board's bottom edge
+  (`5.4` world units tall). Verify by projecting the mesh's top and bottom edges
+  to screen space and asserting the grid's bounding box sits inside them — that
+  is a two-line check and it caught the overflow immediately.
+
+Cards are also capped per column (3) and the overflow is summarised with a
+`+N lagi` chip, because a wall board is not a scroller.

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Scene3D from './Scene3D'
 import Kanban2D from './Kanban2D'
 import PeekPanel from './PeekPanel'
+import TaskPanel from './TaskPanel'
 import MeetingPanel from './MeetingPanel'
 import NewTaskDialog from './NewTaskDialog'
 import { startPolling, useOffice } from '@/lib/store'
@@ -119,6 +120,7 @@ export default function OfficeApp() {
         </footer>
       )}
 
+      <TaskPanel />
       <PeekPanel />
       <MeetingPanel open={meetOpen} onClose={() => setMeetOpen(false)} />
       <NewTaskDialog />

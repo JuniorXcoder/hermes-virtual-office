@@ -8,8 +8,11 @@ import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRe
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar, type Avatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
+import { buildBoardCards } from './board'
 import {
   CONFERENCE,
+  CONFERENCE_CHAIRS,
+  BOARD_COLUMNS as BOARD_COLS,
   DESKS,
   DOOR,
   KANBAN_BOARD,
@@ -37,10 +40,10 @@ export type SceneAgent = AnimAgent & {
 export type SceneEvents = {
   onMonitorClick?: (deskIndex: number) => void
   onAvatarClick?: (name: string) => void
+  /** A card on the 3D Kanban wall was clicked. */
   onTaskClick?: (taskId: string) => void
 }
 
-const CHAIR_ANGLES = [0.6, 2.17, 3.74, 5.31]
 
 export function createScene(
   canvas: HTMLCanvasElement,
@@ -82,9 +85,7 @@ export function createScene(
   controls.maxDistance = 60
 
   // ---- Kanban board legend: makes the wall display readable as a board
-  // Four columns, matching the 2D view: six labels cannot fit legibly on a
-  // 15-unit board and collided in the render.
-  const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI']
+  const BOARD_COLUMNS = BOARD_COLS
   {
     const titleEl = document.createElement('div')
     titleEl.className = 'vp-board-title'
@@ -104,6 +105,9 @@ export function createScene(
       office.boardSurface.add(obj)
     })
   }
+
+  // ---- cards pinned to the wall board
+  const board = buildBoardCards(office.boardSurface, (taskId) => events.onTaskClick?.(taskId))
 
   const agents: SceneAgent[] = []
   const byName = new Map<string, SceneAgent>()
@@ -195,12 +199,13 @@ export function createScene(
     return new THREE.Vector3(desk.x, 0, desk.z + back)
   }
 
+  /** Must mirror the chair ring drawn in build.ts — a mismatch parks agents on bare floor. */
   function meetingSeat(i: number) {
-    const a = CHAIR_ANGLES[i % CHAIR_ANGLES.length]
+    const a = CONFERENCE_CHAIRS.offset + (i % CONFERENCE_CHAIRS.count) * (Math.PI * 2 / CONFERENCE_CHAIRS.count)
     return new THREE.Vector3(
-      CONFERENCE.x + Math.cos(a) * (CONFERENCE.radius + 0.85),
+      CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring,
       0,
-      CONFERENCE.z + Math.sin(a) * (CONFERENCE.radius + 0.85),
+      CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring,
     )
   }
 
@@ -411,6 +416,11 @@ export function createScene(
     camera.updateProjectionMatrix()
   }
 
+  /** Push the latest board contents onto the 3D wall. */
+  function setTasks(tasks: Task[]) {
+    board.render(tasks)
+  }
+
   function setMeeting(m: Meeting | null) {
     // A dead meeting must not keep holding seats: treat done/error as no meeting.
     const live = m && (m.state === 'queued' || m.state === 'running') ? m : null
@@ -466,6 +476,7 @@ export function createScene(
     agents,
     byName,
     syncAgents,
+    setTasks,
     setMeeting,
     say,
     setHour,

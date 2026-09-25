@@ -15,11 +15,14 @@ type State = {
   view: '3d' | '2d'
   peekDesk: number | null
   selectedAgent: string | null
+  /** Task opened from the 3D board or the 2D board. */
+  openTaskId: string | null
   newTaskOpen: boolean
 
   load: () => Promise<void>
   setView: (v: '3d' | '2d') => void
   setPeek: (desk: number | null) => void
+  openTask: (taskId: string | null) => void
   select: (name: string | null) => void
   setNewTaskOpen: (v: boolean) => void
   refreshMeeting: () => Promise<void>
@@ -35,6 +38,7 @@ export const useOffice = create<State>((set, get) => ({
   view: '3d',
   peekDesk: null,
   selectedAgent: null,
+  openTaskId: null,
   newTaskOpen: false,
 
   async load() {
@@ -65,6 +69,7 @@ export const useOffice = create<State>((set, get) => ({
 
   setView: (view) => set({ view }),
   setPeek: (peekDesk) => set({ peekDesk }),
+  openTask: (openTaskId) => set({ openTaskId }),
   select: (selectedAgent) => set({ selectedAgent }),
   setNewTaskOpen: (newTaskOpen) => set({ newTaskOpen }),
 }))

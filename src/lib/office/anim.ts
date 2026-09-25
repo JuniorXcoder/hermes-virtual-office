@@ -8,9 +8,12 @@
 import * as THREE from 'three'
 import type { Avatar } from './avatar'
 
+import { HIP_STAND } from './avatar'
+
 const D = Math.PI / 180
-export const HIP_STAND = 1.16
-export const HIP_SIT = 0.80
+export { HIP_STAND }
+/** Seated hip height: the chair seat top sits at ~0.50, so the joint rides just above it. */
+export const HIP_SIT = 0.52
 
 /** Smooth triangle-ish oscillation, deterministic in `t`. */
 export function wave(t: number, freq: number, phase = 0): number {
@@ -35,16 +38,22 @@ export type AnimAgent = {
   meetingTalking?: boolean
 }
 
-function sit(a: AnimAgent, hipY: number, spread: number, knee: number) {
+/**
+ * Seated pose. `thigh` is the hip angle: -90 places the thigh horizontally
+ * forward (the correct seated posture). The first version used -76..-88 *and*
+ * had the hip nested under a torso that started too high, so legs read as
+ * dangling stubs.
+ */
+function sit(a: AnimAgent, hipY: number, thigh: number, knee: number) {
   const av = a.avatar
   av.hips.position.y = hipY
   const [L, R] = av.legs
-  for (const [leg, s] of [
+  for (const [leg, sign] of [
     [L, -1],
     [R, 1],
   ] as const) {
-    leg.shoulder.rotation.x = spread * D
-    leg.shoulder.rotation.z = s * 6 * D
+    leg.shoulder.rotation.x = thigh * D
+    leg.shoulder.rotation.z = sign * 5 * D
     leg.elbow.rotation.x = knee * D
   }
 }
@@ -79,27 +88,28 @@ function walkLegs(a: AnimAgent, t: number, speed: number) {
 /** Seated at a desk, typing on the keyboard. */
 function typing(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, HIP_SIT, -78, 72)
+  sit(a, HIP_SIT, -90, 86)
   av.chest.rotation.x = -7 * D
   av.chest.rotation.y = 0
   av.neck.rotation.x = 4 * D
   av.head.rotation.x = 6 * D
   av.head.rotation.y = wave(t, 0.7, a.phase) * 4 * D
   const [L, R] = av.arms
+  // Upper arm hangs slightly forward, forearm swings in to reach the keyboard.
   for (const [arm, sign] of [
     [L, -1],
     [R, 1],
   ] as const) {
-    arm.shoulder.rotation.x = -62 * D
-    arm.shoulder.rotation.z = sign * 18 * D
-    arm.elbow.rotation.x = -74 * D + wave(t, 7.5, a.phase + (sign > 0 ? 1.3 : 0)) * 5 * D
+    arm.shoulder.rotation.x = -38 * D
+    arm.shoulder.rotation.z = sign * 9 * D
+    arm.elbow.rotation.x = -62 * D + wave(t, 7.5, a.phase + (sign > 0 ? 1.3 : 0)) * 4 * D
   }
 }
 
 /** Seated in the conference room; raises a hand on the speaking turn. */
 function meeting(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, HIP_SIT, -74, 68)
+  sit(a, HIP_SIT, -90, 84)
   const talking = !!a.meetingTalking
   av.chest.rotation.x = (talking ? -5 : 9) * D
   av.chest.rotation.y = talking ? 0 : wave(t, 0.35, a.phase) * 9 * D
@@ -108,30 +118,31 @@ function meeting(a: AnimAgent, t: number) {
   av.head.rotation.y = (talking ? wave(t, 0.6, a.phase) * 5 : wave(t, 0.4, a.phase) * 18) * D
   const [L, R] = av.arms
   const k = talking ? 1 : 0.2
-  R.shoulder.rotation.x = (-60 - k * 45) * D
-  R.shoulder.rotation.z = (12 + k * 18) * D
-  R.elbow.rotation.x = (-70 + k * 30) * D
-  L.shoulder.rotation.x = (-56 - (1 - k) * 20) * D
-  L.shoulder.rotation.z = -18 * D
-  L.elbow.rotation.x = (-76 - (1 - k) * 22) * D
+  // Raised hand: shoulder forward ~50-80 deg, elbow folded — never above the head.
+  R.shoulder.rotation.x = (-42 - k * 36) * D
+  R.shoulder.rotation.z = (10 + k * 14) * D
+  R.elbow.rotation.x = (-58 + k * 26) * D
+  L.shoulder.rotation.x = (-34 - (1 - k) * 10) * D
+  L.shoulder.rotation.z = -14 * D
+  L.elbow.rotation.x = (-62 - (1 - k) * 14) * D
   av.hips.position.y = HIP_SIT + wave(t, 1.5, a.phase) * 0.012
 }
 
 /** Lounging on the sofa, controller in hand. */
 function gaming(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, 0.72, -84, 58)
+  sit(a, 0.52, -90, 88)
   av.chest.rotation.x = -12 * D
   av.chest.rotation.y = wave(t, 0.4, a.phase) * 6 * D
   av.head.rotation.x = 10 * D
   av.head.rotation.y = wave(t, 1.4, a.phase) * 8 * D
   const [L, R] = av.arms
-  L.shoulder.rotation.x = -78 * D
-  R.shoulder.rotation.x = -78 * D
-  L.shoulder.rotation.z = -22 * D
-  R.shoulder.rotation.z = 22 * D
-  L.elbow.rotation.x = -88 * D + wave(t, 6, a.phase) * 4 * D
-  R.elbow.rotation.x = -88 * D + wave(t, 6, a.phase + 2) * 4 * D
+  L.shoulder.rotation.x = -46 * D
+  R.shoulder.rotation.x = -46 * D
+  L.shoulder.rotation.z = -16 * D
+  R.shoulder.rotation.z = 16 * D
+  L.elbow.rotation.x = -70 * D + wave(t, 6, a.phase) * 4 * D
+  R.elbow.rotation.x = -70 * D + wave(t, 6, a.phase + 2) * 4 * D
 }
 
 /** Throwing at the dartboard: alternating arm wind-up. */
@@ -144,7 +155,7 @@ function dart(a: AnimAgent, t: number) {
   av.chest.rotation.y = -8 * D
   av.head.rotation.x = -6 * D
   const [L, R] = av.arms
-  R.shoulder.rotation.x = (-30 - raise * 110) * D
+  R.shoulder.rotation.x = (-24 - raise * 78) * D
   R.shoulder.rotation.z = (10 + raise * 10) * D
   R.elbow.rotation.x = (-40 + raise * 20) * D
   L.shoulder.rotation.x = -20 * D
@@ -154,19 +165,19 @@ function dart(a: AnimAgent, t: number) {
 /** Relaxed sit on the sofa without a controller. */
 function sofa(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, 0.74, -88, 52)
+  sit(a, 0.54, -92, 84)
   av.chest.rotation.x = 10 * D
   av.chest.rotation.y = wave(t, 0.3, a.phase) * 5 * D
   av.neck.rotation.x = -6 * D
   av.head.rotation.y = wave(t, 0.45, a.phase) * 22 * D
   const [L, R] = av.arms
-  L.shoulder.rotation.x = -42 * D
-  L.shoulder.rotation.z = -24 * D
-  L.elbow.rotation.x = -58 * D
-  R.shoulder.rotation.x = -42 * D
-  R.shoulder.rotation.z = 24 * D
-  R.elbow.rotation.x = -58 * D
-  av.hips.position.y = 0.74 + wave(t, 1.1, a.phase) * 0.01
+  L.shoulder.rotation.x = -30 * D
+  L.shoulder.rotation.z = -18 * D
+  L.elbow.rotation.x = -46 * D
+  R.shoulder.rotation.x = -30 * D
+  R.shoulder.rotation.z = 18 * D
+  R.elbow.rotation.x = -46 * D
+  av.hips.position.y = 0.54 + wave(t, 1.1, a.phase) * 0.01
 }
 
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {

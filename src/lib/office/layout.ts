@@ -61,6 +61,16 @@ export const ROOMS = {
 
 export const KANBAN_BOARD = { x: 0, y: 3.6, z: -HALF_D + 1.2, w: 15, h: 5.4 }
 export const CONFERENCE = { x: -9.6, z: 4.0, radius: 2.3 }
+/** Chair ring. build.ts draws the chairs and scene.ts seats agents — both MUST
+ *  read these, or agents sit where no chair exists. */
+export const CONFERENCE_CHAIRS = {
+  count: 6,
+  offset: Math.PI / 6,
+  /** Distance from the table centre to the chair centre. */
+  ring: CONFERENCE.radius + 1.0,
+}
+/** Where the board itself sits, and how its columns are laid out. */
+export const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI'] as const
 export const LOUNGE = { x: 9.6, z: 4.2 }
 export const DART = { x: HALF_W - 1.6, z: -HALF_D + 4.0 }
 export const DOOR = { x: 0, z: HALF_D - 1.0 }

@@ -12,15 +12,18 @@ export default function Scene3D({ onScene }: Props) {
   const sceneRef = useRef<OfficeScene | null>(null)
 
   const agents = useOffice((s) => s.agents)
+  const tasks = useOffice((s) => s.tasks)
   const meeting = useOffice((s) => s.meeting)
   const setPeek = useOffice((s) => s.setPeek)
   const select = useOffice((s) => s.select)
+  const openTask = useOffice((s) => s.openTask)
 
   useEffect(() => {
     if (!canvasRef.current || !labelRef.current) return
     const scene = createScene(canvasRef.current, labelRef.current, {
       onMonitorClick: (desk) => setPeek(desk),
       onAvatarClick: (name) => select(name),
+      onTaskClick: (taskId) => openTask(taskId),
     })
     sceneRef.current = scene
     onScene(scene)
@@ -50,6 +53,10 @@ export default function Scene3D({ onScene }: Props) {
   useEffect(() => {
     sceneRef.current?.syncAgents(agents)
   }, [agents])
+
+  useEffect(() => {
+    sceneRef.current?.setTasks(tasks)
+  }, [tasks])
 
   useEffect(() => {
     sceneRef.current?.setMeeting(meeting)

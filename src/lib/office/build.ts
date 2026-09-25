@@ -5,6 +5,7 @@
 import * as THREE from 'three'
 import {
   CONFERENCE,
+  CONFERENCE_CHAIRS,
   DART,
   DESKS,
   FLOOR,
@@ -236,8 +237,9 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
     d.position.set(desk.x, 0, desk.z)
     d.rotation.y = desk.facing
 
+    // 0.72 m is the standard office desk height (0.74 looked subtly tall)
     const top = box(2.0, 0.09, 1.0, pal.deskTop, { rough: 0.5 })
-    top.position.y = 0.74
+    top.position.y = 0.72
     d.add(top)
     for (const [lx, lz] of [
       [-0.88, -0.4],
@@ -245,17 +247,17 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
       [-0.88, 0.4],
       [0.88, 0.4],
     ]) {
-      const leg = box(0.09, 0.72, 0.09, pal.deskLeg, { metal: 0.4 })
-      leg.position.set(lx, 0.36, lz)
+      const leg = box(0.09, 0.68, 0.09, pal.deskLeg, { metal: 0.4 })
+      leg.position.set(lx, 0.34, lz)
       d.add(leg)
     }
 
     // monitor (the clickable screen-peeker target)
     const stand = cyl(0.05, 0.09, 0.28, pal.deskLeg)
-    stand.position.set(0, 0.9, -0.26)
+    stand.position.set(0, 0.87, -0.26)
     d.add(stand)
     const bezel = box(0.98, 0.58, 0.05, 0x22262a, { metal: 0.3 })
-    bezel.position.set(0, 1.3, -0.26)
+    bezel.position.set(0, 1.22, -0.26)
     d.add(bezel)
     const screen = new THREE.Mesh(
       new THREE.PlaneGeometry(0.9, 0.5),
@@ -268,7 +270,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
         side: THREE.DoubleSide,
       }),
     )
-    screen.position.set(0, 1.3, -0.225)
+    screen.position.set(0, 1.22, -0.225)
     screen.userData = { kind: 'monitor', deskIndex: desk.index }
     screen.name = `monitor-${desk.index}`
     d.add(screen)
@@ -276,10 +278,10 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
 
     // keyboard + mug
     const kb = box(0.6, 0.03, 0.2, 0x2f3437)
-    kb.position.set(0, 0.79, 0.12)
+    kb.position.set(0, 0.77, 0.14)
     d.add(kb)
     const mug = cyl(0.055, 0.05, 0.1, 0xe8e2d6, 10)
-    mug.position.set(-0.7, 0.83, 0.1)
+    mug.position.set(-0.7, 0.81, 0.1)
     d.add(mug)
 
     // desk lamp: on at night, off during the day
@@ -288,18 +290,24 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
     group.add(lamp)
     lamps.push(lamp)
 
-    // chair behind the desk
+    // Task chair behind the desk. The whole group is rotated with the desk, so
+    // its local +Z points away from the monitor — the seat faces the desk by
+    // construction instead of by a hand-tuned z offset.
     const chair = new THREE.Group()
-    chair.position.set(-Math.sin(desk.facing) * 0.0, 0, 0.95)
-    const seat = box(0.62, 0.09, 0.6, pal.chair, { rough: 0.6 })
-    seat.position.y = 0.46
+    chair.position.set(0, 0, 0.95)
+    const seat = box(0.6, 0.08, 0.58, pal.chair, { rough: 0.6 })
+    seat.position.y = 0.47
     chair.add(seat)
-    const back = box(0.62, 0.62, 0.08, pal.chair, { rough: 0.6 })
-    back.position.set(0, 0.78, 0.27)
+    // seat back on the side AWAY from the desk (local -Z is toward the monitor)
+    const back = box(0.6, 0.6, 0.07, pal.chair, { rough: 0.6 })
+    back.position.set(0, 0.76, 0.28)
     chair.add(back)
-    const post = cyl(0.05, 0.07, 0.42, pal.deskLeg, 10)
-    post.position.y = 0.24
+    const post = cyl(0.05, 0.07, 0.43, pal.deskLeg, 10)
+    post.position.y = 0.215
     chair.add(post)
+    const star = cyl(0.3, 0.32, 0.05, 0x6d7a83, 12)
+    star.position.y = 0.025
+    chair.add(star)
     d.add(chair)
 
     group.add(d)
@@ -307,26 +315,32 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
 
   // ---- conference table + chairs
   const table = cyl(CONFERENCE.radius, CONFERENCE.radius, 0.1, pal.wood, 24)
-  table.position.set(CONFERENCE.x, 0.75, CONFERENCE.z)
+  table.position.set(CONFERENCE.x, 0.72, CONFERENCE.z)
   group.add(table)
   const tleg = cyl(0.14, 0.2, 0.72, pal.wood, 12)
-  tleg.position.set(CONFERENCE.x, 0.36, CONFERENCE.z)
+  tleg.position.set(CONFERENCE.x, 0.345, CONFERENCE.z)
   group.add(tleg)
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6
-    const cx = CONFERENCE.x + Math.cos(a) * (CONFERENCE.radius + 0.85)
-    const cz = CONFERENCE.z + Math.sin(a) * (CONFERENCE.radius + 0.85)
+  // Chairs face the table. `atan2(dx, dz)` points the group's local +Z at the
+  // table centre; the seat back must then sit on the FAR side, i.e. behind the
+  // sitter at local +Z — but the sitter looks along -Z toward the table, so the
+  // back goes at +Z and the sitter's body occupies -Z. The original code had the
+  // rotation sign inverted, which turned every chair around.
+  for (let i = 0; i < CONFERENCE_CHAIRS.count; i++) {
+    const a = CONFERENCE_CHAIRS.offset + (i / CONFERENCE_CHAIRS.count) * Math.PI * 2
+    const cx = CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring
+    const cz = CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring
     const c = new THREE.Group()
     c.position.set(cx, 0, cz)
-    c.rotation.y = Math.atan2(CONFERENCE.x - cx, CONFERENCE.z - cz)
-    const seat = box(0.58, 0.08, 0.56, pal.chair)
-    seat.position.y = 0.46
+    // face the table: look from the chair toward the table centre
+    c.rotation.y = Math.atan2(cx - CONFERENCE.x, cz - CONFERENCE.z)
+    const seat = box(0.56, 0.08, 0.54, pal.chair)
+    seat.position.y = 0.47
     c.add(seat)
-    const back = box(0.58, 0.56, 0.07, pal.chair)
-    back.position.set(0, 0.75, 0.26)
+    const back = box(0.56, 0.54, 0.07, pal.chair)
+    back.position.set(0, 0.74, 0.27) // behind the sitter, away from the table
     c.add(back)
-    const legs = cyl(0.04, 0.06, 0.44, pal.deskLeg, 8)
-    legs.position.y = 0.23
+    const legs = cyl(0.04, 0.06, 0.43, pal.deskLeg, 8)
+    legs.position.y = 0.215
     c.add(legs)
     group.add(c)
   }
@@ -395,7 +409,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   }
   plantPot(ROOMS.meeting.x2 - 0.9, ROOMS.meeting.z1 + 1.0)
   plantPot(ROOMS.lounge.x1 + 0.9, ROOMS.lounge.z1 + 1.0)
-  plantPot(ROOMS.lounge.x2 - 0.9, ROOMS.lounge.z2 - 1.2)
+  plantPot(ROOMS.lounge.x1 + 3.4, ROOMS.lounge.z2 - 1.0)
 
   // ---- lounge dressing (extra chair, rug, floor lamp, second table)
   const loungeChair = new THREE.Group()
@@ -439,7 +453,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   group.add(printerStand)
 
   const lockers = new THREE.Group()
-  lockers.position.set(ROOMS.work.x2 - 1.3, 0, ROOMS.work.z2 - 1.1)
+  lockers.position.set(ROOMS.work.x2 - 3.0, 0, ROOMS.work.z2 - 1.1)
   for (let i = 0; i < 4; i++) {
     const lk = box(0.42, 1.7, 0.44, i % 2 ? 0x9fb4c2 : 0x8ba5b6, { metal: 0.35 })
     lk.position.set(i * 0.44, 0.85, 0)
@@ -447,7 +461,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   }
   group.add(lockers)
   const lockerTop = box(1.85, 0.07, 0.5, 0xd3dbe0, { metal: 0.4 })
-  lockerTop.position.set(ROOMS.work.x2 - 1.3 + 0.66, 1.73, ROOMS.work.z2 - 1.1)
+  lockerTop.position.set(ROOMS.work.x2 - 3.0 + 0.66, 1.73, ROOMS.work.z2 - 1.1)
   group.add(lockerTop)
 
   const pantry = new THREE.Group()
@@ -490,6 +504,97 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
     group.add(sky)
   }
 
+  // ---- more environment so no bay reads as an empty slab
+  // storage wall along the corridor (south of the work area)
+  const shelf = (x: number, z: number, rot: number) => {
+    const g = new THREE.Group()
+    g.position.set(x, 0, z)
+    g.rotation.y = rot
+    const frame = box(2.0, 1.9, 0.38, 0xc8b394, { rough: 0.6 })
+    frame.position.y = 0.95
+    g.add(frame)
+    for (let i = 1; i <= 3; i++) {
+      const plank = box(1.9, 0.06, 0.42, 0xe4d8c2, { rough: 0.5 })
+      plank.position.y = 0.3 + i * 0.45
+      g.add(plank)
+    }
+    // a few binders so the shelf is not a blank box
+    for (let i = 0; i < 4; i++) {
+      const binder = box(0.09, 0.3, 0.3, [0x9a4f4f, 0x4f6f9a, 0x6f9a4f, 0xa88b4f][i], { rough: 0.7 })
+      binder.position.set(-0.6 + i * 0.34, 0.48, 0)
+      g.add(binder)
+    }
+    group.add(g)
+  }
+  shelf(ROOMS.work.x1 + 0.75, ROOMS.corridor.z1 - 0.9, Math.PI / 2)
+  shelf(ROOMS.work.x2 - 0.75, ROOMS.corridor.z1 - 0.9, -Math.PI / 2)
+
+  // two meeting pods in the work bay: small round tables with two chairs each
+  // Center of the work bay, clear of the corridor wall (printer/lockers/shelves)
+  // and of the meeting-room chair ring.
+  for (const px of [-3.3, 3.3]) {
+    const pod = new THREE.Group()
+    pod.position.set(px, 0, ROOMS.work.z2 - 4.6)
+    const ptop = cyl(0.55, 0.55, 0.06, 0xe6dccb, 18)
+    ptop.position.y = 0.72
+    pod.add(ptop)
+    const pleg = cyl(0.06, 0.09, 0.69, 0x9aa7b1, 10)
+    pleg.position.y = 0.345
+    pod.add(pleg)
+    for (const side of [-1, 1]) {
+      const pc = new THREE.Group()
+      pc.position.set(side * 0.95, 0, 0)
+      pc.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
+      const s2 = box(0.5, 0.07, 0.48, 0x9fb0bd, { rough: 0.7 })
+      s2.position.y = 0.46
+      pc.add(s2)
+      const b2 = box(0.5, 0.48, 0.06, 0x9fb0bd, { rough: 0.7 })
+      b2.position.set(0, 0.71, 0.24)
+      pc.add(b2)
+      const l2 = cyl(0.035, 0.05, 0.42, 0x8b98a3, 8)
+      l2.position.y = 0.21
+      pc.add(l2)
+      pod.add(pc)
+    }
+    group.add(pod)
+  }
+
+  // coat rack + doormat at the entrance, so the corridor mouth has a purpose
+  const coatRack = new THREE.Group()
+  coatRack.position.set(-2.4, 0, HALF_D - 2.0)
+  const crPole = cyl(0.05, 0.06, 1.75, 0x8b6f4f, 10)
+  crPole.position.y = 0.875
+  coatRack.add(crPole)
+  const crBase = cyl(0.3, 0.34, 0.06, 0x7a6244, 12)
+  crBase.position.y = 0.03
+  coatRack.add(crBase)
+  for (let i = 0; i < 4; i++) {
+    const a2 = (i / 4) * Math.PI * 2
+    const peg = box(0.05, 0.05, 0.26, 0x9c7d59)
+    peg.position.set(Math.cos(a2) * 0.13, 1.62, Math.sin(a2) * 0.13)
+    peg.rotation.y = -a2
+    coatRack.add(peg)
+  }
+  group.add(coatRack)
+
+  const mat2 = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 1.2),
+    new THREE.MeshStandardMaterial({ color: 0x6f7a72, roughness: 1 }),
+  )
+  mat2.rotation.x = -Math.PI / 2
+  mat2.position.set(0, 0.014, HALF_D - 1.8)
+  group.add(mat2)
+
+  // water station moved clear of the pantry, plus a recycling bin pair
+  const bins = new THREE.Group()
+  bins.position.set(ROOMS.lounge.x1 + 1.2, 0, ROOMS.corridor.z1 - 1.0)
+  for (const [i, c] of [0x4f7f9a, 0x7f9a4f].entries()) {
+    const bin = cyl(0.24, 0.2, 0.7, c, 12)
+    bin.position.set(i * 0.55, 0.35, 0)
+    bins.add(bin)
+  }
+  group.add(bins)
+
   // ---- dartboard + water cooler
   const db = cyl(0.62, 0.62, 0.08, 0xe8e2d6, 20)
   db.rotation.x = Math.PI / 2
@@ -501,7 +606,7 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
   group.add(bull)
 
   const cooler = new THREE.Group()
-  cooler.position.set(HALF_W - 1.5, 0, HALF_D - 4)
+  cooler.position.set(ROOMS.lounge.x2 - 0.9, 0, ROOMS.lounge.z2 - 4.6)
   const body = box(0.6, 1.0, 0.6, 0xdfe7ea)
   body.position.y = 0.5
   cooler.add(body)

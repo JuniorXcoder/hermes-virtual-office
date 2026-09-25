@@ -348,7 +348,7 @@ kbd {
 .vp-hint kbd {
   background: #1b252d;
   border: 1px solid #33424c;
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 0 4px;
   color: var(--text);
 }
@@ -389,3 +389,58 @@ kbd {
   padding: 3px 7px;
   white-space: nowrap;
 }
+
+/* --------------------------------------------------- kanban cards on the 3D wall -- */
+.vp-board-cards {
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.vp-board-cols {
+  display: flex;
+  gap: 5px;
+  /* 560px spans the board's 15-unit width at the default camera; the height must
+     stay well under a third of that so four card rows fit above the board's
+     bottom edge (5.4 units tall) */
+  width: 470px;
+  /* the anchor is a point; translateX(-50%) centres the grid on it (a margin
+     would only shift it, because the parent is sized to its content) */
+  pointer-events: none;
+}
+.vp-board-cards {
+  /* CSS2DRenderer anchors the root at a point; give it a 0x0 box and let the
+     absolutely-positioned grid centre itself on that point. */
+  position: relative;
+  width: 0;
+  height: 0;
+}
+.vp-board-cards-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+.vp-board-card {
+  font: 500 8px/1.2 ui-sans-serif, system-ui, sans-serif;
+  text-align: left;
+  color: #e6f5ee;
+  background: #174658e0;
+  border: 1px solid #2f7f9c8c;
+  border-left: 3px solid #58c9a0;
+  border-radius: 3px;
+  padding: 2px 4px;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vp-board-card:hover { background: #1d5f78f2; border-color: #7fe0bd; }
+.vp-board-card[data-status='done'] { border-left-color: #4a8f6a; opacity: 0.82; }
+.vp-board-card[data-status='review'] { border-left-color: #f0b556; }
+.vp-board-card[data-status='blocked'] { border-left-color: #e5726f; }
+.vp-board-card[data-status='running'] { border-left-color: #58d2f0; }
+.vp-board-empty { font-size: 8px; color: #4d7f6f; text-align: center; padding: 3px 0; }
+.vp-board-more { font-size: 7.5px; color: #7fb8a2; text-align: center; }
