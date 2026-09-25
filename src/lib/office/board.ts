@@ -1,23 +1,24 @@
 /**
  * Kanban cards rendered onto the 3D wall board.
  *
- * The board is a CSS2D surface: cards live in the DOM and are positioned by
- * leaving them as children of the board mesh, which is the cheapest way to get
- * crisp readable text in a WebGL scene. Each card is clickable, which is how the
- * office exposes a task's detail from the 3D view.
+ * The cards are DOM elements anchored to the board mesh through CSS2DObject.
+ * Three properties matter and each was a bug first:
  *
- * Anything the board can show is derived from office state, so the same layout
- * logic drives both the 3D wall and the 2D board.
+ *   1. Pinned to the board's LOCAL frame. Assigning the grid as a child of the
+ *      board mesh means it inherits the board's transform, so it can never drift
+ *      off the surface when the camera orbits.
+ *   2. Centred with `translate(-50%, -50%)`. The CSS2D root is sized to its
+ *      content, so a negative margin only shifts the grid; percentage translate
+ *      is relative to the element's own box and actually centres it.
+ *   3. The grid is clipped to the board rectangle and scrolls vertically per
+ *      column, so a long backlog stays on the board instead of spilling over it.
  */
 import * as THREE from 'three'
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { BOARD_COLUMNS, KANBAN_BOARD } from './layout'
 import type { Task } from '@/types/hermes'
 
-/** Column key for each displayed column, in board order. */
-const COLUMN_KEYS: string[] = ['todo', 'running', 'review', 'done']
-
-/** Group the finer-grained Hermes statuses into the four board columns. */
+/** Group Hermes' finer-grained statuses into the four displayed columns. */
 export function columnOf(status: string): number {
   switch (status) {
     case 'todo':
@@ -32,7 +33,7 @@ export function columnOf(status: string): number {
     case 'done':
       return 3
     default:
-      return 0 // blocked / archived fall in with the backlog
+      return 0 // blocked / archived ride with the backlog
   }
 }
 
@@ -40,65 +41,63 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
   const root = document.createElement('div')
   root.className = 'vp-board-cards'
   const obj = new CSS2DObject(root)
-  // Anchor the cards at the BOARD'S WORLD POSITION minus a small drop, expressed
-  // in the parent's local space. Named lookups are avoided: attaching at (0,0,0)
-  // tracks the mesh origin, which for this board is its centre — fine in theory,
-  // but it drifted off-board in practice, so the anchor is explicit.
-  // +0.15 puts the grid on the board's front face (mesh depth is 0.2);
-  // -0.55 starts the cards below the column header row.
-  obj.position.set(0, -0.35, 0.15)
+  // Local +Z is the board's front face; the mesh is 0.14 deep.
+  obj.position.set(0, 0, 0.09)
   board.add(obj)
 
-  /** column index -> its DOM column element */
-  const columns: HTMLDivElement[] = []
-  // Centring must happen INSIDE a zero-width wrapper. CSS2DRenderer positions the
-  // root element as a point (it does not apply translate(-50%,-50%) here), so a
-  // 560px grid with a negative margin drifts left of the board instead of
-  // straddling it. `left: -280px` on an absolutely-positioned child inside a
-  // 0x0 parent centres it correctly relative to the 3D anchor.
-  // CSS2DRenderer sizes the root element to its content, so there is no 0x0 box
-  // to centre against and a negative `left` merely shifts the grid. Centre it on
-  // its OWN width instead: translateX(-50%) is relative to the element itself.
+  // One grid whose width matches the board's world width at the anchor scale.
   const grid = document.createElement('div')
   grid.className = 'vp-board-cols'
+  // Inline, not class-based: the centring transform must not depend on CSS
+  // cascade order relative to the layout rules.
+  grid.style.position = 'absolute'
+  grid.style.left = '0'
+  grid.style.top = '0'
+  grid.style.display = 'flex'
+  grid.style.gap = '6px'
+  // width is set from the board's projection (see setPixelHeight)
   grid.style.transform = 'translate(-50%, -50%)'
   root.appendChild(grid)
-  const columnEls = grid
+
+  const columns: HTMLDivElement[] = []
   for (let i = 0; i < BOARD_COLUMNS.length; i++) {
     const col = document.createElement('div')
     col.className = 'vp-board-cards-col'
-    columnEls.appendChild(col)
+    // each column scrolls on its own so tall backlogs stay inside the board
+    col.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      col.scrollTop += (e as WheelEvent).deltaY
+    })
+    grid.appendChild(col)
     columns.push(col)
   }
 
   let lastSignature = ''
 
   function render(tasks: Task[]) {
-    // Only touch the DOM when the projection actually changed: this runs on a
-    // 4s poll and re-creating nodes would kill hover/scroll state.
     const signature = tasks
-      .map((t) => `${t.id}:${t.status}:${t.title}`)
+      .map((t) => `${t.id}:${t.status}:${t.title}:${t.priority}`)
       .sort()
       .join('|')
+    // Skip the DOM churn when the projection is unchanged: this runs on a poll
+    // and rebuilding nodes would reset each column's scroll position.
     if (signature === lastSignature) return
     lastSignature = signature
 
+    const scrolled = columns.map((c) => c.scrollTop)
     for (const col of columns) col.textContent = ''
 
-    // Stable order: by priority, then most recently touched.
     const sorted = [...tasks].sort(
       (a, b) =>
         (b.priority ?? 0) - (a.priority ?? 0) ||
         (Date.parse(b.updatedAt || '') || 0) - (Date.parse(a.updatedAt || '') || 0),
     )
-
-    const CAP = 3 // four rows overflowed the 5.4-unit board; 3 fit cleanly
     const perColumn: Task[][] = BOARD_COLUMNS.map(() => [])
     for (const t of sorted) perColumn[columnOf(t.status)].push(t)
 
     perColumn.forEach((list, i) => {
       const col = columns[i]
-      for (const t of list.slice(0, CAP)) {
+      for (const t of list) {
         const card = document.createElement('button')
         card.type = 'button'
         card.className = 'vp-board-card'
@@ -111,22 +110,38 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
         })
         col.appendChild(card)
       }
-      if (list.length > CAP) {
-        const more = document.createElement('div')
-        more.className = 'vp-board-more'
-        more.textContent = `+${list.length - CAP} lagi`
-        col.appendChild(more)
-      }
       if (!list.length) {
         const empty = document.createElement('div')
         empty.className = 'vp-board-empty'
         empty.textContent = '—'
         col.appendChild(empty)
       }
+      col.scrollTop = scrolled[i] ?? 0
     })
   }
 
-  return { render, dispose: () => board.remove(obj) }
+  /**
+   * Match the card grid to the board's CURRENT on-screen height.
+   *
+   * The board's projected size changes with camera distance, and a fixed CSS
+   * height cannot track it: measured at a normal zoom the 8.4-unit board was
+   * only ~135px tall while a fixed 250px grid overflowed it. The scene projects
+   * the board each frame and calls this with the real pixel height, so the cards
+   * always sit inside the green surface.
+   */
+  function setBoardSize(widthPx: number, heightPx: number) {
+    // The grid must track BOTH axes of the projected board. A fixed CSS width
+    // (560px) was 2.6x the board's real on-screen width (~218px), so the columns
+    // rendered beside the board instead of on it.
+    const w = Math.max(180, Math.min(900, widthPx * 0.9))
+    // leave headroom for the title row and the column headers
+    const h = Math.max(40, Math.min(420, heightPx * 0.56))
+    grid.style.width = `${w}px`
+    grid.style.height = `${h}px`
+    for (const col of columns) col.style.maxHeight = `${h}px`
+  }
+
+  return { render, setBoardSize, dispose: () => board.remove(obj) }
 }
 
-export { COLUMN_KEYS, KANBAN_BOARD }
+export { KANBAN_BOARD }

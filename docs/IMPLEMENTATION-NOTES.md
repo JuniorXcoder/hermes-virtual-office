@@ -197,3 +197,50 @@ turns were genuinely driven by the provider call and not fabricated locally.
 Product options (participant count, rounds, turn cap) are read from
 `process.env` at module load, so overriding them for a test must happen in the
 process environment, not by mutating `process.env` at runtime.
+
+---
+
+## 8. Layout, collision, and the two measurement traps
+
+### A footprint table is the contract
+
+`layout.ts` declares every solid object as an axis-aligned footprint, and
+`layoutConflicts()` proves no two occupy the same ground. This is not ceremony:
+running it over the first draft of the new plan found six real collisions
+(meeting pods against the printer, lockers and the archive shelf) that no visual
+sweep had caught. Add the footprint first, run the check, then draw the prop.
+
+`nav.ts` turns the same table into a walkable grid (0.5 m cells, body radius
+0.34 m) and runs A* with corner-cut prevention. `blocked()` inflates each
+footprint by the body radius, so a walker slides along a desk instead of entering
+it. Verified: 7/7 routes across the office are waypoint-clean, and 73% of the
+grid is walkable.
+
+### Trap 1 — CSS2D anchoring needs BOTH axes
+
+Anchoring the Kanban card grid to the board mesh is not enough. The board's
+projected size changes with camera distance, and a fixed CSS width is wrong at
+every zoom but one: measured at a normal view the 13.6-unit board was **239 px
+wide and 135 px tall** while the grid was a fixed **560 px** — 2.3x too wide, so
+the columns rendered *beside* the board. The scene now projects both corners each
+~12 frames and calls `setBoardSize(w, h)`. Do not hard-code either dimension.
+
+Also: `CSS2DRenderer` anchors the element as a POINT and sizes the parent to its
+content, so a negative margin only shifts the grid. `transform: translate(-50%,
+-50%)` is required, and it must be set inline so CSS cascade order cannot drop it.
+
+### Trap 2 — a clamped delta turns the office into slow motion
+
+`dt = Math.min(0.05, elapsed)` looks like sane spike protection. On a slow
+renderer it silently caps the simulation: at 0.5 fps every frame advanced the
+world by only 50 ms, so avatars crawled at ~0.06 m/s instead of 3.4 m/s. Clamp
+loosely (0.25) and treat frame rate as a first-class concern.
+
+### The 0.5 fps was the test rig, not the app
+
+The headless browser in this environment renders WebGL through **SwiftShader**
+(software rasteriser, `ANGLE (Google, Vulkan ... SwiftShader Device)`), which
+costs ~2 s per frame on a scene of this size. Every frame-rate number measured
+here is a property of the test rig. Before optimising further, check
+`WEBGL_debug_renderer_info` — optimising an application for a software
+rasteriser is wasted work.

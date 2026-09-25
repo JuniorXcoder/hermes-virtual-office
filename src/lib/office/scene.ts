@@ -9,6 +9,7 @@ import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar, type Avatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
 import { buildBoardCards } from './board'
+import { blocked, route, BODY_R } from './nav'
 import {
   CONFERENCE,
   CONFERENCE_CHAIRS,
@@ -21,6 +22,7 @@ import {
   ROOMS,
   HALF_D,
   HALF_W,
+  deskSeatWorld,
   visitorSpot,
   type Desk,
 } from './layout'
@@ -29,6 +31,9 @@ import type { Agent, Meeting, Task } from '@/types/hermes'
 export type SceneAgent = AnimAgent & {
   data: Agent
   target: THREE.Vector3 | null
+  /** Remaining waypoints from A*; movement follows these, not the raw target. */
+  path: { x: number; z: number }[]
+  destKey: string
   face: number
   walking: number
   meetingTalking: boolean
@@ -52,8 +57,8 @@ export function createScene(
 ) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.shadowMap.enabled = false // 600+ meshes: shadows cost more than they add here
+  renderer.shadowMap.type = THREE.PCFShadowMap
   // Without an explicit tone mapping + exposure the standard materials render
   // flat and muddy, which is what made the office look dim and lifeless.
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -80,18 +85,22 @@ export function createScene(
   controls.target.set(0, 1.2, 0)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
-  controls.maxPolarAngle = Math.PI / 2.15
-  controls.minDistance = 9
-  controls.maxDistance = 60
+  controls.maxPolarAngle = Math.PI / 2.35
+  controls.minDistance = 8
+  // Clamp zoom-out to the building itself: letting the camera escape shows the
+  // empty world box behind the set dressing.
+  controls.maxDistance = 46
+  controls.enablePan = true
+  controls.screenSpacePanning = false
 
-  // ---- Kanban board legend: makes the wall display readable as a board
+  // ---- Kanban board legend: header row above the card grid, on the board face
   const BOARD_COLUMNS = BOARD_COLS
   {
     const titleEl = document.createElement('div')
     titleEl.className = 'vp-board-title'
     titleEl.textContent = 'SPRINT · PAPAN KANBAN'
     const title = new CSS2DObject(titleEl)
-    title.position.set(0, KANBAN_BOARD.h / 2 + 0.45, 0.2)
+    title.position.set(0, KANBAN_BOARD.h / 2 - 0.34, 0.09)
     office.boardSurface.add(title)
 
     BOARD_COLUMNS.forEach((name, i) => {
@@ -100,13 +109,13 @@ export function createScene(
       el.textContent = name
       const obj = new CSS2DObject(el)
       const step = KANBAN_BOARD.w / BOARD_COLUMNS.length
-      // header row, just under the title (was mistakenly pinned to the footer)
-      obj.position.set(-KANBAN_BOARD.w / 2 + step * (i + 0.5), KANBAN_BOARD.h / 2 - 0.75, 0.2)
+      // just under the title, above the scrolling card area
+      obj.position.set(-KANBAN_BOARD.w / 2 + step * (i + 0.5), KANBAN_BOARD.h / 2 - 0.78, 0.09)
       office.boardSurface.add(obj)
     })
   }
 
-  // ---- cards pinned to the wall board
+  // ---- cards pinned to the wall board (child of the board mesh)
   const board = buildBoardCards(office.boardSurface, (taskId) => events.onTaskClick?.(taskId))
 
   const agents: SceneAgent[] = []
@@ -139,6 +148,8 @@ export function createScene(
       ease: 0,
       phase: Math.random() * Math.PI * 2,
       target: null,
+      path: [],
+      destKey: '',
       face: 0,
       walking: 0,
       meetingTalking: false,
@@ -150,7 +161,9 @@ export function createScene(
     byName.set(data.name, a)
     setLabel(a)
     // enter through the door
-    av.group.position.set(DOOR.x + (Math.random() - 0.5) * 1.4, 0, DOOR.z)
+    // spawn just INSIDE the doorway: the threshold itself is outside the
+    // walkable band, so an avatar placed on it can never path anywhere
+    av.group.position.set(DOOR.x + (Math.random() - 0.5) * 1.2, 0, DOOR.z - 1.0)
     return a
   }
 
@@ -194,9 +207,9 @@ export function createScene(
   // ---- destination resolution ------------------------------------------------
 
   function deskTarget(desk: Desk) {
-    // sit slightly behind the desk top, on the chair
-    const back = desk.side === 'near' ? 0.95 : -0.95
-    return new THREE.Vector3(desk.x, 0, desk.z + back)
+    // MUST match the chair drawn in build.ts, which reads the same constant.
+    const seat = deskSeatWorld(desk)
+    return new THREE.Vector3(seat.x, 0, seat.z)
   }
 
   /** Must mirror the chair ring drawn in build.ts — a mismatch parks agents on bare floor. */
@@ -209,17 +222,19 @@ export function createScene(
     )
   }
 
-  // Spread across distinct zones so idle agents never stack on one spot.
+  // Idle lounging spots. Each MUST be walkable — `nav.blocked()` validates them
+  // at startup and drops any that land inside furniture, so an agent can never
+  // be assigned a destination it cannot reach.
   const IDLE_SPOTS = [
-    new THREE.Vector3(LOUNGE.x - 1.1, 0, LOUNGE.z - 0.15), // sofa
-    new THREE.Vector3(DART.x - 2.4, 0, DART.z - 0.8), // dartboard
-    new THREE.Vector3(HALF_W - 3.0, 0, HALF_D - 3.8), // water cooler
-    new THREE.Vector3(ROOMS.meeting.x2 - 1.6, 0, ROOMS.meeting.z2 + 1.6), // meeting doorway
-    new THREE.Vector3(ROOMS.work.x1 + 2.6, 0, ROOMS.corridor.z1 - 1.2), // print corner
-    new THREE.Vector3(ROOMS.work.x2 - 2.4, 0, ROOMS.corridor.z1 - 1.2), // lockers
-    new THREE.Vector3(-2.6, 0, ROOMS.corridor.z1 + 1.4), // corridor
-    new THREE.Vector3(2.6, 0, ROOMS.corridor.z1 + 1.4), // corridor
-  ]
+    { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa' as Activity },
+    { x: DART.x - 2.6, z: DART.z + 0.4, act: 'dart' as Activity },
+    { x: 15.0, z: -3.4, act: 'idle' as Activity }, // by the water cooler
+    { x: -8.6, z: 1.0, act: 'idle' as Activity }, // meeting room doorway
+    { x: -4.0, z: 4.6, act: 'idle' as Activity }, // lobby, west side
+    { x: 4.0, z: 4.6, act: 'idle' as Activity }, // lobby, east side
+    { x: -8.4, z: 6.6, act: 'idle' as Activity }, // reception
+    { x: 9.4, z: 0.6, act: 'idle' as Activity }, // lounge entry
+  ].filter((p) => !blocked(p.x, p.z, BODY_R))
 
   /** Decide activity + destination for the coming frames. */
   function retarget(
@@ -273,44 +288,108 @@ export function createScene(
     }
 
     // 5. idle: pick a stable spot so avatars do not clump on the same furniture
-    const slot = index % IDLE_SPOTS.length
-    a.target = IDLE_SPOTS[slot].clone()
-    if (slot === 0) a.activity = 'sofa'
-    else if (slot === 1) a.activity = 'dart'
-    else a.activity = 'idle'
+    if (!IDLE_SPOTS.length) {
+      a.target = new THREE.Vector3(0, 0, 8)
+      a.activity = 'idle'
+      return
+    }
+    const spot = IDLE_SPOTS[index % IDLE_SPOTS.length]
+    a.target = new THREE.Vector3(spot.x, 0, spot.z)
+    a.activity = spot.act
   }
 
   // ---- simulation ------------------------------------------------------------
 
   const tmp = new THREE.Vector3()
+  const tmpA = new THREE.Vector3()
+  const tmpB = new THREE.Vector3()
   let t = 0
   let raf = 0
   let last = performance.now()
+  /** Diagnostics: frame count + last dt, surfaced for the e2e hook. */
+  const stats = { frames: 0, lastDt: 0, fps: 0, fpsAt: performance.now(), fpsFrames: 0 }
+  /** 2 = full, 1 = no antialias/soft effects, 0 = bare minimum. */
+  let quality = 2
+  const qualityLocked = true // measured in the browser, adjustment is not needed there
+
+  function setQuality(q: number) {
+    quality = Math.max(0, Math.min(2, q))
+    renderer.setPixelRatio(q === 2 ? Math.min(devicePixelRatio, 2) : 1)
+    if (q < 2) {
+      const parent = renderer.domElement.parentElement
+      if (parent) renderer.setSize(parent.clientWidth, parent.clientHeight, false)
+    }
+  }
+  void setQuality
   let currentMeeting: Meeting | null = null
 
   function frame(now: number) {
     raf = requestAnimationFrame(frame)
-    const dt = Math.min(0.05, (now - last) / 1000)
+    // Wall-clock delta, clamped only against tab-switch spikes. A tight clamp
+    // (0.05) silently turns the whole office into slow motion on a slow GPU,
+    // which is what made avatars appear to crawl.
+    const dt = Math.min(0.25, (now - last) / 1000)
     last = now
     t += dt
+
+    stats.frames++
+    stats.lastDt = dt
+    stats.fpsFrames++
+    if (now - stats.fpsAt >= 1000) {
+      stats.fps = (stats.fpsFrames * 1000) / (now - stats.fpsAt)
+      stats.fpsAt = now
+      stats.fpsFrames = 0
+      // Step the renderer down when the machine cannot keep up (software WebGL
+      // in a VM or a headless browser, or a very weak GPU). Three tiers, and it
+      // never steps back up so a struggling machine does not oscillate.
+      if (!qualityLocked) {
+        if (stats.fps < 12 && quality > 0) setQuality(quality - 1)
+        else if (stats.fps < 26 && quality > 1) setQuality(quality - 2)
+      }
+    }
 
     agents.forEach((a, i) => {
       retarget(a, currentMeeting, i, i, agents.length)
 
       const g = a.avatar.group
       if (a.target) {
-        tmp.set(a.target.x - g.position.x, 0, a.target.z - g.position.z)
+        // Re-plan only when the destination moved: A* over the nav grid is what
+        // keeps walkers out of desks, so movement follows `path`, not a straight
+        // line to the target.
+        const destKey = `${a.target.x.toFixed(1)},${a.target.z.toFixed(1)}`
+        if (destKey !== a.destKey || !a.path.length) {
+          a.destKey = destKey
+          a.path = route({ x: g.position.x, z: g.position.z }, { x: a.target.x, z: a.target.z })
+          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z }]
+        }
+
+        const leg = a.path[0]
+        tmp.set(leg.x - g.position.x, 0, leg.z - g.position.z)
         const dist = tmp.length()
-        const arrived = dist < 0.22
-        if (!arrived) {
+        if (dist < 0.18) {
+          a.path.shift()
+          if (!a.path.length) {
+            g.position.set(a.target.x, g.position.y, a.target.z)
+            a.walking = 0
+          }
+        } else {
           tmp.normalize()
-          const speed = 2.5
-          g.position.addScaledVector(tmp, Math.min(speed * dt, dist))
+          // Slide along the surface when the next micro-step would enter a prop,
+          // so a body never ends up inside furniture after a re-plan.
+          const SPEED = 3.4 // m/s, brisk office walking pace
+          const nx = g.position.x + tmp.x * SPEED * dt
+          const nz = g.position.z + tmp.z * SPEED * dt
+          // The A* path is already collision-free; this guard exists only to
+          // absorb float drift, so a blocked micro-step nudges toward the
+          // waypoint rather than freezing the agent in place.
+          if (!blocked(nx, nz, BODY_R * 0.9)) {
+            g.position.set(nx, g.position.y, nz)
+          } else {
+            g.position.x += tmp.x * 0.02
+            g.position.z += tmp.z * 0.02
+          }
           a.face = Math.atan2(tmp.x, tmp.z)
           a.walking = 1
-        } else {
-          g.position.set(a.target.x, g.position.y, a.target.z)
-          a.walking = 0
         }
       } else {
         a.walking = 0
@@ -361,6 +440,22 @@ export function createScene(
         a.bubble.visible = true
       }
     })
+
+    // Keep the card grid matched to the board's on-screen size (throttled: the
+    // projection only needs re-measuring a few times a second).
+    if (stats.frames % 12 === 0) {
+      tmpA.set(-KANBAN_BOARD.w / 2, KANBAN_BOARD.h / 2, 0)
+      tmpB.set(KANBAN_BOARD.w / 2, -KANBAN_BOARD.h / 2, 0)
+      office.boardSurface.localToWorld(tmpA)
+      office.boardSurface.localToWorld(tmpB)
+      tmpA.project(camera)
+      tmpB.project(camera)
+      const w = renderer.domElement.clientWidth
+      const h = renderer.domElement.clientHeight
+      const pxW = Math.abs(tmpB.x - tmpA.x) * 0.5 * w
+      const pxH = Math.abs(tmpB.y - tmpA.y) * 0.5 * h
+      if (pxW > 0 && pxH > 0) board.setBoardSize(pxW, pxH)
+    }
 
     controls.update()
     renderer.render(scene, camera)
@@ -471,6 +566,7 @@ export function createScene(
   return {
     scene,
     camera,
+    stats,
     controls,
     office,
     agents,

@@ -1,268 +1,434 @@
 /**
- * Furniture builders. Everything is procedural low-poly: no external assets, so
- * the repo stays small and the scene loads instantly on low-end GPUs.
+ * Furniture and environment builder.
+ *
+ * EVERYTHING solid here is declared as a footprint in `layout.ts` first, and
+ * `layoutConflicts()` is the check that proves the plan is clean. When adding a
+ * prop: add its footprint there, run the check, then draw it here at the same
+ * coordinates. Props that avatars may walk through (rugs, doormats) carry a
+ * zero footprint height.
+ *
+ * Textures are procedural canvases rather than image files: the repo stays free
+ * of binary assets, and a low-poly look does not need photographic detail.
  */
 import * as THREE from 'three'
 import {
   CONFERENCE,
   CONFERENCE_CHAIRS,
-  DART,
   DESKS,
+  DESK_CHAIR,
+  DOOR,
+  DART,
   FLOOR,
+  FOOTPRINTS,
   HALF_D,
   HALF_W,
   KANBAN_BOARD,
   LOUNGE,
+  PAINTINGS,
+  RECEPTION,
   ROOMS,
   WALL_H,
+  WALL_T,
+  WINDOWS,
   paletteFor,
   type Desk,
   type Palette,
 } from './layout'
 
-const box = (
-  w: number,
-  h: number,
-  d: number,
-  color: number,
-  opts: { metal?: number; rough?: number; emissive?: number } = {},
-) =>
-  new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({
-      color,
-      metalness: opts.metal ?? 0,
-      roughness: opts.rough ?? 0.75,
-      emissive: opts.emissive ?? 0x000000,
-      emissiveIntensity: opts.emissive ? 0.9 : 0,
-    }),
-  )
+/* ------------------------------------------------------------- primitives -- */
 
-const cyl = (rt: number, rb: number, h: number, color: number, seg = 14) =>
-  new THREE.Mesh(
-    new THREE.CylinderGeometry(rt, rb, h, seg),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.7 }),
-  )
+type MatOpts = { metal?: number; rough?: number; emissive?: number; ei?: number }
+const stdMat = (color: number, o: MatOpts = {}) =>
+  new THREE.MeshStandardMaterial({
+    color,
+    metalness: o.metal ?? 0,
+    roughness: o.rough ?? 0.75,
+    emissive: o.emissive ?? 0x000000,
+    emissiveIntensity: o.ei ?? (o.emissive ? 0.9 : 0),
+  })
+
+const box = (w: number, h: number, d: number, color: number, o: MatOpts = {}) =>
+  new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stdMat(color, o))
+
+const cyl = (rt: number, rb: number, h: number, color: number, seg = 14, metal = 0) =>
+  new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), stdMat(color, { metal, rough: 0.6 }))
+
+/* --------------------------------------------------------------- textures -- */
+
+function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) => void) {
+  const cv = document.createElement('canvas')
+  cv.width = cv.height = size
+  const ctx = cv.getContext('2d')!
+  draw(ctx, size)
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.anisotropy = 4
+  return tex
+}
+
+/** Wood plank flooring: grain lines plus subtle plank seams. */
+function woodFloorTexture(base: string, dark: string) {
+  return canvasTex(256, (c, s) => {
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let y = 0; y < s; y += 32) {
+      c.fillStyle = dark
+      c.fillRect(0, y, s, 2) // plank seam
+      for (let i = 0; i < 40; i++) {
+        c.globalAlpha = 0.05 + Math.random() * 0.08
+        c.fillStyle = '#000'
+        c.fillRect(Math.random() * s, y + 3 + Math.random() * 26, 10 + Math.random() * 60, 1)
+      }
+      c.globalAlpha = 1
+      // stagger the plank ends
+      c.fillStyle = dark
+      c.fillRect(((y / 32) % 2 ? 96 : 176) % s, y, 2, 32)
+    }
+  })
+}
+
+/** Large-format tile for the lobby and corridor. */
+function tileTexture(base: string, line: string) {
+  return canvasTex(256, (c, s) => {
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    c.strokeStyle = line
+    c.lineWidth = 3
+    for (let i = 0; i <= s; i += 64) {
+      c.beginPath()
+      c.moveTo(i, 0)
+      c.lineTo(i, s)
+      c.moveTo(0, i)
+      c.lineTo(s, i)
+      c.stroke()
+    }
+    for (let i = 0; i < 700; i++) {
+      c.globalAlpha = 0.04
+      c.fillStyle = Math.random() > 0.5 ? '#fff' : '#000'
+      c.fillRect(Math.random() * s, Math.random() * s, 2, 2)
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Painted artwork for the wall frames — abstract, deterministic per index. */
+function artTexture(seed: number) {
+  const hues = [212, 24, 148, 340, 44, 268, 190, 8]
+  return canvasTex(128, (c, s) => {
+    const h = hues[seed % hues.length]
+    c.fillStyle = `hsl(${h} 26% 88%)`
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 6; i++) {
+      c.globalAlpha = 0.5
+      c.fillStyle = `hsl(${(h + i * 34) % 360} ${38 + i * 6}% ${34 + i * 7}%)`
+      const w = 16 + ((seed * 13 + i * 29) % 60)
+      const x = (seed * 23 + i * 37) % (s - w)
+      const y = (seed * 41 + i * 19) % (s - 30)
+      c.beginPath()
+      c.ellipse(x + w / 2, y + 18, w / 2, 12 + (i % 3) * 5, (i * 0.6) % 3, 0, Math.PI * 2)
+      c.fill()
+    }
+    c.globalAlpha = 1
+  })
+}
 
 export type OfficeProps = {
   group: THREE.Group
-  desks: Desk[]
   monitors: THREE.Mesh[]
   lamps: THREE.PointLight[]
   boardSurface: THREE.Mesh
+  streaks: THREE.Mesh[]
+  streetGroup: THREE.Group
   applyPalette: (hour: number) => void
+  dispose: () => void
 }
 
-export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
+export function buildOffice(scene: THREE.Scene, hour: number) {
   const group = new THREE.Group()
   scene.add(group)
-
   let pal: Palette = paletteFor(hour)
+  const disposables: { dispose(): void }[] = []
+  const track = <T extends { dispose(): void }>(t: T): T => {
+    disposables.push(t)
+    return t
+  }
 
-  // ---- floor + rug + walls
+  const floorTex = track(woodFloorTexture('#e0cfa8', '#b99b6d'))
+  floorTex.repeat.set(FLOOR.width / 2.6, FLOOR.depth / 2.6)
+  const lobbyTex = track(tileTexture('#cfd6da', '#aab4bb'))
+  lobbyTex.repeat.set(FLOOR.width / 3.2, (ROOMS.lobby.z2 - ROOMS.lobby.z1) / 3.2)
+
+  /* ------------------------------------------------------------- floors --- */
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth),
-    new THREE.MeshStandardMaterial({ color: pal.floor, roughness: 0.9 }),
+    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.85 }),
   )
   floor.rotation.x = -Math.PI / 2
   group.add(floor)
 
-  const rug = new THREE.Mesh(
-    new THREE.PlaneGeometry(6.4, 4.4),
-    new THREE.MeshStandardMaterial({ color: pal.rug, roughness: 0.95 }),
+  // the lobby is a different material so the transition reads as architecture
+  const lobbyFloor = new THREE.Mesh(
+    new THREE.PlaneGeometry(ROOMS.lobby.x2 - ROOMS.lobby.x1, ROOMS.lobby.z2 - ROOMS.lobby.z1),
+    new THREE.MeshStandardMaterial({ map: lobbyTex, roughness: 0.55 }),
   )
-  rug.rotation.x = -Math.PI / 2
-  rug.position.set(CONFERENCE.x, 0.01, CONFERENCE.z)
-  group.add(rug)
+  lobbyFloor.rotation.x = -Math.PI / 2
+  lobbyFloor.position.set(0, 0.006, (ROOMS.lobby.z1 + ROOMS.lobby.z2) / 2)
+  group.add(lobbyFloor)
 
-  const wallMat = new THREE.MeshStandardMaterial({ color: pal.wall, roughness: 0.9 })
-  const mkWall = (w: number, d: number, x: number, z: number) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_H, d), wallMat)
-    m.position.set(x, WALL_H / 2, z)
+  // meeting room gets a rug, lounge too
+  const rug = (x: number, z: number, w: number, d: number, color: number) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stdMat(color, { rough: 0.95 }))
+    m.rotation.x = -Math.PI / 2
+    m.position.set(x, 0.012, z)
     group.add(m)
-    return m
   }
-  // north wall carries the Kanban board, so it stays whole
-  const walls = [
-    mkWall(FLOOR.width, 0.4, 0, -HALF_D),
-    mkWall(0.4, FLOOR.depth, -HALF_W, 0),
-    mkWall(0.4, FLOOR.depth, HALF_W, 0),
-  ]
-  // south wall with a gap for the door
-  mkWall(12, 0.4, -10, HALF_D)
-  mkWall(12, 0.4, 10, HALF_D)
-  mkWall(8, 0.4, 0, HALF_D - 0.001).visible = false // keep the doorway open
+  rug(CONFERENCE.x, CONFERENCE.z, 7.4, 6.2, pal.rug)
+  rug(LOUNGE.x, LOUNGE.z - 2.4, 5.4, 4.6, 0xc6b9a2)
 
-  // ---- Kanban display
-  const boardSurface = box(KANBAN_BOARD.w, KANBAN_BOARD.h, 0.2, 0x101820, {
-    emissive: 0x0a3d2a,
+  /* -------------------------------------------------------------- walls --- */
+  const wallMat = track(new THREE.MeshStandardMaterial({ color: pal.wall, roughness: 0.92 }))
+  /** A wall slab with optional rectangular cut-outs (windows, doorways). */
+  const wallPanel = (
+    w: number,
+    h: number,
+    x: number,
+    y: number,
+    z: number,
+    ry = 0,
+    holes: { x: number; y: number; w: number; h: number }[] = [],
+  ) => {
+    if (!holes.length) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, WALL_T), wallMat)
+      m.position.set(x, y, z)
+      m.rotation.y = ry
+      group.add(m)
+      return
+    }
+    // build the wall as strips around each hole (simple and robust for rectangles)
+    const local = (hx: number, hy: number, hw: number, hh: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(hw, hh, WALL_T), wallMat)
+      m.rotation.y = ry
+      const dx = hx * Math.cos(ry) + hy * 0
+      m.position.set(x + hx * Math.cos(ry), y + hy, z - hx * Math.sin(ry))
+      group.add(m)
+      return dx
+    }
+    const sorted = [...holes].sort((a, b) => a.x - b.x)
+    let cursor = -w / 2
+    for (const hole of sorted) {
+      const left = hole.x - hole.w / 2
+      if (left > cursor) local((cursor + left) / 2, 0, left - cursor, h)
+      // above and below the hole
+      const top = hole.y + hole.h / 2
+      const bot = hole.y - hole.h / 2
+      if (top < h / 2) local(hole.x, (top + h / 2) / 2, hole.w, h / 2 - top)
+      if (bot > -h / 2) local(hole.x, (-h / 2 + bot) / 2, hole.w, bot + h / 2)
+      cursor = hole.x + hole.w / 2
+    }
+    if (cursor < w / 2) local((cursor + w / 2) / 2, 0, w / 2 - cursor, h)
+  }
+
+  // north wall with the two window bands; south wall with the entrance
+  wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, -HALF_D, 0, [
+    { x: -12.4, y: WINDOWS[0].y, w: WINDOWS[0].w, h: WINDOWS[0].h },
+    { x: 12.4, y: WINDOWS[1].y, w: WINDOWS[1].w, h: WINDOWS[1].h },
+  ])
+  wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, HALF_D, 0, [
+    { x: DOOR.x, y: 1.15, w: 3.4, h: 2.3 },
+  ])
+  wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, [
+    { x: 0, y: WINDOWS[2].y, w: WINDOWS[2].w, h: WINDOWS[2].h },
+  ])
+  wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, [
+    { x: 0, y: WINDOWS[3].y, w: WINDOWS[3].w, h: WINDOWS[3].h },
+  ])
+
+  // interior partitions, each with a doorway to the lobby
+  const partition = (x: number, zLen: number, doorX: number, doorW: number, ry: number) => {
+    wallPanel(zLen, WALL_H, x, WALL_H / 2, 0, ry, [])
+  }
+  void partition
+
+  // west/east room dividers run north-south, full length of the room band
+  for (const px of [ROOMS.work.x1, ROOMS.work.x2]) {
+    const z1 = -HALF_D + WALL_T
+    const z2 = ROOMS.work.z2
+    const m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, z2 - z1), wallMat)
+    m.position.set(px, WALL_H / 2, (z1 + z2) / 2)
+    group.add(m)
+  }
+  // south walls of the three rooms, each with a doorway
+  const roomSouthWall = (x1: number, x2: number, doorX: number, doorW: number) => {
+    const z = ROOMS.work.z2
+    const segs: [number, number][] = [
+      [x1, doorX - doorW / 2],
+      [doorX + doorW / 2, x2],
+    ]
+    for (const [a, b] of segs) {
+      if (b - a < 0.1) continue
+      const m = new THREE.Mesh(new THREE.BoxGeometry(b - a, WALL_H, WALL_T), wallMat)
+      m.position.set((a + b) / 2, WALL_H / 2, z)
+      group.add(m)
+    }
+  }
+  roomSouthWall(ROOMS.meeting.x1, ROOMS.meeting.x2, -11.0, 2.2)
+  roomSouthWall(ROOMS.work.x1, ROOMS.work.x2, 0, 3.4)
+  roomSouthWall(ROOMS.lounge.x1, ROOMS.lounge.x2, 11.0, 2.2)
+
+  /* ------------------------------------------------------------ windows --- */
+  const glassMat = track(
+    new THREE.MeshPhysicalMaterial({
+      color: 0xc3e2f0,
+      transparent: true,
+      opacity: 0.4,
+      roughness: 0.03,
+      metalness: 0,
+      emissive: 0xa6cfe2,
+      emissiveIntensity: 0.22,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  )
+  const frameMat = track(stdMat(0x9aa8b2, { metal: 0.5, rough: 0.4 }))
+
+  /** A glazed opening: frame, mullions and a bright pane. */
+  const windowUnit = (
+    cx: number,
+    cy: number,
+    cz: number,
+    w: number,
+    h: number,
+    axis: 'x' | 'z',
+  ) => {
+    const depth = 0.1
+    const mk = (ww: number, hh: number, ox: number, oy: number, color = 0x9aa8b2) => {
+      const g = new THREE.BoxGeometry(axis === 'x' ? ww : depth + 0.04, hh, axis === 'x' ? depth + 0.04 : ww)
+      const m = new THREE.Mesh(g, color === 0x9aa8b2 ? frameMat : stdMat(color))
+      m.position.set(cx + (axis === 'x' ? ox : 0), cy + oy, cz + (axis === 'x' ? 0 : ox))
+      group.add(m)
+    }
+    mk(w, 0.1, 0, h / 2)
+    mk(w, 0.1, 0, -h / 2)
+    mk(0.1, h, -w / 2, 0)
+    mk(0.1, h, w / 2, 0)
+    mk(0.08, h, 0, 0) // centre mullion
+    const pane = new THREE.Mesh(
+      new THREE.BoxGeometry(axis === 'x' ? w : 0.03, h, axis === 'x' ? 0.03 : w),
+      glassMat,
+    )
+    pane.position.set(cx, cy, cz)
+    group.add(pane)
+    // what is visible through the glass: a bright sky card
+    const sky = new THREE.Mesh(
+      new THREE.BoxGeometry(axis === 'x' ? w - 0.1 : 0.02, h - 0.1, axis === 'x' ? 0.02 : w - 0.1),
+      stdMat(0xcfe6f5, { emissive: 0xbfe0f2, ei: 0.5 }),
+    )
+    sky.position.set(
+      cx + (axis === 'x' ? 0 : cz > 0 ? 0.12 : -0.12),
+      cy,
+      cz + (axis === 'x' ? (cz > 0 ? 0.12 : -0.12) : 0),
+    )
+    group.add(sky)
+  }
+  windowUnit(-12.4, WINDOWS[0].y, -HALF_D + WALL_T / 2 + 0.02, WINDOWS[0].w, WINDOWS[0].h, 'x')
+  windowUnit(12.4, WINDOWS[1].y, -HALF_D + WALL_T / 2 + 0.02, WINDOWS[1].w, WINDOWS[1].h, 'x')
+  windowUnit(-HALF_W + WALL_T / 2 + 0.02, WINDOWS[2].y, -10.4, WINDOWS[2].h, WINDOWS[2].w, 'z')
+  windowUnit(-HALF_W + WALL_T / 2 + 0.02, WINDOWS[2].y, 8.0, WINDOWS[2].h, WINDOWS[2].w, 'z')
+  windowUnit(HALF_W - WALL_T / 2 - 0.02, WINDOWS[3].y, -10.4, WINDOWS[3].h, WINDOWS[3].w, 'z')
+  windowUnit(HALF_W - WALL_T / 2 - 0.02, WINDOWS[3].y, 8.0, WINDOWS[3].h, WINDOWS[3].w, 'z')
+
+  /* ----------------------------------------------------------- paintings --- */
+  PAINTINGS.forEach((art, i) => {
+    const tex = track(artTexture(i))
+    const frame = new THREE.Mesh(
+      new THREE.BoxGeometry(art.w + 0.12, art.h + 0.12, 0.05),
+      stdMat(0x7d6b52, { rough: 0.6 }),
+    )
+    frame.position.set(art.x, art.y, art.z)
+    frame.rotation.y = art.ry
+    group.add(frame)
+    const canvasMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(art.w, art.h),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }),
+    )
+    canvasMesh.position.set(
+      art.x + Math.sin(art.ry) * 0.035,
+      art.y,
+      art.z + Math.cos(art.ry) * 0.035,
+    )
+    canvasMesh.rotation.y = art.ry
+    group.add(canvasMesh)
+    // a soft picture light above each frame
+    const spot = new THREE.PointLight(0xffe9c8, 0.25, 3.5)
+    spot.position.set(art.x + Math.sin(art.ry) * 0.5, art.y + art.h / 2 + 0.4, art.z + Math.cos(art.ry) * 0.5)
+    group.add(spot)
+  })
+
+  /* ------------------------------------------------------- kanban board --- */
+  const boardSurface = box(KANBAN_BOARD.w, KANBAN_BOARD.h, 0.14, 0x14313f, {
+    emissive: 0x0b3d2c,
     rough: 0.4,
   })
   boardSurface.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z)
   boardSurface.name = 'kanban-board'
   group.add(boardSurface)
-  // Five dividers split the board into the SIX columns the labels name —
-  // three dividers (four cells) under six labels reads as a broken grid.
-  const BOARD_COLUMNS = 4
-  for (let i = 1; i < BOARD_COLUMNS; i++) {
-    const div = box(0.05, KANBAN_BOARD.h - 0.7, 0.22, 0x1d5c42)
+  // mounting: a frame plus brackets so it sits ON the wall instead of hovering
+  const boardFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(KANBAN_BOARD.w + 0.24, KANBAN_BOARD.h + 0.24, 0.1),
+    stdMat(0x2b3f49, { metal: 0.3, rough: 0.5 }),
+  )
+  boardFrame.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z - 0.06)
+  group.add(boardFrame)
+  for (const bx of [-KANBAN_BOARD.w / 2 + 0.6, 0, KANBAN_BOARD.w / 2 - 0.6]) {
+    const bracket = box(0.12, 0.1, 0.18, 0x394f5b, { metal: 0.4 })
+    bracket.position.set(KANBAN_BOARD.x + bx, KANBAN_BOARD.y + KANBAN_BOARD.h / 2 + 0.16, KANBAN_BOARD.z + 0.04)
+    group.add(bracket)
+  }
+  // column dividers matching the four board columns
+  for (let i = 1; i < 4; i++) {
+    const div = box(0.04, KANBAN_BOARD.h - 0.5, 0.16, 0x1f5c46)
     div.position.set(
-      KANBAN_BOARD.x - KANBAN_BOARD.w / 2 + (KANBAN_BOARD.w / BOARD_COLUMNS) * i,
+      KANBAN_BOARD.x - KANBAN_BOARD.w / 2 + (KANBAN_BOARD.w / 4) * i,
       KANBAN_BOARD.y,
-      KANBAN_BOARD.z + 0.12,
+      KANBAN_BOARD.z + 0.09,
     )
     group.add(div)
   }
 
-  // ---- rooms: glass partitions carve the floor into actual rooms ---------
-  // Plain transparent glass renders as almost nothing without an environment
-  // map — the frames showed but the panes did not. A slight emissive tint plus
-  // higher opacity makes the partition actually read as a glass wall.
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0xbfe0ef,
-    transparent: true,
-    opacity: 0.55,
-    roughness: 0.05,
-    metalness: 0.0,
-    emissive: 0x9fc9de,
-    emissiveIntensity: 0.18,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  })
-
-  /** One partition panel: a glass sheet with a slim frame. */
-  const panel = (w: number, h: number, frameColor = 0x8f9ea8) => {
-    const g = new THREE.Group()
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.05), glassMat)
-    glass.position.y = h / 2
-    g.add(glass)
-    const rail = box(w + 0.06, 0.12, 0.14, frameColor, { metal: 0.55 })
-    rail.position.y = h
-    g.add(rail)
-    const sill = box(w + 0.06, 0.12, 0.14, frameColor, { metal: 0.55 })
-    sill.position.y = 0.06
-    g.add(sill)
-    // Vertical mullions every ~1.8m: the frames are what actually read as a
-    // partition. Bare tinted glass alone was invisible in the render.
-    const bays = Math.max(1, Math.round(w / 1.8))
-    for (let i = 0; i <= bays; i++) {
-      const post = box(0.09, h, 0.13, frameColor, { metal: 0.55 })
-      post.position.set(-w / 2 + (w / bays) * i, h / 2, 0)
-      g.add(post)
-    }
-    return g
-  }
-
-  /** Wall run along X or Z with a door gap, made of framed glass panels. */
-  const glassRun = (
-    from: [number, number],
-    to: [number, number],
-    gap?: { at: number; width: number },
-  ) => {
-    const horizontal = Math.abs(to[0] - from[0]) > Math.abs(to[1] - from[1])
-    const total = horizontal ? Math.abs(to[0] - from[0]) : Math.abs(to[1] - from[1])
-    const start = horizontal ? Math.min(from[0], to[0]) : Math.min(from[1], to[1])
-    const fixed = horizontal ? from[1] : from[0]
-    const h = 3.1
-
-    // split the run into segments around the doorway
-    const cuts: [number, number][] = []
-    if (gap) {
-      const g0 = gap.at - gap.width / 2
-      const g1 = gap.at + gap.width / 2
-      if (g0 > start) cuts.push([start, g0])
-      if (g1 < start + total) cuts.push([g1, start + total])
-    } else {
-      cuts.push([start, start + total])
-    }
-
-    for (const [a, b] of cuts) {
-      const len = b - a
-      if (len < 0.2) continue
-      const seg = panel(len, h)
-      const mid = (a + b) / 2
-      if (horizontal) {
-        seg.position.set(mid, 0, fixed)
-      } else {
-        seg.position.set(fixed, 0, mid)
-        seg.rotation.y = Math.PI / 2
-      }
-      group.add(seg)
-    }
-  }
-
-  const M = ROOMS.meeting
-  const L = ROOMS.lounge
-  const DOOR_W = 2.2
-
-  // Meeting room: glass on the east face (doorway to the work area) and a
-  // partial south face that stops short of the corridor, so the room is
-  // enclosed but you can see into it from the hallway.
-  glassRun([M.x2, M.z1], [M.x2, M.z2], { at: M.z2 - 3.2, width: DOOR_W })
-  glassRun([M.x2, M.z2], [M.x2 - 3.0, M.z2])
-
-  // Lounge: mirrored.
-  glassRun([L.x1, L.z1], [L.x1, L.z2], { at: L.z2 - 3.2, width: DOOR_W })
-  glassRun([L.x1 + 3.0, L.z2], [L.x1, L.z2])
-
-  // ---- per-zone flooring so the rooms read as separate spaces
-  const zoneFloor = (x1: number, z1: number, x2: number, z2: number, color: number) => {
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(Math.abs(x2 - x1), Math.abs(z2 - z1)),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.92 }),
-    )
-    m.rotation.x = -Math.PI / 2
-    m.position.set((x1 + x2) / 2, 0.008, (z1 + z2) / 2)
-    group.add(m)
-  }
-  zoneFloor(M.x1, M.z1, M.x2, M.z2, 0xdccdb0) // meeting: warm timber
-  zoneFloor(L.x1, L.z1, L.x2, L.z2, 0xd8d4c6) // lounge: cool neutral
-  zoneFloor(-HALF_W + 0.4, ROOMS.corridor.z1, HALF_W - 0.4, ROOMS.corridor.z2, 0xc4ccd2) // corridor: tile
-
-  // ---- cubicle dividers between the four desk columns
-  for (const x of [-3.0, 0, 3.0]) {
-    const divider = box(0.07, 1.35, 7.4, 0xcfd8dd, { rough: 0.6 })
-    divider.position.set(x, 0.68, -1.2)
-    group.add(divider)
-    const cap = box(0.11, 0.06, 7.4, 0xaab7bf, { metal: 0.2 })
-    cap.position.set(x, 1.37, -1.2)
-    group.add(cap)
-  }
-
-  // ---- desks (8, in 4 facing pairs)
+  /* -------------------------------------------------------------- desks --- */
   const monitors: THREE.Mesh[] = []
   const lamps: THREE.PointLight[] = []
+
   for (const desk of DESKS) {
     const d = new THREE.Group()
     d.position.set(desk.x, 0, desk.z)
     d.rotation.y = desk.facing
 
-    // 0.72 m is the standard office desk height (0.74 looked subtly tall)
-    const top = box(2.0, 0.09, 1.0, pal.deskTop, { rough: 0.5 })
+    const top = box(2.0, 0.07, 1.0, pal.deskTop, { rough: 0.45 })
     top.position.y = 0.72
     d.add(top)
+    const skirt = box(1.9, 0.5, 0.08, 0xc9d2d8, { rough: 0.6 })
+    skirt.position.set(0, 0.46, -0.42)
+    d.add(skirt)
     for (const [lx, lz] of [
-      [-0.88, -0.4],
-      [0.88, -0.4],
-      [-0.88, 0.4],
-      [0.88, 0.4],
+      [-0.9, -0.42],
+      [0.9, -0.42],
+      [-0.9, 0.42],
+      [0.9, 0.42],
     ]) {
-      const leg = box(0.09, 0.68, 0.09, pal.deskLeg, { metal: 0.4 })
-      leg.position.set(lx, 0.34, lz)
+      const leg = box(0.07, 0.72, 0.07, pal.deskLeg, { metal: 0.4 })
+      leg.position.set(lx, 0.36, lz)
       d.add(leg)
     }
 
-    // monitor (the clickable screen-peeker target)
-    const stand = cyl(0.05, 0.09, 0.28, pal.deskLeg)
-    stand.position.set(0, 0.87, -0.26)
+    const stand = cyl(0.04, 0.08, 0.24, pal.deskLeg)
+    stand.position.set(0, 0.86, -0.28)
     d.add(stand)
-    const bezel = box(0.98, 0.58, 0.05, 0x22262a, { metal: 0.3 })
-    bezel.position.set(0, 1.22, -0.26)
+    const bezel = box(0.94, 0.56, 0.04, 0x25292d, { metal: 0.3 })
+    bezel.position.set(0, 1.2, -0.28)
     d.add(bezel)
     const screen = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.9, 0.5),
-      // DoubleSide: a single-sided plane is invisible to the raycaster from behind,
-      // which silently kills the "peek at screen" click target.
+      new THREE.PlaneGeometry(0.86, 0.48),
       new THREE.MeshStandardMaterial({
         color: pal.screen,
         emissive: 0x0d3b28,
@@ -270,395 +436,642 @@ export function buildOffice(scene: THREE.Scene, hour: number): OfficeProps {
         side: THREE.DoubleSide,
       }),
     )
-    screen.position.set(0, 1.22, -0.225)
+    screen.position.set(0, 1.2, -0.255)
     screen.userData = { kind: 'monitor', deskIndex: desk.index }
     screen.name = `monitor-${desk.index}`
     d.add(screen)
     monitors.push(screen)
 
-    // keyboard + mug
-    const kb = box(0.6, 0.03, 0.2, 0x2f3437)
-    kb.position.set(0, 0.77, 0.14)
+    const kb = box(0.56, 0.02, 0.18, 0x333a3f)
+    kb.position.set(0, 0.765, 0.14)
     d.add(kb)
-    const mug = cyl(0.055, 0.05, 0.1, 0xe8e2d6, 10)
-    mug.position.set(-0.7, 0.81, 0.1)
+    const mouse = box(0.07, 0.02, 0.11, 0x2d3338)
+    mouse.position.set(0.38, 0.765, 0.14)
+    d.add(mouse)
+    const mug = cyl(0.05, 0.045, 0.09, 0xeae4d8, 10)
+    mug.position.set(-0.72, 0.8, 0.1)
     d.add(mug)
 
-    // desk lamp: on at night, off during the day
-    const lamp = new THREE.PointLight(0xffc98a, hour >= 18 || hour < 6 ? 0.85 : 0, 4.5)
-    lamp.position.set(desk.x + 0.6 * Math.cos(desk.facing), 1.5, desk.z - 0.5)
+    const lamp = new THREE.PointLight(0xffc98a, hour >= 18 || hour < 6 ? 0.8 : 0, 4)
+    lamp.position.set(desk.x + Math.sin(desk.facing) * 0.5, 1.5, desk.z + Math.cos(desk.facing) * 0.5)
     group.add(lamp)
     lamps.push(lamp)
 
-    // Task chair behind the desk. The whole group is rotated with the desk, so
-    // its local +Z points away from the monitor — the seat faces the desk by
-    // construction instead of by a hand-tuned z offset.
+    // task chair — child of the desk group so it inherits the desk rotation and
+    // faces the monitor by construction
     const chair = new THREE.Group()
-    chair.position.set(0, 0, 0.95)
-    const seat = box(0.6, 0.08, 0.58, pal.chair, { rough: 0.6 })
+    chair.position.set(DESK_CHAIR.x, 0, DESK_CHAIR.z)
+    const seat = box(0.56, 0.07, 0.54, pal.chair, { rough: 0.7 })
     seat.position.y = 0.47
     chair.add(seat)
-    // seat back on the side AWAY from the desk (local -Z is toward the monitor)
-    const back = box(0.6, 0.6, 0.07, pal.chair, { rough: 0.6 })
-    back.position.set(0, 0.76, 0.28)
+    const back = box(0.56, 0.6, 0.06, pal.chair, { rough: 0.7 })
+    back.position.set(0, 0.76, 0.27)
     chair.add(back)
-    const post = cyl(0.05, 0.07, 0.43, pal.deskLeg, 10)
-    post.position.y = 0.215
+    const post = cyl(0.045, 0.06, 0.44, 0x5b666e, 10, 0.4)
+    post.position.y = 0.22
     chair.add(post)
-    const star = cyl(0.3, 0.32, 0.05, 0x6d7a83, 12)
-    star.position.y = 0.025
+    const star = cyl(0.3, 0.32, 0.04, 0x4d565d, 12, 0.3)
+    star.position.y = 0.02
     chair.add(star)
     d.add(chair)
 
     group.add(d)
   }
 
-  // ---- conference table + chairs
-  const table = cyl(CONFERENCE.radius, CONFERENCE.radius, 0.1, pal.wood, 24)
-  table.position.set(CONFERENCE.x, 0.72, CONFERENCE.z)
-  group.add(table)
-  const tleg = cyl(0.14, 0.2, 0.72, pal.wood, 12)
-  tleg.position.set(CONFERENCE.x, 0.345, CONFERENCE.z)
-  group.add(tleg)
-  // Chairs face the table. `atan2(dx, dz)` points the group's local +Z at the
-  // table centre; the seat back must then sit on the FAR side, i.e. behind the
-  // sitter at local +Z — but the sitter looks along -Z toward the table, so the
-  // back goes at +Z and the sitter's body occupies -Z. The original code had the
-  // rotation sign inverted, which turned every chair around.
+  /* --------------------------------------------------------- conference --- */
+  const cTableTop = cyl(CONFERENCE.radius, CONFERENCE.radius, 0.08, pal.wood, 32)
+  cTableTop.position.set(CONFERENCE.x, 0.72, CONFERENCE.z)
+  group.add(cTableTop)
+  const cTableEdge = cyl(CONFERENCE.radius + 0.04, CONFERENCE.radius + 0.04, 0.05, 0x9a7449, 32)
+  cTableEdge.position.set(CONFERENCE.x, 0.675, CONFERENCE.z)
+  group.add(cTableEdge)
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4
+    const leg = cyl(0.05, 0.07, 0.68, pal.wood, 10)
+    leg.position.set(CONFERENCE.x + Math.cos(a) * 1.5, 0.34, CONFERENCE.z + Math.sin(a) * 1.5)
+    group.add(leg)
+  }
+  // table centre piece: display + water jugs
+  const holo = box(1.5, 0.04, 0.9, 0x4fd1c5, { emissive: 0x2fd6c0 })
+  holo.position.set(CONFERENCE.x, 1.06, CONFERENCE.z)
+  group.add(holo)
+  const holoLeg = cyl(0.05, 0.07, 0.3, 0x455a63, 10, 0.4)
+  holoLeg.position.set(CONFERENCE.x, 0.88, CONFERENCE.z)
+  group.add(holoLeg)
+  const jug = cyl(0.08, 0.09, 0.22, 0xdfe9ee, 12)
+  jug.position.set(CONFERENCE.x + 1.1, 0.87, CONFERENCE.z - 0.5)
+  group.add(jug)
+  for (let i = 0; i < 5; i++) {
+    const glass = cyl(0.028, 0.022, 0.07, 0xcfe3ea, 8)
+    glass.position.set(CONFERENCE.x - 0.8 + i * 0.18, 0.795, CONFERENCE.z + 0.7)
+    group.add(glass)
+  }
+
   for (let i = 0; i < CONFERENCE_CHAIRS.count; i++) {
     const a = CONFERENCE_CHAIRS.offset + (i / CONFERENCE_CHAIRS.count) * Math.PI * 2
     const cx = CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring
     const cz = CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring
     const c = new THREE.Group()
     c.position.set(cx, 0, cz)
-    // face the table: look from the chair toward the table centre
+    // face the table centre
     c.rotation.y = Math.atan2(cx - CONFERENCE.x, cz - CONFERENCE.z)
-    const seat = box(0.56, 0.08, 0.54, pal.chair)
+    const seat = box(0.54, 0.07, 0.52, pal.chair, { rough: 0.7 })
     seat.position.y = 0.47
     c.add(seat)
-    const back = box(0.56, 0.54, 0.07, pal.chair)
-    back.position.set(0, 0.74, 0.27) // behind the sitter, away from the table
+    const back = box(0.54, 0.56, 0.06, pal.chair, { rough: 0.7 })
+    back.position.set(0, 0.75, 0.26)
     c.add(back)
-    const legs = cyl(0.04, 0.06, 0.43, pal.deskLeg, 8)
-    legs.position.y = 0.215
-    c.add(legs)
+    const post = cyl(0.04, 0.055, 0.44, 0x5b666e, 8, 0.4)
+    post.position.y = 0.22
+    c.add(post)
+    const star = cyl(0.26, 0.28, 0.04, 0x4d565d, 10, 0.3)
+    star.position.y = 0.02
+    c.add(star)
     group.add(c)
   }
-  // hologram above the table
-  const holo = box(1.9, 0.05, 1.2, 0x4fd1c5, { emissive: 0x2fd6c0, rough: 0.2 })
-  holo.position.set(CONFERENCE.x, 1.85, CONFERENCE.z)
-  group.add(holo)
+  // whiteboard in the meeting room
+  const wbFrame = box(0.08, 1.7, 3.6, 0xc5ced5, { metal: 0.3 })
+  wbFrame.position.set(ROOMS.meeting.x1 + 0.1, 1.75, CONFERENCE.z - 1.2)
+  group.add(wbFrame)
+  const wb = box(0.04, 1.55, 3.45, 0xfcfdff, { rough: 0.25 })
+  wb.position.set(ROOMS.meeting.x1 + 0.16, 1.75, CONFERENCE.z - 1.2)
+  group.add(wb)
 
-  // ---- lounge: sofa + TV + coffee table
+  /* -------------------------------------------------------------- lounge -- */
   const sofa = new THREE.Group()
-  sofa.position.set(LOUNGE.x, 0, LOUNGE.z)
-  const sofaSeat = box(3.2, 0.34, 1.1, pal.sofa, { rough: 0.85 })
+  sofa.position.set(LOUNGE.x, 0, LOUNGE.z - 1.45)
+  const sofaSeat = box(3.4, 0.34, 1.0, pal.sofa, { rough: 0.9 })
   sofaSeat.position.y = 0.42
   sofa.add(sofaSeat)
-  const sofaBack = box(3.2, 0.7, 0.28, pal.sofa, { rough: 0.85 })
-  sofaBack.position.set(0, 0.85, 0.42)
+  const sofaBack = box(3.4, 0.66, 0.24, pal.sofa, { rough: 0.9 })
+  sofaBack.position.set(0, 0.82, 0.38)
   sofa.add(sofaBack)
-  for (const sx of [-1.5, 1.5]) {
-    const arm = box(0.26, 0.5, 1.1, pal.sofa, { rough: 0.85 })
-    arm.position.set(sx, 0.62, 0)
+  for (const sx of [-1.6, 1.6]) {
+    const arm = box(0.24, 0.5, 1.0, pal.sofa, { rough: 0.9 })
+    arm.position.set(sx, 0.6, 0)
     sofa.add(arm)
+  }
+  for (const px of [-1.0, 0, 1.0]) {
+    const cushion = box(0.9, 0.12, 0.86, 0x9db9d6, { rough: 0.95 })
+    cushion.position.set(px, 0.63, -0.02)
+    sofa.add(cushion)
   }
   group.add(sofa)
 
-  const tv = box(2.2, 1.25, 0.1, 0x14181c, { emissive: 0x123a52, rough: 0.35 })
-  tv.position.set(LOUNGE.x, 1.9, LOUNGE.z - 3.4)
-  group.add(tv)
-  const tvStand = box(2.4, 0.08, 0.5, pal.wood)
-  tvStand.position.set(LOUNGE.x, 1.24, LOUNGE.z - 3.4)
-  group.add(tvStand)
-
-  const coffee = cyl(0.55, 0.6, 0.08, pal.wood, 16)
-  coffee.position.set(LOUNGE.x, 0.4, LOUNGE.z - 1.6)
-  group.add(coffee)
-  const coffeeLeg = cyl(0.08, 0.12, 0.38, pal.wood, 10)
-  coffeeLeg.position.set(LOUNGE.x, 0.2, LOUNGE.z - 1.6)
-  group.add(coffeeLeg)
-
-  // ---- meeting room dressing (whiteboard, credenza, plant, window band)
-  const whiteboard = box(3.4, 1.7, 0.08, 0xfbfdff, { rough: 0.35 })
-  whiteboard.position.set(ROOMS.meeting.x1 + 0.22, 1.85, CONFERENCE.z - 2.6)
-  whiteboard.rotation.y = Math.PI / 2
-  group.add(whiteboard)
-  const wbFrame = box(3.55, 1.85, 0.05, 0xc3ccd4, { metal: 0.3 })
-  wbFrame.position.set(ROOMS.meeting.x1 + 0.16, 1.85, CONFERENCE.z - 2.6)
-  wbFrame.rotation.y = Math.PI / 2
-  group.add(wbFrame)
-
-  const credenza = box(2.6, 0.72, 0.5, 0xd8c3a2, { rough: 0.6 })
-  credenza.position.set(ROOMS.meeting.x1 + 1.5, 0.36, ROOMS.meeting.z1 + 0.7)
-  group.add(credenza)
-
-  const plantPot = (x: number, z: number) => {
-    const pot = cyl(0.24, 0.19, 0.36, 0xcfd6da, 12)
-    pot.position.set(x, 0.18, z)
-    group.add(pot)
-    const leaves = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.42, 0),
-      new THREE.MeshStandardMaterial({ color: 0x5f9e6b, flatShading: true, roughness: 0.8 }),
-    )
-    leaves.position.set(x, 0.78, z)
-    group.add(leaves)
-    const stem = cyl(0.04, 0.05, 0.3, 0x6b7a55, 8)
-    stem.position.set(x, 0.48, z)
-    group.add(stem)
+  // TV on a REAL stand (it used to float)
+  const tvUnit = new THREE.Group()
+  tvUnit.position.set(LOUNGE.x, 0, LOUNGE.z - 4.9)
+  const cabinet = box(2.6, 0.5, 0.55, pal.wood, { rough: 0.6 })
+  cabinet.position.y = 0.25
+  tvUnit.add(cabinet)
+  for (const dx of [-1.22, 1.22]) {
+    const door = box(0.02, 0.4, 0.45, 0x9a7449)
+    door.position.set(dx, 0.26, 0.01)
+    tvUnit.add(door)
   }
-  plantPot(ROOMS.meeting.x2 - 0.9, ROOMS.meeting.z1 + 1.0)
-  plantPot(ROOMS.lounge.x1 + 0.9, ROOMS.lounge.z1 + 1.0)
-  plantPot(ROOMS.lounge.x1 + 3.4, ROOMS.lounge.z2 - 1.0)
-
-  // ---- lounge dressing (extra chair, rug, floor lamp, second table)
-  const loungeChair = new THREE.Group()
-  loungeChair.position.set(LOUNGE.x - 2.3, 0, LOUNGE.z + 0.6)
-  loungeChair.rotation.y = -0.5
-  const lcSeat = box(0.8, 0.14, 0.8, 0x8fb0d4, { rough: 0.85 })
-  lcSeat.position.y = 0.42
-  loungeChair.add(lcSeat)
-  const lcBack = box(0.8, 0.72, 0.2, 0x8fb0d4, { rough: 0.85 })
-  lcBack.position.set(0, 0.78, 0.32)
-  loungeChair.add(lcBack)
-  group.add(loungeChair)
-
-  const loungeRug = new THREE.Mesh(
-    new THREE.PlaneGeometry(4.6, 3.4),
-    new THREE.MeshStandardMaterial({ color: 0xbfae94, roughness: 0.95 }),
+  const tvNeck = box(0.24, 0.16, 0.2, 0x2b3236, { metal: 0.4 })
+  tvNeck.position.y = 0.58
+  tvUnit.add(tvNeck)
+  const tvFoot = box(0.7, 0.03, 0.32, 0x2b3236, { metal: 0.4 })
+  tvFoot.position.y = 0.51
+  tvUnit.add(tvFoot)
+  const tv = box(2.1, 1.2, 0.07, 0x14181c, { rough: 0.3 })
+  tv.position.y = 1.28
+  tvUnit.add(tv)
+  const tvScreen = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.0, 1.1),
+    stdMat(0x14344a, { emissive: 0x1d5680, ei: 0.75 }),
   )
-  loungeRug.rotation.x = -Math.PI / 2
-  loungeRug.position.set(LOUNGE.x, 0.012, LOUNGE.z - 1.2)
-  group.add(loungeRug)
+  tvScreen.position.set(0, 1.28, 0.04)
+  tvUnit.add(tvScreen)
+  group.add(tvUnit)
+
+  const coffee = cyl(0.62, 0.62, 0.05, pal.wood, 24)
+  coffee.position.set(LOUNGE.x, 0.44, LOUNGE.z - 2.9)
+  group.add(coffee)
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2
+    const cl = cyl(0.035, 0.045, 0.42, 0x8a6a45, 8)
+    cl.position.set(LOUNGE.x + Math.cos(a) * 0.4, 0.21, LOUNGE.z - 2.9 + Math.sin(a) * 0.4)
+    group.add(cl)
+  }
+  const magazine = box(0.32, 0.015, 0.24, 0xd8cfc0)
+  magazine.position.set(LOUNGE.x + 0.16, 0.47, LOUNGE.z - 2.85)
+  group.add(magazine)
+
+  const armchair = new THREE.Group()
+  armchair.position.set(LOUNGE.x - 2.3, 0, LOUNGE.z - 0.6)
+  armchair.rotation.y = -0.7
+  const acSeat = box(0.92, 0.14, 0.88, 0x8fb0d4, { rough: 0.9 })
+  acSeat.position.y = 0.42
+  armchair.add(acSeat)
+  const acBack = box(0.92, 0.7, 0.2, 0x8fb0d4, { rough: 0.9 })
+  acBack.position.set(0, 0.78, 0.34)
+  armchair.add(acBack)
+  for (const sx of [-0.4, 0.4]) {
+    const ar = box(0.14, 0.42, 0.8, 0x8fb0d4, { rough: 0.9 })
+    ar.position.set(sx, 0.56, 0)
+    armchair.add(ar)
+  }
+  group.add(armchair)
 
   const floorLamp = new THREE.Group()
-  floorLamp.position.set(LOUNGE.x + 2.6, 0, LOUNGE.z - 2.6)
-  const pole = cyl(0.045, 0.06, 1.7, 0x8a949c, 10)
-  pole.position.y = 0.85
+  floorLamp.position.set(LOUNGE.x + 2.5, 0, LOUNGE.z - 3.2)
+  const pole = cyl(0.035, 0.05, 1.62, 0x8a949c, 10, 0.5)
+  pole.position.y = 0.81
   floorLamp.add(pole)
-  const shade = cyl(0.36, 0.24, 0.32, 0xf3e3c4, 14)
-  shade.position.y = 1.78
-  floorLamp.add(shade)
-  const base = cyl(0.24, 0.28, 0.05, 0x6f7981, 14)
-  base.position.y = 0.03
+  const base = cyl(0.24, 0.28, 0.04, 0x6f7981, 14, 0.4)
+  base.position.y = 0.02
   floorLamp.add(base)
+  const shade = cyl(0.34, 0.22, 0.28, 0xf6e8ca, 16)
+  shade.position.y = 1.7
+  floorLamp.add(shade)
+  const bulb = new THREE.PointLight(0xffe0ae, hour >= 18 || hour < 6 ? 0.9 : 0.15, 7)
+  bulb.position.set(0, 1.6, 0)
+  floorLamp.add(bulb)
   group.add(floorLamp)
 
-  // ---- filling the floor: print corner, lockers, pantry, corridor rail
-  const printer = box(0.7, 0.9, 0.6, 0xdfe6ea, { rough: 0.5 })
-  printer.position.set(ROOMS.work.x1 + 1.4, 0.45, ROOMS.work.z2 - 1.2)
-  group.add(printer)
-  const printerStand = box(0.85, 0.35, 0.7, 0xb9c3ca, { metal: 0.3 })
-  printerStand.position.set(ROOMS.work.x1 + 1.4, 0.17, ROOMS.work.z2 - 1.2)
-  group.add(printerStand)
-
-  const lockers = new THREE.Group()
-  lockers.position.set(ROOMS.work.x2 - 3.0, 0, ROOMS.work.z2 - 1.1)
-  for (let i = 0; i < 4; i++) {
-    const lk = box(0.42, 1.7, 0.44, i % 2 ? 0x9fb4c2 : 0x8ba5b6, { metal: 0.35 })
-    lk.position.set(i * 0.44, 0.85, 0)
-    lockers.add(lk)
-  }
-  group.add(lockers)
-  const lockerTop = box(1.85, 0.07, 0.5, 0xd3dbe0, { metal: 0.4 })
-  lockerTop.position.set(ROOMS.work.x2 - 3.0 + 0.66, 1.73, ROOMS.work.z2 - 1.1)
-  group.add(lockerTop)
-
+  // pantry counter with small appliances
   const pantry = new THREE.Group()
-  pantry.position.set(ROOMS.lounge.x2 - 1.6, 0, ROOMS.lounge.z2 - 1.8)
-  const counter = box(2.4, 0.9, 0.62, 0xd9c6a8, { rough: 0.6 })
+  pantry.position.set(14.4, 0, 1.0)
+  const counter = box(2.5, 0.9, 0.62, 0xdcc9ab, { rough: 0.6 })
   counter.position.y = 0.45
   pantry.add(counter)
-  const counterTop = box(2.5, 0.07, 0.7, 0xeee6d6, { rough: 0.4 })
-  counterTop.position.y = 0.92
-  pantry.add(counterTop)
-  const espresso = box(0.4, 0.5, 0.4, 0x4c545b, { metal: 0.5 })
-  espresso.position.set(-0.7, 1.2, 0)
+  const cTop = box(2.58, 0.05, 0.68, 0xf0e8d8, { rough: 0.35 })
+  cTop.position.y = 0.92
+  pantry.add(cTop)
+  const espresso = box(0.34, 0.44, 0.34, 0x4c545b, { metal: 0.5, rough: 0.4 })
+  espresso.position.set(-0.85, 1.16, 0)
   pantry.add(espresso)
-  const kettle = cyl(0.12, 0.14, 0.26, 0xe8ecef, 12)
-  kettle.position.set(0.6, 1.08, 0)
+  const kettle = cyl(0.11, 0.13, 0.24, 0xe9edf0, 12, 0.2)
+  kettle.position.set(0.2, 1.06, 0)
   pantry.add(kettle)
+  const tray = box(0.5, 0.03, 0.3, 0xb9c4cb)
+  tray.position.set(0.9, 0.96, 0)
+  pantry.add(tray)
   group.add(pantry)
 
-  // corridor rail separating the walkway from the work area
-  const rail = box(HALF_W * 2 - 1.2, 0.07, 0.09, 0x9aa8b2, { metal: 0.5 })
-  rail.position.set(0, 1.02, ROOMS.corridor.z1 + 0.08)
-  group.add(rail)
-  for (let i = -8; i <= 8; i++) {
-    if (Math.abs(i) < 2) continue // leave the doorway clear
-    const post = box(0.07, 1.0, 0.07, 0x9aa8b2, { metal: 0.5 })
-    post.position.set(i * 1.75, 0.5, ROOMS.corridor.z1 + 0.08)
-    group.add(post)
-  }
-
-  // window band on the north wall, either side of the Kanban board
-  for (const x of [-11.4, 11.4]) {
-    const frame = box(5.6, 2.5, 0.1, 0xa9b6bf, { metal: 0.4 })
-    frame.position.set(x, 2.6, -HALF_D + 0.22)
-    group.add(frame)
-    const sky = new THREE.Mesh(
-      new THREE.BoxGeometry(5.2, 2.2, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0xbcd8ea, emissive: 0x9dc4de, emissiveIntensity: 0.55 }),
-    )
-    sky.position.set(x, 2.6, -HALF_D + 0.3)
-    group.add(sky)
-  }
-
-  // ---- more environment so no bay reads as an empty slab
-  // storage wall along the corridor (south of the work area)
-  const shelf = (x: number, z: number, rot: number) => {
-    const g = new THREE.Group()
-    g.position.set(x, 0, z)
-    g.rotation.y = rot
-    const frame = box(2.0, 1.9, 0.38, 0xc8b394, { rough: 0.6 })
-    frame.position.y = 0.95
-    g.add(frame)
-    for (let i = 1; i <= 3; i++) {
-      const plank = box(1.9, 0.06, 0.42, 0xe4d8c2, { rough: 0.5 })
-      plank.position.y = 0.3 + i * 0.45
-      g.add(plank)
-    }
-    // a few binders so the shelf is not a blank box
-    for (let i = 0; i < 4; i++) {
-      const binder = box(0.09, 0.3, 0.3, [0x9a4f4f, 0x4f6f9a, 0x6f9a4f, 0xa88b4f][i], { rough: 0.7 })
-      binder.position.set(-0.6 + i * 0.34, 0.48, 0)
-      g.add(binder)
-    }
-    group.add(g)
-  }
-  shelf(ROOMS.work.x1 + 0.75, ROOMS.corridor.z1 - 0.9, Math.PI / 2)
-  shelf(ROOMS.work.x2 - 0.75, ROOMS.corridor.z1 - 0.9, -Math.PI / 2)
-
-  // two meeting pods in the work bay: small round tables with two chairs each
-  // Center of the work bay, clear of the corridor wall (printer/lockers/shelves)
-  // and of the meeting-room chair ring.
-  for (const px of [-3.3, 3.3]) {
+  /* --------------------------------------------------------- work extras -- */
+  // two small meeting pods in the bay
+  for (const px of [-4.3, 4.3]) {
     const pod = new THREE.Group()
-    pod.position.set(px, 0, ROOMS.work.z2 - 4.6)
-    const ptop = cyl(0.55, 0.55, 0.06, 0xe6dccb, 18)
+    pod.position.set(px, 0, 0.5)
+    const ptop = cyl(0.7, 0.7, 0.05, 0xe9e0d0, 20)
     ptop.position.y = 0.72
     pod.add(ptop)
-    const pleg = cyl(0.06, 0.09, 0.69, 0x9aa7b1, 10)
-    pleg.position.y = 0.345
+    const pleg = cyl(0.06, 0.1, 0.7, 0x9aa7b1, 10, 0.3)
     pod.add(pleg)
+    pleg.position.y = 0.35
     for (const side of [-1, 1]) {
-      const pc = new THREE.Group()
-      pc.position.set(side * 0.95, 0, 0)
-      pc.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2
-      const s2 = box(0.5, 0.07, 0.48, 0x9fb0bd, { rough: 0.7 })
+      const chair = new THREE.Group()
+      chair.position.set(0, 0, side * 1.0)
+      chair.rotation.y = side > 0 ? Math.PI : 0
+      const s2 = box(0.5, 0.07, 0.48, 0xa8b8c4, { rough: 0.75 })
       s2.position.y = 0.46
-      pc.add(s2)
-      const b2 = box(0.5, 0.48, 0.06, 0x9fb0bd, { rough: 0.7 })
-      b2.position.set(0, 0.71, 0.24)
-      pc.add(b2)
-      const l2 = cyl(0.035, 0.05, 0.42, 0x8b98a3, 8)
+      chair.add(s2)
+      const b2 = box(0.5, 0.5, 0.06, 0xa8b8c4, { rough: 0.75 })
+      b2.position.set(0, 0.72, 0.24)
+      chair.add(b2)
+      const l2 = cyl(0.035, 0.05, 0.42, 0x8b98a3, 8, 0.3)
       l2.position.y = 0.21
-      pc.add(l2)
-      pod.add(pc)
+      chair.add(l2)
+      pod.add(chair)
     }
     group.add(pod)
   }
 
-  // coat rack + doormat at the entrance, so the corridor mouth has a purpose
+  const printer = new THREE.Group()
+  printer.position.set(-5.2, 0, 2.5)
+  const pBody = box(0.78, 0.55, 0.62, 0xdfe6ea, { rough: 0.5 })
+  pBody.position.y = 0.75
+  printer.add(pBody)
+  const pTray = box(0.5, 0.03, 0.34, 0xc3ccd2)
+  pTray.position.set(0, 1.04, 0.1)
+  printer.add(pTray)
+  const pStand = box(0.84, 0.48, 0.68, 0xb9c3ca, { metal: 0.3 })
+  pStand.position.y = 0.24
+  printer.add(pStand)
+  group.add(printer)
+
+  const lockers = new THREE.Group()
+  lockers.position.set(3.9, 0, 2.6)
+  for (let i = 0; i < 4; i++) {
+    const lk = box(0.44, 1.7, 0.5, i % 2 ? 0xa4b8c6 : 0x8fa8b8, { metal: 0.35, rough: 0.5 })
+    lk.position.set((i - 1.5) * 0.46, 0.85, 0)
+    lockers.add(lk)
+    const handle = box(0.03, 0.16, 0.03, 0x5d686f, { metal: 0.6 })
+    handle.position.set((i - 1.5) * 0.46 + 0.16, 0.85, 0.26)
+    lockers.add(handle)
+  }
+  group.add(lockers)
+
+  // archive shelves
+  for (const px of [-5.6, 5.6]) {
+    const sh = new THREE.Group()
+    sh.position.set(px, 0, -10.6)
+    const frame = box(0.38, 1.9, 2.4, 0xcbb69a, { rough: 0.65 })
+    frame.position.y = 0.95
+    sh.add(frame)
+    for (let i = 1; i <= 3; i++) {
+      const plank = box(0.42, 0.05, 2.3, 0xe6dbc6, { rough: 0.5 })
+      plank.position.y = 0.3 + i * 0.45
+      sh.add(plank)
+    }
+    const bookColors = [0x9a4f4f, 0x4f6f9a, 0x6f9a4f, 0xa88b4f, 0x7a5a9a]
+    for (let i = 0; i < 5; i++) {
+      const bk = box(0.26, 0.3, 0.08, bookColors[i % bookColors.length], { rough: 0.8 })
+      bk.position.set(0.05, 0.47, -0.9 + i * 0.34)
+      sh.add(bk)
+    }
+    group.add(sh)
+  }
+
+  // recyclers
+  const bins = new THREE.Group()
+  bins.position.set(7.0, 0, 3.0)
+  for (const [i, c] of [0x4f7f9a, 0x7f9a4f].entries()) {
+    const bin = cyl(0.22, 0.19, 0.68, c, 12)
+    bin.position.set(i * 0.55 - 0.28, 0.34, 0)
+    bins.add(bin)
+    const lid = cyl(0.23, 0.23, 0.04, 0x3e4a52, 12)
+    lid.position.set(i * 0.55 - 0.28, 0.7, 0)
+    bins.add(lid)
+  }
+  group.add(bins)
+
+  const cooler = new THREE.Group()
+  cooler.position.set(15.6, 0, -1.6)
+  const cBody = box(0.52, 0.95, 0.52, 0xe4ebee, { rough: 0.5 })
+  cBody.position.y = 0.48
+  cooler.add(cBody)
+  const cJug = cyl(0.24, 0.2, 0.46, 0x8fd0ea, 16)
+  cJug.position.y = 1.2
+  cooler.add(cJug)
+  const cTap = box(0.06, 0.12, 0.06, 0x5d686f, { metal: 0.5 })
+  cTap.position.set(0, 0.86, 0.28)
+  cooler.add(cTap)
+  group.add(cooler)
+
+  /* -------------------------------------------------------------- lobby --- */
+  const reception = new THREE.Group()
+  reception.position.set(RECEPTION.x, 0, RECEPTION.z)
+  const rCounter = box(3.2, 1.05, 0.62, 0xe0d3bc, { rough: 0.6 })
+  rCounter.position.y = 0.52
+  reception.add(rCounter)
+  const rTop = box(3.34, 0.06, 0.76, 0x8b6f52, { rough: 0.45 })
+  rTop.position.y = 1.08
+  reception.add(rTop)
+  const rBadge = box(0.5, 0.34, 0.03, 0xdfe6ea, { metal: 0.2 })
+  rBadge.position.set(0, 0.72, 0.33)
+  reception.add(rBadge)
+  const rLogo = box(0.44, 0.12, 0.02, 0x2f7f5f, { emissive: 0x2f7f5f, ei: 0.4 })
+  rLogo.position.set(0, 0.72, 0.35)
+  reception.add(rLogo)
+  const monitorR = box(0.5, 0.34, 0.03, 0x25292d, { metal: 0.3 })
+  monitorR.position.set(-1.2, 1.28, 0.06)
+  reception.add(monitorR)
+  group.add(reception)
+
+  const rChair = new THREE.Group()
+  rChair.position.set(RECEPTION.x, 0, RECEPTION.z + 1.15)
+  const rcSeat = box(0.54, 0.07, 0.52, 0x6f8fa8, { rough: 0.7 })
+  rcSeat.position.y = 0.47
+  rChair.add(rcSeat)
+  const rcBack = box(0.54, 0.6, 0.06, 0x6f8fa8, { rough: 0.7 })
+  rcBack.position.set(0, 0.76, 0.26)
+  rChair.add(rcBack)
+  const rcPost = cyl(0.045, 0.06, 0.44, 0x5b666e, 10, 0.4)
+  rcPost.position.y = 0.22
+  rChair.add(rcPost)
+  group.add(rChair)
+
+  // waiting area
+  for (const wx of [-6.4, 6.4]) {
+    const wsofa = new THREE.Group()
+    wsofa.position.set(wx, 0, 9.4)
+    const wsSeat = box(1.8, 0.32, 0.9, 0x93a8ba, { rough: 0.9 })
+    wsSeat.position.y = 0.4
+    wsofa.add(wsSeat)
+    const wsBack = box(1.8, 0.6, 0.22, 0x93a8ba, { rough: 0.9 })
+    wsBack.position.set(0, 0.76, 0.34)
+    wsofa.add(wsBack)
+    group.add(wsofa)
+  }
+  const wTable = cyl(0.42, 0.46, 0.05, pal.wood, 20)
+  wTable.position.set(-9.6, 0.44, 9.6)
+  group.add(wTable)
+  const wTableLeg = cyl(0.05, 0.07, 0.42, pal.wood, 10)
+  wTableLeg.position.set(-9.6, 0.21, 9.6)
+  group.add(wTableLeg)
+
   const coatRack = new THREE.Group()
-  coatRack.position.set(-2.4, 0, HALF_D - 2.0)
-  const crPole = cyl(0.05, 0.06, 1.75, 0x8b6f4f, 10)
-  crPole.position.y = 0.875
+  coatRack.position.set(-11.0, 0, 11.4)
+  const crPole = cyl(0.045, 0.055, 1.72, 0x8b6f4f, 10)
+  crPole.position.y = 0.86
   coatRack.add(crPole)
-  const crBase = cyl(0.3, 0.34, 0.06, 0x7a6244, 12)
-  crBase.position.y = 0.03
+  const crBase = cyl(0.28, 0.32, 0.05, 0x7a6244, 14)
+  crBase.position.y = 0.025
   coatRack.add(crBase)
   for (let i = 0; i < 4; i++) {
-    const a2 = (i / 4) * Math.PI * 2
-    const peg = box(0.05, 0.05, 0.26, 0x9c7d59)
-    peg.position.set(Math.cos(a2) * 0.13, 1.62, Math.sin(a2) * 0.13)
-    peg.rotation.y = -a2
+    const a = (i / 4) * Math.PI * 2
+    const peg = box(0.05, 0.05, 0.22, 0x9c7d59)
+    peg.position.set(Math.cos(a) * 0.11, 1.6, Math.sin(a) * 0.11)
+    peg.rotation.y = -a
     coatRack.add(peg)
   }
   group.add(coatRack)
 
-  const mat2 = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.6, 1.2),
-    new THREE.MeshStandardMaterial({ color: 0x6f7a72, roughness: 1 }),
+  const doormat = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.0, 1.4),
+    stdMat(0x6b7a6e, { rough: 1 }),
   )
-  mat2.rotation.x = -Math.PI / 2
-  mat2.position.set(0, 0.014, HALF_D - 1.8)
-  group.add(mat2)
+  doormat.rotation.x = -Math.PI / 2
+  doormat.position.set(0, 0.014, HALF_D - WALL_T - 0.9)
+  group.add(doormat)
 
-  // water station moved clear of the pantry, plus a recycling bin pair
-  const bins = new THREE.Group()
-  bins.position.set(ROOMS.lounge.x1 + 1.2, 0, ROOMS.corridor.z1 - 1.0)
-  for (const [i, c] of [0x4f7f9a, 0x7f9a4f].entries()) {
-    const bin = cyl(0.24, 0.2, 0.7, c, 12)
-    bin.position.set(i * 0.55, 0.35, 0)
-    bins.add(bin)
+  /* ---------------------------------------------------------- entrance ---- */
+  // A proper double door with glass leaves, transom and frame. The old version
+  // was a single slab that read as a wall panel; nothing was actually there.
+  const doorGroup = new THREE.Group()
+  doorGroup.position.set(DOOR.x, 0, HALF_D - WALL_T / 2)
+  const dFrameMat = track(stdMat(0x54636d, { metal: 0.55, rough: 0.35 }))
+  const leafW = 1.65
+  for (const side of [-1, 1]) {
+    const leafH = 2.25
+    const leafGlass = new THREE.Mesh(new THREE.BoxGeometry(leafW - 0.16, leafH - 0.2, 0.04), glassMat)
+    leafGlass.position.set((side * leafW) / 2, 1.16, 0)
+    doorGroup.add(leafGlass)
+    const leafFrameV = box(0.07, leafH, 0.07, 0x54636d, { metal: 0.55 })
+    leafFrameV.position.set(side * (leafW - 0.05), 1.16, 0)
+    doorGroup.add(leafFrameV)
+    const leafFrameH = box(leafW, 0.07, 0.07, 0x54636d, { metal: 0.55 })
+    leafFrameH.position.set((side * leafW) / 2, 2.3, 0)
+    doorGroup.add(leafFrameH)
+    const leafFrameB = box(leafW, 0.09, 0.07, 0x54636d, { metal: 0.55 })
+    leafFrameB.position.set((side * leafW) / 2, 0.05, 0)
+    doorGroup.add(leafFrameB)
+    // push bar
+    const bar = box(0.05, 0.05, 0.9, 0x2f3a41, { metal: 0.7, rough: 0.3 })
+    bar.position.set(side * 0.35, 1.05, side > 0 ? 0.16 : -0.16)
+    bar.rotation.y = Math.PI / 2
+    doorGroup.add(bar)
+    // handle plate
+    const plate = box(0.06, 0.24, 0.03, 0xd7dee3, { metal: 0.8, rough: 0.25 })
+    plate.position.set(side * 0.45, 1.05, 0.12)
+    doorGroup.add(plate)
   }
-  group.add(bins)
+  // top transom window + outer frame
+  const transom = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.5, 0.04), glassMat)
+  transom.position.set(0, 2.62, 0)
+  doorGroup.add(transom)
+  const headRail = box(3.6, 0.14, 0.12, 0x54636d, { metal: 0.55 })
+  headRail.position.set(0, 2.92, 0)
+  doorGroup.add(headRail)
+  const jambL = box(0.12, 2.9, 0.12, 0x54636d, { metal: 0.55 })
+  jambL.position.set(-1.76, 1.45, 0)
+  doorGroup.add(jambL)
+  const jambR = jambL.clone()
+  jambR.position.x = 1.76
+  doorGroup.add(jambR)
+  group.add(doorGroup)
+  void dFrameMat
 
-  // ---- dartboard + water cooler
-  const db = cyl(0.62, 0.62, 0.08, 0xe8e2d6, 20)
-  db.rotation.x = Math.PI / 2
-  db.position.set(DART.x, 2.0, DART.z)
-  group.add(db)
-  const bull = cyl(0.09, 0.09, 0.1, 0xd24a4a, 12)
-  bull.rotation.x = Math.PI / 2
-  bull.position.set(DART.x - 0.07, 2.0, DART.z)
-  group.add(bull)
+  // Surrounding frame in a darker metal so the doorway reads from outside, where
+  // two glass leaves alone vanish against the lobby's white wall.
+  const doorSurround = box(4.0, 3.15, 0.16, 0x46545e, { metal: 0.5, rough: 0.4 })
+  doorSurround.position.set(DOOR.x, 1.58, HALF_D - WALL_T / 2 - 0.08)
+  group.add(doorSurround)
+  const doorGlassOuter = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.55, 0.12), glassMat)
+  doorGlassOuter.position.set(DOOR.x, 1.4, HALF_D - WALL_T / 2 + 0.02)
+  group.add(doorGlassOuter)
 
-  const cooler = new THREE.Group()
-  cooler.position.set(ROOMS.lounge.x2 - 0.9, 0, ROOMS.lounge.z2 - 4.6)
-  const body = box(0.6, 1.0, 0.6, 0xdfe7ea)
-  body.position.y = 0.5
-  cooler.add(body)
-  const jug = cyl(0.26, 0.22, 0.5, 0x7fc9e8, 14)
-  jug.position.y = 1.25
-  cooler.add(jug)
-  group.add(cooler)
+  // canopy + step outside the entrance
+  const canopy = box(4.2, 0.14, 1.4, 0x8d9aa4, { metal: 0.3, rough: 0.5 })
+  canopy.position.set(0, 3.1, HALF_D + 0.6)
+  group.add(canopy)
+  const step = box(4.4, 0.12, 0.9, 0xbfc7cc, { rough: 0.8 })
+  step.position.set(0, 0.06, HALF_D + 0.5)
+  group.add(step)
+  // entrance signage
+  const signPlate = box(2.6, 0.42, 0.08, 0x113b2c, { emissive: 0x1c5c44, ei: 0.5 })
+  signPlate.position.set(0, 3.5, HALF_D - 0.02)
+  group.add(signPlate)
 
-  // ---- door frame at the south gap
-  const door = box(2.6, 3.0, 0.12, pal.wood)
-  door.position.set(0, 1.5, HALF_D - 0.05)
-  door.visible = true
-  door.name = 'door'
-  group.add(door)
-
-  // ---- lights
+  /* ----------------------------------------------------------- lighting --- */
   scene.add(new THREE.AmbientLight(0xffffff, 1.15))
-  const sun = new THREE.DirectionalLight(0xfff6e5, 1.9)
-  sun.position.set(9, 14, 7)
+  const sun = new THREE.DirectionalLight(0xfff6e5, 1.85)
+  sun.position.set(11, 16, 9)
   scene.add(sun)
-  const fill = new THREE.HemisphereLight(0xeaf4ff, 0xcfc0a4, 1.05)
+  const fill = new THREE.HemisphereLight(0xeaf4ff, 0xcfc0a4, 1.0)
   scene.add(fill)
-  // ceiling strip lights: what makes it read as an office rather than a warehouse
-  for (const z of [-6.5, 0.5, 6.5]) {
-    const strip = new THREE.Mesh(
-      new THREE.BoxGeometry(9, 0.06, 0.32),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 1.0 }),
-    )
-    strip.position.set(0, 4.6, z)
-    group.add(strip)
-    const housing = box(9.3, 0.14, 0.44, 0xd7dde2, { metal: 0.3 })
-    housing.position.set(0, 4.7, z)
+
+  // recessed ceiling panels in a grid, each with a fixture and a point light
+  const streaks: THREE.Mesh[] = []
+  for (const cz of [-10, -5.5, -1, 6.5, 10.5]) {
+    const housing = box(FLOOR.width - 1.6, 0.12, 0.42, 0xd9dfe4, { metal: 0.25, rough: 0.5 })
+    housing.position.set(0, 3.3, cz)
     group.add(housing)
-    const light = new THREE.PointLight(0xfff6e6, 0.85, 18)
-    light.position.set(0, 4.4, z)
-    group.add(light)
+    const panel = box(FLOOR.width - 2.0, 0.04, 0.3, 0xffffff, { emissive: 0xfff4e0, ei: 1 })
+    panel.position.set(0, 3.23, cz)
+    group.add(panel)
+    streaks.push(panel)
+    // One light per ceiling row: 25 point lights measurably starved the frame
+    // budget for no visible gain, since the emissive panel already reads as lit.
+    const l = new THREE.PointLight(0xfff6e6, 0.55, 22)
+    l.position.set(0, 3.0, cz)
+    group.add(l)
   }
 
+  /* -------------------------------------------------- outside environment -- */
+  // The office sits in a street: pavement, road, trees and neighbouring blocks,
+  // so zooming out does not reveal an empty void. Built as one group the scene
+  // can toggle, and the camera is clamped to this area.
+  const streetGroup = new THREE.Group()
+  scene.add(streetGroup)
+
+  const pavement = new THREE.Mesh(
+    new THREE.PlaneGeometry(FLOOR.width + 26, FLOOR.depth + 26),
+    stdMat(0x9fa3a6, { rough: 0.95 }),
+  )
+  pavement.rotation.x = -Math.PI / 2
+  pavement.position.y = -0.06
+  streetGroup.add(pavement)
+
+  const roadTex = track(tileTexture('#5c6165', '#71767a'))
+  roadTex.repeat.set(16, 3)
+  const road = new THREE.Mesh(
+    new THREE.PlaneGeometry(120, 9),
+    new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.95 }),
+  )
+  road.rotation.x = -Math.PI / 2
+  road.position.set(0, -0.05, HALF_D + 14)
+  streetGroup.add(road)
+  // centre line + zebra crossing in front of the entrance
+  for (let i = -8; i <= 8; i++) {
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.18), stdMat(0xd8d2b8, { rough: 0.9 }))
+    dash.rotation.x = -Math.PI / 2
+    dash.position.set(i * 7, -0.04, HALF_D + 14)
+    streetGroup.add(dash)
+  }
+
+  const tree = (x: number, z: number, scale = 1) => {
+    const t = new THREE.Group()
+    t.position.set(x, 0, z)
+    const trunk = cyl(0.14 * scale, 0.2 * scale, 2.0 * scale, 0x6b5138, 8)
+    trunk.position.y = 1.0 * scale
+    t.add(trunk)
+    const canopyMat = stdMat(0x4f8b55, { rough: 0.9 })
+    for (const [ox, oy, oz, r] of [
+      [0, 2.4, 0, 1.05],
+      [0.5, 2.0, 0.3, 0.75],
+      [-0.45, 2.1, -0.3, 0.7],
+    ]) {
+      const leafM = new THREE.Mesh(new THREE.IcosahedronGeometry(r * scale, 0), canopyMat)
+      leafM.position.set(ox * scale, oy * scale, oz * scale)
+      t.add(leafM)
+    }
+    streetGroup.add(t)
+  }
+  for (const [tx, tz] of [
+    [-20, 10],
+    [-20, 2],
+    [20, 10],
+    [20, 2],
+    [-13, 16.5],
+    [13, 16.5],
+    [-22, -6],
+    [22, -6],
+  ]) {
+    tree(tx, tz, 1.2)
+  }
+
+  const building = (x: number, z: number, w: number, d: number, h: number, color: number) => {
+    const b = box(w, h, d, color, { rough: 0.9 })
+    b.position.set(x, h / 2, z)
+    streetGroup.add(b)
+    // window grid so the facade is not a blank slab
+    const rows = Math.max(2, Math.floor(h / 3))
+    const cols = Math.max(2, Math.floor(w / 2.4))
+    const winMat = stdMat(0x8fb6cf, { emissive: 0x6f9cbb, ei: 0.35 })
+    for (let r = 1; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const win = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 0.06), winMat)
+        win.position.set(
+          x - w / 2 + 1.2 + c * (w / cols),
+          1.8 + r * (h / rows),
+          z + (d / 2 + 0.04) * (z > 0 ? 1 : -1),
+        )
+        streetGroup.add(win)
+      }
+    }
+  }
+  building(-26, -14, 12, 10, 13, 0x8e9aa6)
+  building(27, -12, 14, 10, 9, 0x9aa39c)
+  building(-30, 14, 10, 8, 7, 0xa39d94)
+  building(30, 15, 12, 9, 11, 0x8f9aa0)
+  building(-6, -24, 16, 10, 16, 0x9299a8)
+  building(14, -25, 12, 9, 12, 0x9d9a92)
+
+  // kerb, street lamps and a couple of parked cars
+  const kerb = box(FLOOR.width + 26, 0.12, 0.3, 0xb9bec2, { rough: 0.9 })
+  kerb.position.set(0, -0.02, HALF_D + 9.2)
+  streetGroup.add(kerb)
+
+  for (const lx of [-16, 16]) {
+    const post = cyl(0.07, 0.09, 5.0, 0x6d7378, 8, 0.5)
+    post.position.set(lx, 2.5, HALF_D + 10.5)
+    streetGroup.add(post)
+    const head = box(1.1, 0.14, 0.3, 0x6d7378, { metal: 0.5 })
+    head.position.set(lx + 0.45, 4.95, HALF_D + 10.5)
+    streetGroup.add(head)
+    const lamp = new THREE.PointLight(0xfff0cf, hour >= 18 || hour < 6 ? 0.9 : 0.1, 16)
+    lamp.position.set(lx + 0.9, 4.8, HALF_D + 10.5)
+    streetGroup.add(lamp)
+  }
+
+  const car = (x: number, z: number, color: number) => {
+    const c = new THREE.Group()
+    c.position.set(x, 0, z)
+    const body = box(4.0, 0.85, 1.8, color, { metal: 0.4, rough: 0.35 })
+    body.position.y = 0.75
+    c.add(body)
+    const cabin = box(2.1, 0.65, 1.65, 0x9fb2bd, { metal: 0.3, rough: 0.2 })
+    cabin.position.set(-0.15, 1.45, 0)
+    c.add(cabin)
+    for (const [wx, wz] of [
+      [-1.3, 0.9],
+      [1.3, 0.9],
+      [-1.3, -0.9],
+      [1.3, -0.9],
+    ]) {
+      const wheel = cyl(0.34, 0.34, 0.22, 0x24282b, 12, 0.2)
+      wheel.rotation.z = Math.PI / 2
+      wheel.position.set(wx, 0.34, wz)
+      c.add(wheel)
+    }
+    streetGroup.add(c)
+  }
+  car(-9, HALF_D + 12.4, 0xb9563f)
+  car(4, HALF_D + 12.4, 0x3f6fb9)
+  car(17, HALF_D + 12.4, 0xd8d3c4)
+
+  streetGroup.visible = true
+
+  /* ---------------------------------------------------------- apply state -- */
   function applyPalette(h: number) {
     pal = paletteFor(h)
     const night = h >= 18 || h < 6
-    floor.material = new THREE.MeshStandardMaterial({ color: pal.floor, roughness: 0.9 })
-    ;(rug.material as THREE.MeshStandardMaterial).color.setHex(pal.rug)
     wallMat.color.setHex(pal.wall)
-    // Even at night this is a lit office, not a dark warehouse: the ceiling
-    // strips carry the room and the desks get their task lamps.
-    sun.intensity = night ? 1.15 : 1.9
+    sun.intensity = night ? 1.1 : 1.85
     sun.color.setHex(night ? 0xc9d8ee : 0xfff6e5)
-    fill.intensity = night ? 0.95 : 1.05
+    fill.intensity = night ? 0.9 : 1.0
     for (const l of lamps) l.intensity = night ? 0.85 : 0
-    for (const m of monitors) (m.material as THREE.MeshStandardMaterial).emissiveIntensity = night ? 1.6 : 1.1
+    for (const s of streaks) (s.material as THREE.MeshStandardMaterial).emissiveIntensity = night ? 1.5 : 0.85
   }
 
-  return { group, desks: DESKS, monitors, lamps, boardSurface, applyPalette }
+  function dispose() {
+    for (const d of disposables) d.dispose()
+  }
+
+  return { group, monitors, lamps, boardSurface, streaks, streetGroup, applyPalette, dispose }
 }
