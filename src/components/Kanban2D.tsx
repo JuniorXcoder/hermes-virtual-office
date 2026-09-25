@@ -1,0 +1,55 @@
+'use client'
+
+import { useOffice } from '@/lib/store'
+
+const COLUMNS: { key: string; label: string }[] = [
+  { key: 'todo', label: 'TODO' },
+  { key: 'ready', label: 'SIAP' },
+  { key: 'running', label: 'DIKERJAKAN' },
+  { key: 'review', label: 'REVIEW' },
+  { key: 'blocked', label: 'TERHAMBAT' },
+  { key: 'done', label: 'SELESAI' },
+]
+
+export default function Kanban2D() {
+  const tasks = useOffice((s) => s.tasks)
+  const setPeek = useOffice((s) => s.setPeek)
+
+  return (
+    <div className="absolute inset-0 overflow-auto p-4 pt-20">
+      <div className="grid min-w-[900px] grid-cols-6 gap-3">
+        {COLUMNS.map((col) => {
+          const items = tasks.filter((t) => t.status === col.key)
+          return (
+            <section key={col.key} className="vp-col">
+              <header className="vp-col-head">
+                <span>{col.label}</span>
+                <span className="vp-count">{items.length}</span>
+              </header>
+              <div className="flex flex-col gap-2">
+                {items.map((t) => (
+                  <article
+                    key={t.id}
+                    className="vp-card"
+                    onClick={() => {
+                      // surface the same detail the 3D monitor opens
+                      const idx = tasks.filter((x) => x.status === col.key).indexOf(t)
+                      if (col.key === 'running' || col.key === 'review') setPeek(idx)
+                    }}
+                  >
+                    <div className="vp-card-title">{t.title}</div>
+                    <div className="vp-card-meta">
+                      <span className="vp-chip">{t.assignee || '—'}</span>
+                      <code>{t.id}</code>
+                    </div>
+                  </article>
+                ))}
+                {!items.length && <div className="vp-empty">kosong</div>}
+              </div>
+            </section>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
