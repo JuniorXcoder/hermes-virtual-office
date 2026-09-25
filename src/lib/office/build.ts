@@ -54,6 +54,13 @@ const cyl = (rt: number, rb: number, h: number, color: number, seg = 14, metal =
   new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), stdMat(color, { metal, rough: 0.6 }))
 
 /* --------------------------------------------------------------- textures -- */
+/*
+ * Textures are procedural canvases rather than image files: the repo stays free
+ * of binary assets and the whole set costs a few milliseconds at startup. Each
+ * one is drawn at 512px so it stays sharp when a surface fills the screen, and
+ * every material that maps one sets a repeat that matches its real-world size
+ * (a plank should read as ~30 cm, not as one giant plank per wall).
+ */
 
 function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) => void) {
   const cv = document.createElement('canvas')
@@ -62,70 +69,268 @@ function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) 
   draw(ctx, size)
   const tex = new THREE.CanvasTexture(cv)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-  tex.anisotropy = 4
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 8
+  tex.generateMipmaps = true
+  tex.minFilter = THREE.LinearMipmapLinearFilter
   return tex
 }
 
-/** Wood plank flooring: grain lines plus subtle plank seams. */
-function woodFloorTexture(base: string, dark: string) {
-  return canvasTex(256, (c, s) => {
-    c.fillStyle = base
+/** Deterministic pseudo-random so a texture looks the same on every reload. */
+function rng(seed: number) {
+  let s = seed >>> 0
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
+
+/** Wood plank flooring: plank seams, grain streaks, knots and bevelled edges. */
+function woodFloorTexture(light: string, mid: string, dark: string) {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(7)
+    c.fillStyle = mid
     c.fillRect(0, 0, s, s)
-    for (let y = 0; y < s; y += 32) {
-      c.fillStyle = dark
-      c.fillRect(0, y, s, 2) // plank seam
-      for (let i = 0; i < 40; i++) {
-        c.globalAlpha = 0.05 + Math.random() * 0.08
-        c.fillStyle = '#000'
-        c.fillRect(Math.random() * s, y + 3 + Math.random() * 26, 10 + Math.random() * 60, 1)
+    const plank = 64 // 512 / 8 planks -> repeat makes each ~30 cm
+    for (let row = 0; row * plank < s; row++) {
+      const y = row * plank
+      // per-plank base tone
+      const shade = 0.9 + rand() * 0.2
+      c.fillStyle = light
+      c.globalAlpha = 0.35 * shade
+      c.fillRect(0, y, s, plank)
+      c.globalAlpha = 1
+      // grain lines
+      for (let g = 0; g < 26; g++) {
+        c.strokeStyle = dark
+        c.globalAlpha = 0.04 + rand() * 0.09
+        c.lineWidth = rand() > 0.85 ? 1.6 : 0.8
+        const gy = y + 4 + rand() * (plank - 8)
+        c.beginPath()
+        c.moveTo(0, gy)
+        for (let x = 0; x <= s; x += 32) {
+          c.lineTo(x, gy + Math.sin((x + row * 40) * 0.03) * (0.6 + rand()))
+        }
+        c.stroke()
       }
       c.globalAlpha = 1
-      // stagger the plank ends
+      // occasional knot
+      if (rand() > 0.72) {
+        const kx = rand() * s
+        const ky = y + plank / 2
+        c.fillStyle = dark
+        c.globalAlpha = 0.18
+        c.beginPath()
+        c.ellipse(kx, ky, 3 + rand() * 3, 2 + rand() * 2, 0, 0, Math.PI * 2)
+        c.fill()
+        c.globalAlpha = 1
+      }
+      // seam at the plank end
       c.fillStyle = dark
-      c.fillRect(((y / 32) % 2 ? 96 : 176) % s, y, 2, 32)
+      c.globalAlpha = 0.5
+      c.fillRect(((row * 137) % s), y, 2, plank)
+      c.globalAlpha = 1
+      // seam between rows
+      c.fillStyle = dark
+      c.globalAlpha = 0.65
+      c.fillRect(0, y, s, 2)
+      c.fillStyle = light
+      c.globalAlpha = 0.25
+      c.fillRect(0, y + 2, s, 1)
+      c.globalAlpha = 1
     }
   })
 }
 
-/** Large-format tile for the lobby and corridor. */
-function tileTexture(base: string, line: string) {
-  return canvasTex(256, (c, s) => {
+/** Large-format porcelain tile for the lobby: grout, speckle, subtle sheen marks. */
+function tileTexture(base: string, line: string, speck: string) {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(23)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
+    // 4x4 tiles per texture
+    const t = s / 4
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        const shade = 0.96 + rand() * 0.08
+        c.fillStyle = speck
+        c.globalAlpha = 0.5 * (shade - 0.96) * 12
+        c.fillRect(i * t, j * t, t, t)
+        c.globalAlpha = 1
+        // faint diagonal sheen
+        c.strokeStyle = '#ffffff'
+        c.globalAlpha = 0.05
+        c.lineWidth = 12
+        c.beginPath()
+        c.moveTo(i * t, j * t + t)
+        c.lineTo(i * t + t, j * t)
+        c.stroke()
+        c.globalAlpha = 1
+      }
+    }
+    // grout lines
     c.strokeStyle = line
-    c.lineWidth = 3
-    for (let i = 0; i <= s; i += 64) {
+    c.lineWidth = 4
+    for (let i = 0; i <= 4; i++) {
       c.beginPath()
-      c.moveTo(i, 0)
-      c.lineTo(i, s)
-      c.moveTo(0, i)
-      c.lineTo(s, i)
+      c.moveTo(i * t, 0)
+      c.lineTo(i * t, s)
+      c.moveTo(0, i * t)
+      c.lineTo(s, i * t)
       c.stroke()
     }
-    for (let i = 0; i < 700; i++) {
-      c.globalAlpha = 0.04
-      c.fillStyle = Math.random() > 0.5 ? '#fff' : '#000'
-      c.fillRect(Math.random() * s, Math.random() * s, 2, 2)
+    // fine speckle for realism
+    for (let i = 0; i < 2600; i++) {
+      c.globalAlpha = 0.03 + rand() * 0.05
+      c.fillStyle = rand() > 0.5 ? '#ffffff' : '#000000'
+      c.fillRect(rand() * s, rand() * s, 1.5, 1.5)
     }
     c.globalAlpha = 1
   })
 }
 
-/** Painted artwork for the wall frames — abstract, deterministic per index. */
+/** Plaster wall: near-white with a faint mottled roller finish. */
+function plasterTexture(base: string, tint: string) {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(91)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 900; i++) {
+      c.globalAlpha = 0.02 + rand() * 0.03
+      c.fillStyle = rand() > 0.5 ? tint : '#000000'
+      const r = 3 + rand() * 14
+      c.beginPath()
+      c.arc(rand() * s, rand() * s, r, 0, Math.PI * 2)
+      c.fill()
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Brushed metal for door furniture and window mullions. */
+function brushedMetalTexture(base: string, dark: string) {
+  return canvasTex(128, (c, s) => {
+    const rand = rng(41)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 420; i++) {
+      c.globalAlpha = 0.04 + rand() * 0.1
+      c.fillStyle = dark
+      c.fillRect(0, rand() * s, s, rand() > 0.8 ? 1.4 : 0.6)
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Fabric weave for upholstery: sofa, chairs, cushions. */
+function fabricTexture(base: string, thread: string) {
+  return canvasTex(128, (c, s) => {
+    const rand = rng(57)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    c.strokeStyle = thread
+    c.globalAlpha = 0.12
+    c.lineWidth = 1
+    for (let i = 0; i < s; i += 3) {
+      c.beginPath()
+      c.moveTo(i, 0)
+      c.lineTo(i, s)
+      c.stroke()
+      c.beginPath()
+      c.moveTo(0, i)
+      c.lineTo(s, i)
+      c.stroke()
+    }
+    c.globalAlpha = 1
+    for (let i = 0; i < 900; i++) {
+      c.globalAlpha = 0.04
+      c.fillStyle = rand() > 0.5 ? '#fff' : '#000'
+      c.fillRect(rand() * s, rand() * s, 1, 1)
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Asphalt with aggregate and lane wear. */
+function asphaltTexture(base: string, grit: string) {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(77)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 4200; i++) {
+      c.globalAlpha = 0.05 + rand() * 0.16
+      c.fillStyle = rand() > 0.35 ? grit : '#2b2e31'
+      const r = 0.6 + rand() * 1.9
+      c.beginPath()
+      c.arc(rand() * s, rand() * s, r, 0, Math.PI * 2)
+      c.fill()
+    }
+    // patches / wear
+    for (let i = 0; i < 5; i++) {
+      c.globalAlpha = 0.05
+      c.fillStyle = '#1f2225'
+      c.beginPath()
+      c.ellipse(rand() * s, rand() * s, 20 + rand() * 50, 14 + rand() * 40, rand() * 3, 0, Math.PI * 2)
+      c.fill()
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Pavement slabs with expansion joints. */
+function pavementTexture(base: string, joint: string) {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(13)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    const n = 4
+    const t = s / n
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        c.globalAlpha = 0.06 + rand() * 0.1
+        c.fillStyle = rand() > 0.5 ? '#ffffff' : '#000000'
+        c.fillRect(i * t + 2, j * t + 2, t - 4, t - 4)
+        c.globalAlpha = 1
+      }
+    }
+    c.strokeStyle = joint
+    c.lineWidth = 3
+    for (let i = 0; i <= n; i++) {
+      c.beginPath()
+      c.moveTo(i * t, 0)
+      c.lineTo(i * t, s)
+      c.moveTo(0, i * t)
+      c.lineTo(s, i * t)
+      c.stroke()
+    }
+    for (let i = 0; i < 1400; i++) {
+      c.globalAlpha = 0.05
+      c.fillStyle = rand() > 0.5 ? '#fff' : '#000'
+      c.fillRect(rand() * s, rand() * s, 1.5, 1.5)
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Painted artwork for the wall frames — abstract, deterministic per seed. */
 function artTexture(seed: number) {
   const hues = [212, 24, 148, 340, 44, 268, 190, 8]
-  return canvasTex(128, (c, s) => {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(seed * 97 + 3)
     const h = hues[seed % hues.length]
-    c.fillStyle = `hsl(${h} 26% 88%)`
+    const g = c.createLinearGradient(0, 0, 0, s)
+    g.addColorStop(0, `hsl(${h} 30% 92%)`)
+    g.addColorStop(1, `hsl(${(h + 20) % 360} 24% 78%)`)
+    c.fillStyle = g
     c.fillRect(0, 0, s, s)
-    for (let i = 0; i < 6; i++) {
-      c.globalAlpha = 0.5
-      c.fillStyle = `hsl(${(h + i * 34) % 360} ${38 + i * 6}% ${34 + i * 7}%)`
-      const w = 16 + ((seed * 13 + i * 29) % 60)
-      const x = (seed * 23 + i * 37) % (s - w)
-      const y = (seed * 41 + i * 19) % (s - 30)
+    for (let i = 0; i < 9; i++) {
+      c.globalAlpha = 0.35 + rand() * 0.4
+      c.fillStyle = `hsl(${(h + i * 29) % 360} ${40 + i * 5}% ${30 + (i % 4) * 12}%)`
+      const w = 30 + rand() * 130
+      const x = rand() * (s - w)
+      const y = rand() * (s - 50)
       c.beginPath()
-      c.ellipse(x + w / 2, y + 18, w / 2, 12 + (i % 3) * 5, (i * 0.6) % 3, 0, Math.PI * 2)
+      c.ellipse(x + w / 2, y + 25, w / 2, 12 + rand() * 26, rand() * 3, 0, Math.PI * 2)
       c.fill()
     }
     c.globalAlpha = 1
@@ -153,15 +358,29 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     return t
   }
 
-  const floorTex = track(woodFloorTexture('#e0cfa8', '#b99b6d'))
-  floorTex.repeat.set(FLOOR.width / 2.6, FLOOR.depth / 2.6)
-  const lobbyTex = track(tileTexture('#cfd6da', '#aab4bb'))
-  lobbyTex.repeat.set(FLOOR.width / 3.2, (ROOMS.lobby.z2 - ROOMS.lobby.z1) / 3.2)
+  const floorTex = track(woodFloorTexture('#e6d5ae', '#d3bd93', '#a98c5f'))
+  // 8 planks per tile, tile covers 2.4 m -> each plank ~30 cm wide
+  floorTex.repeat.set(FLOOR.width / 2.4, FLOOR.depth / 2.4)
+  const lobbyTex = track(tileTexture('#d5dbdf', '#b3bcc2', '#eef2f4'))
+  // 4x4 tiles per texture, tile covers 3.2 m -> each tile ~80 cm
+  lobbyTex.repeat.set((ROOMS.lobby.x2 - ROOMS.lobby.x1) / 3.2, (ROOMS.lobby.z2 - ROOMS.lobby.z1) / 3.2)
+  const plasterTex = track(plasterTexture('#f4f7f9', '#cfd8de'))
+  // Fine mottle reads as flat colour from across the street; 2 cm per pixel keeps
+  // the grain visible up close and still resolves at building scale.
+  plasterTex.repeat.set(16, 6)
+  const metalTex = track(brushedMetalTexture('#9aa8b2', '#6b7880'))
+  metalTex.repeat.set(2, 2)
+  const fabricTex = track(fabricTexture('#8fb0d4', '#5f80a4'))
+  const fabricTex2 = track(fabricTexture('#8397a4', '#5b6c78'))
+  const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
+  asphaltTex.repeat.set(24, 3)
+  const pavementTex = track(pavementTexture('#a3a8ab', '#8d9296'))
+  pavementTex.repeat.set(14, 14)
 
   /* ------------------------------------------------------------- floors --- */
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth),
-    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.85 }),
+    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.72, metalness: 0.02 }),
   )
   floor.rotation.x = -Math.PI / 2
   group.add(floor)
@@ -169,7 +388,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // the lobby is a different material so the transition reads as architecture
   const lobbyFloor = new THREE.Mesh(
     new THREE.PlaneGeometry(ROOMS.lobby.x2 - ROOMS.lobby.x1, ROOMS.lobby.z2 - ROOMS.lobby.z1),
-    new THREE.MeshStandardMaterial({ map: lobbyTex, roughness: 0.55 }),
+    new THREE.MeshStandardMaterial({ map: lobbyTex, roughness: 0.42, metalness: 0.04 }),
   )
   lobbyFloor.rotation.x = -Math.PI / 2
   lobbyFloor.position.set(0, 0.006, (ROOMS.lobby.z1 + ROOMS.lobby.z2) / 2)
@@ -186,7 +405,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   rug(LOUNGE.x, LOUNGE.z - 2.4, 5.4, 4.6, 0xc6b9a2)
 
   /* -------------------------------------------------------------- walls --- */
-  const wallMat = track(new THREE.MeshStandardMaterial({ color: pal.wall, roughness: 0.92 }))
+  const wallMat = track(
+    new THREE.MeshStandardMaterial({ color: pal.wall, map: plasterTex, roughness: 0.9 }),
+  )
   /** A wall slab with optional rectangular cut-outs (windows, doorways). */
   const wallPanel = (
     w: number,
@@ -219,8 +440,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       const left = hole.x - hole.w / 2
       if (left > cursor) local((cursor + left) / 2, 0, left - cursor, h)
       // above and below the hole
-      const top = hole.y + hole.h / 2
-      const bot = hole.y - hole.h / 2
+      // hole.y is measured from the FLOOR; the panel is centred at h/2, so the
+      // local offset is hole.y - h/2. Treating it as already-local put every
+      // window cut-out above the wall line.
+      const ly = hole.y - h / 2
+      const top = ly + hole.h / 2
+      const bot = ly - hole.h / 2
       if (top < h / 2) local(hole.x, (top + h / 2) / 2, hole.w, h / 2 - top)
       if (bot > -h / 2) local(hole.x, (-h / 2 + bot) / 2, hole.w, bot + h / 2)
       cursor = hole.x + hole.w / 2
@@ -289,7 +514,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       depthWrite: false,
     }),
   )
-  const frameMat = track(stdMat(0x9aa8b2, { metal: 0.5, rough: 0.4 }))
+  const frameMat = track(
+    new THREE.MeshStandardMaterial({ color: 0x9aa8b2, map: metalTex, metalness: 0.55, roughness: 0.35 }),
+  )
 
   /** A glazed opening: frame, mullions and a bright pane. */
   const windowUnit = (
@@ -330,12 +557,77 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     )
     group.add(sky)
   }
-  windowUnit(-12.4, WINDOWS[0].y, -HALF_D + WALL_T / 2 + 0.02, WINDOWS[0].w, WINDOWS[0].h, 'x')
-  windowUnit(12.4, WINDOWS[1].y, -HALF_D + WALL_T / 2 + 0.02, WINDOWS[1].w, WINDOWS[1].h, 'x')
-  windowUnit(-HALF_W + WALL_T / 2 + 0.02, WINDOWS[2].y, -10.4, WINDOWS[2].h, WINDOWS[2].w, 'z')
-  windowUnit(-HALF_W + WALL_T / 2 + 0.02, WINDOWS[2].y, 8.0, WINDOWS[2].h, WINDOWS[2].w, 'z')
-  windowUnit(HALF_W - WALL_T / 2 - 0.02, WINDOWS[3].y, -10.4, WINDOWS[3].h, WINDOWS[3].w, 'z')
-  windowUnit(HALF_W - WALL_T / 2 - 0.02, WINDOWS[3].y, 8.0, WINDOWS[3].h, WINDOWS[3].w, 'z')
+  // Sunk slightly into the wall opening so the glass shows on BOTH faces; a unit
+  // centred in the wall is buried and invisible from outside.
+  const wallN = -HALF_D + WALL_T / 2
+  windowUnit(-12.4, WINDOWS[0].y, wallN, WINDOWS[0].w, WINDOWS[0].h, 'x')
+  windowUnit(12.4, WINDOWS[1].y, wallN, WINDOWS[1].w, WINDOWS[1].h, 'x')
+  windowUnit(0, 1.9, wallN + 0.01, 3.0, 1.7, 'x') // lobby: one wide street-facing window
+  const wallW = -HALF_W + WALL_T / 2
+  const wallE = HALF_W - WALL_T / 2
+  windowUnit(wallW, WINDOWS[2].y, -10.4, WINDOWS[2].h, WINDOWS[2].w, 'z')
+  windowUnit(wallW, WINDOWS[2].y, 8.0, WINDOWS[2].h, WINDOWS[2].w, 'z')
+  windowUnit(wallE, WINDOWS[3].y, -10.4, WINDOWS[3].h, WINDOWS[3].w, 'z')
+  windowUnit(wallE, WINDOWS[3].y, 8.0, WINDOWS[3].h, WINDOWS[3].w, 'z')
+
+  // Facade relief: horizontal banding and corner pilasters. A flat plaster slab
+  // has no scale cue from outside, so the building read as an untextured box.
+  const facadeMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xe4eaee, map: plasterTex, roughness: 0.88 }),
+  )
+  const bandMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xb9c4cc, map: plasterTex, roughness: 0.7 }),
+  )
+  const facadeBand = (
+    w: number,
+    h: number,
+    x: number,
+    y: number,
+    z: number,
+    ry: number,
+  ) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.09), bandMat)
+    m.position.set(x, y, z)
+    m.rotation.y = ry
+    group.add(m)
+  }
+  // base plinth + cornice + a mid band on all four faces
+  for (const [x, z, ry, len] of [
+    [0, -HALF_D - 0.03, 0, FLOOR.width],
+    [0, HALF_D + 0.03, 0, FLOOR.width],
+    [-HALF_W - 0.03, 0, Math.PI / 2, FLOOR.depth],
+    [HALF_W + 0.03, 0, Math.PI / 2, FLOOR.depth],
+  ] as const) {
+    facadeBand(len, 0.34, x, 0.17, z, ry)
+    facadeBand(len, 0.26, x, WALL_H - 0.13, z, ry)
+    facadeBand(len, 0.16, x, 1.5, z, ry)
+  }
+  // corner pilasters
+  for (const [px, pz] of [
+    [-HALF_W, -HALF_D],
+    [HALF_W, -HALF_D],
+    [-HALF_W, HALF_D],
+    [HALF_W, HALF_D],
+  ] as const) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, WALL_H, 0.5), facadeMat)
+    p.position.set(px, WALL_H / 2, pz)
+    group.add(p)
+  }
+  // wall sconces either side of the entrance
+  for (const sx of [-2.6, 2.6]) {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.1, 0.3), bandMat)
+    bracket.position.set(sx, 3.3, HALF_D - 0.02)
+    group.add(bracket)
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 10, 8),
+      stdMat(0xfff1cf, { emissive: 0xffd89a, ei: 0.9 }),
+    )
+    bulb.position.set(sx, 3.16, HALF_D + 0.12)
+    group.add(bulb)
+    const lamp = new THREE.PointLight(0xffe3b0, hour >= 18 || hour < 6 ? 0.8 : 0.15, 8)
+    lamp.position.set(sx, 3.1, HALF_D + 0.4)
+    group.add(lamp)
+  }
 
   /* ----------------------------------------------------------- paintings --- */
   PAINTINGS.forEach((art, i) => {
@@ -461,10 +753,15 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // faces the monitor by construction
     const chair = new THREE.Group()
     chair.position.set(DESK_CHAIR.x, 0, DESK_CHAIR.z)
-    const seat = box(0.56, 0.07, 0.54, pal.chair, { rough: 0.7 })
+    const chairFabric = new THREE.MeshStandardMaterial({
+      color: pal.chair,
+      map: fabricTex2,
+      roughness: 0.85,
+    })
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.07, 0.54), chairFabric)
     seat.position.y = 0.47
     chair.add(seat)
-    const back = box(0.56, 0.6, 0.06, pal.chair, { rough: 0.7 })
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.6, 0.06), chairFabric)
     back.position.set(0, 0.76, 0.27)
     chair.add(back)
     const post = cyl(0.045, 0.06, 0.44, 0x5b666e, 10, 0.4)
@@ -540,14 +837,17 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /* -------------------------------------------------------------- lounge -- */
   const sofa = new THREE.Group()
   sofa.position.set(LOUNGE.x, 0, LOUNGE.z - 1.45)
-  const sofaSeat = box(3.4, 0.34, 1.0, pal.sofa, { rough: 0.9 })
+  const sofaFabric = track(
+    new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, roughness: 0.95 }),
+  )
+  const sofaSeat = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.34, 1.0), sofaFabric)
   sofaSeat.position.y = 0.42
   sofa.add(sofaSeat)
-  const sofaBack = box(3.4, 0.66, 0.24, pal.sofa, { rough: 0.9 })
+  const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.66, 0.24), sofaFabric)
   sofaBack.position.set(0, 0.82, 0.38)
   sofa.add(sofaBack)
   for (const sx of [-1.6, 1.6]) {
-    const arm = box(0.24, 0.5, 1.0, pal.sofa, { rough: 0.9 })
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.5, 1.0), sofaFabric)
     arm.position.set(sx, 0.6, 0)
     sofa.add(arm)
   }
@@ -834,7 +1134,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // was a single slab that read as a wall panel; nothing was actually there.
   const doorGroup = new THREE.Group()
   doorGroup.position.set(DOOR.x, 0, HALF_D - WALL_T / 2)
-  const dFrameMat = track(stdMat(0x54636d, { metal: 0.55, rough: 0.35 }))
+  const dFrameMat = track(
+    new THREE.MeshStandardMaterial({ color: 0x54636d, map: metalTex, metalness: 0.6, roughness: 0.3 }),
+  )
   const leafW = 1.65
   for (const side of [-1, 1]) {
     const leafH = 2.25
@@ -931,17 +1233,15 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   const pavement = new THREE.Mesh(
     new THREE.PlaneGeometry(FLOOR.width + 26, FLOOR.depth + 26),
-    stdMat(0x9fa3a6, { rough: 0.95 }),
+    new THREE.MeshStandardMaterial({ map: pavementTex, roughness: 0.95 }),
   )
   pavement.rotation.x = -Math.PI / 2
   pavement.position.y = -0.06
   streetGroup.add(pavement)
 
-  const roadTex = track(tileTexture('#5c6165', '#71767a'))
-  roadTex.repeat.set(16, 3)
   const road = new THREE.Mesh(
     new THREE.PlaneGeometry(120, 9),
-    new THREE.MeshStandardMaterial({ map: roadTex, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.98 }),
   )
   road.rotation.x = -Math.PI / 2
   road.position.set(0, -0.05, HALF_D + 14)

@@ -19,7 +19,9 @@ import type { AgentRole } from '@/types/hermes'
 export const FLOOR = { width: 34, depth: 26 }
 export const HALF_W = FLOOR.width / 2
 export const HALF_D = FLOOR.depth / 2
-export const WALL_H = 3.4
+// 4.6 m: the window bands sit at y 2.65-4.55, so a 3.4 m wall left the cut-out
+// ABOVE the wall line and no opening was ever formed.
+export const WALL_H = 4.6
 /** Wall thickness, shared by walls and partitions. */
 export const WALL_T = 0.3
 
@@ -116,12 +118,16 @@ export const DART = { x: HALF_W - WALL_T - 0.2, z: -9.4 }
 export const DOOR = { x: 0, z: HALF_D - WALL_T }
 export const RECEPTION = { x: -8.4, z: 8.4 }
 
-/** Window bands on the north wall, either side of the Kanban board. */
+/**
+ * Window openings. `y` is measured from the FLOOR, matching how build.ts cuts the
+ * hole — the first version passed a wall-centre-relative value and every cut-out
+ * landed above the wall line, so the facade had no windows at all.
+ */
 export const WINDOWS = [
-  { x: -12.4, y: 1.9, w: 4.6, h: 1.9 },
-  { x: 12.4, y: 1.9, w: 4.6, h: 1.9 },
-  { x: -16.2, y: 1.9, w: 1.6, h: 1.9, west: true },
-  { x: 16.2, y: 1.9, w: 1.6, h: 1.9, east: true },
+  { x: -12.4, y: 2.7, w: 4.6, h: 1.9 },
+  { x: 12.4, y: 2.7, w: 4.6, h: 1.9 },
+  { x: -16.2, y: 2.7, w: 1.6, h: 1.9, west: true },
+  { x: 16.2, y: 2.7, w: 1.6, h: 1.9, east: true },
 ] as const
 
 /** Artwork on the interior walls: [x, y, z, w, h, facing]. */
