@@ -503,3 +503,22 @@ kbd {
 }
 .vp-btn-danger:hover:not(:disabled) { background: #5a2020 !important; border-color: #b04a4a !important; }
 .vp-btn-rosy { border-color: #3a5f7f !important; }
+
+/* ------------------------------------------------- agent spawn: misc states -- */
+.vp-ok {
+  font: 500 11px/1.4 ui-sans-serif, system-ui, sans-serif;
+  color: #8fe8c6;
+  background: #10302866;
+  border: 1px solid #2c6b5188;
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+.vp-tag-warn {
+  font: 400 9px/1 ui-monospace, monospace;
+  color: #ffd479;
+  border: 1px solid #6b5a2c88;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: 5px;
+  vertical-align: middle;
+}

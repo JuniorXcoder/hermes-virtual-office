@@ -225,16 +225,48 @@ The spawn/kill menu.
 ```json
 {
   "available": [
-    { "name": "lulu", "total": 2, "inOffice": true,  "reason": null },
-    { "name": "risko", "total": 1, "inOffice": false, "reason": "killed" }
+    { "name": "budi",    "total": 0, "profile": true,  "inOffice": true,  "reason": null },
+    { "name": "default", "total": 7, "profile": false, "inOffice": true,  "reason": null },
+    { "name": "risko",   "total": 1, "profile": true,  "inOffice": false, "reason": "killed" }
   ],
   "killed": ["risko"]
 }
 ```
 
-`available` is every Hermes profile with its task count; `inOffice` says whether it
-is currently shown in the room. `reason` is `killed` (removed here), `unknown`
-(absent for another reason), or `null`.
+`available` is the union of task assignees and profiles on disk, so a profile with
+no tasks is still listed — otherwise creating one would look like it failed.
+
+- `total` — tasks assigned to it.
+- `profile` — the profile exists on disk. `false` means the name appears only as a
+  task assignee (or came from a stale task), which the UI flags as `tanpa profil`.
+- `inOffice` — currently shown in the room.
+- `reason` — `killed` (removed here), `unknown` (absent for another reason), `null`.
+
+## 5d. `POST /api/hermes/agents` with `action: "create"`
+
+```json
+{ "action": "create", "name": "budi", "description": "Frontend specialist" }
+```
+
+Creates a Hermes profile and brings it into the office.
+
+- `name` must match `^[a-z0-9][a-z0-9_-]{0,63}$` (lowercase, digits, `-`, `_`).
+- `description` is optional and is passed to `hermes profile describe`'s field; the
+  kanban decomposer routes on it.
+
+Responses:
+
+- `201` → `{ "success": true, "action": "create", "name": "budi", "description": "…" }`
+- `400 invalid_request` → name already exists (`profil "budi" sudah ada`) or the
+  name does not match the pattern
+- `502 action_failed` → the CLI failed
+
+**The profile is created empty** — `hermes profile create` without `--clone`.
+Cloning copies the source profile's `config.yaml`, which carries its model,
+provider and API keys; spawning an office worker must not hand it someone else's
+credentials. The new profile inherits from the shell environment, exactly as the
+CLI does without flags. `--no-alias` skips wrapper-script creation, which the office
+does not need because it drives profiles through the kanban CLI.
 
 ## 5c. `POST /api/hermes/agents`
 
@@ -242,7 +274,7 @@ is currently shown in the room. `reason` is `killed` (removed here), `unknown`
 { "action": "kill", "name": "risko" }
 ```
 
-- `action`: `"spawn"` or `"kill"` (required)
+- `action`: `"spawn"`, `"kill"` or `"create"` (required)
 - `name`: must be a profile the install knows (required)
 
 Responses:
@@ -250,6 +282,7 @@ Responses:
 - `200` → `{ "success": true, "action", "name", "changed": true, "killed": [...] }`.
   `changed` is `false` when the profile was already in the requested state.
 - `400 invalid_request` → unknown action, missing name, or `profil "x" tidak dikenal`
+  (spawn/kill accept profiles on disk as well as task assignees)
 - `502 action_failed` → the CLI failed while listing profiles
 
 **This changes office membership only.** Killing a profile removes its avatar; its

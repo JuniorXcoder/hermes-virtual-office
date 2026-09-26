@@ -656,3 +656,50 @@ were not.
 
 Measured after the fix: 6/6 window holes match their glass, 8/8 paintings inside
 their wall and clear of every opening, 12/12 self-test checks.
+
+---
+
+## 16. Creating a profile: two reasons an agent was invisible
+
+The Agent panel could only toggle existing profiles. Adding "create" exposed two
+bugs that would each have made it look broken.
+
+### `listAgents()` only read task assignees
+
+The roster came from `hermes kanban assignees`, which is derived from tasks. A
+profile with no work therefore did not exist as far as the office was concerned, so
+a freshly created agent would not appear until someone gave it a task — and the
+obvious conclusion is "create did nothing".
+
+`listProfiles()` reads the profile directories instead (a directory with a
+`config.yaml` is a profile, which is what `hermes profile list` counts), and
+`listAgents()` unions the two. The API also reports `profile: boolean` so the UI can
+flag a name that exists only as a stale task assignee with `tanpa profil`.
+
+The filesystem is the source rather than `hermes profile list` because that command
+has no `--json` mode: parsing its table would break on a column reorder or a long
+model name, and the office would silently show the wrong roster.
+
+### Creating a profile must not clone credentials
+
+`hermes profile create` has `--clone` and `--clone-all`. Neither is used. Cloning
+copies the active profile's `config.yaml` — its model, provider and API keys — and
+spawning an office worker must not hand it someone else's credentials. The profile
+is created empty and inherits from the shell environment, exactly as the CLI does
+without flags. `--no-alias` skips the wrapper script the office does not need.
+
+### Verification against the real install
+
+```
+create  budi            -> 201, profile directory appears
+describe budi           -> "Uji coba pembuatan profil dari office"
+GET /agents             -> budi listed, total=0, profile=true, inOffice=true
+GET /tasks              -> agents: budi, default, lulu, risko
+create budi (again)     -> 400 'profil "budi" sudah ada'
+create "Budi Dua"       -> 400 name-format error
+kill budi               -> office: default, lulu, risko
+spawn budi              -> office: budi, default, lulu, risko
+```
+
+The probe profiles were deleted afterwards; `~/.hermes/profiles` is back to the
+original two.

@@ -11,6 +11,9 @@
  * strips those markers so the office UI can drive the board from a web request.
  */
 import { execFile } from 'node:child_process'
+import { access, readdir } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { promisify } from 'node:util'
 import type { Agent, AgentRole, NewTaskInput, Task, TaskStatus } from '@/types/hermes'
 
@@ -180,9 +183,86 @@ export async function listAssignees(): Promise<{ name: string; onDisk: boolean; 
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/* ----------------------------------------------------------------- profiles -- */
+
+/**
+ * Profiles on disk.
+ *
+ * Read from the filesystem rather than `hermes profile list`, because that
+ * command has no `--json` mode: parsing its table would break on a column
+ * reorder or a long model name, and the office would silently show the wrong
+ * roster. A directory containing `config.yaml` is a profile — that is the same
+ * thing `hermes profile list` counts.
+ */
+export async function listProfiles(): Promise<string[]> {
+  const home = process.env.HERMES_HOME || path.join(os.homedir(), '.hermes')
+  const dir = path.join(home, 'profiles')
+  try {
+    const entries = await readdir(dir, { withFileTypes: true })
+    const out: string[] = []
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      try {
+        await access(path.join(dir, e.name, 'config.yaml'))
+        out.push(e.name)
+      } catch {
+        // a directory without config.yaml is not a profile
+      }
+    }
+    return out.sort()
+  } catch {
+    return []
+  }
+}
+
+const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
+
+/**
+ * Create a profile.
+ *
+ * Deliberately NOT `--clone`: cloning copies the active profile's config.yaml,
+ * which carries its model, provider and API keys. Spawning an office worker must
+ * not hand it someone else's credentials. The new profile starts empty and
+ * inherits from the shell environment, exactly as `hermes profile create` does
+ * without flags.
+ *
+ * `--no-alias` skips wrapper-script creation; the office drives the profile
+ * through the kanban CLI, which does not need a shell alias.
+ */
+export async function createProfile(
+  name: string,
+  description?: string,
+): Promise<{ name: string; description: string }> {
+  const clean = name.trim().toLowerCase()
+  if (!PROFILE_NAME.test(clean)) {
+    throw new Error(
+      'nama profil harus huruf kecil/angka (boleh - dan _), maksimal 64 karakter',
+    )
+  }
+  const existing = await listProfiles()
+  if (existing.includes(clean)) {
+    throw new Error(`profil "${clean}" sudah ada`)
+  }
+  const desc = (description || `Office worker ${clean}`).trim().slice(0, 200)
+  const args = ['profile', 'create', clean, '--no-alias', '--description', desc]
+  try {
+    await run(HERMES_BIN, args, { env: cleanEnv(), timeout: 60_000, maxBuffer: 8 * 1024 * 1024 })
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string }
+    if (e.code === 'ENOENT') {
+      throw new Error(`Hermes CLI not found at "${HERMES_BIN}".`)
+    }
+    throw new Error(`hermes profile create ${clean} failed: ${(e.stderr || e.message || '').trim()}`)
+  }
+  return { name: clean, description: desc }
+}
+
 export async function listAgents(tasks: Task[]): Promise<Agent[]> {
   const raw = await kanbanJson<RawAssignee[]>(['assignees'])
-  const names = raw.map((r) => r.name).sort()
+  // Profiles AND assignees. Reading only `assignees` meant a freshly created
+  // profile stayed invisible until it was given a task, so "create a profile"
+  // looked like it had done nothing.
+  const names = [...new Set([...raw.map((r) => r.name), ...(await listProfiles())])].sort()
 
   const active = new Map<string, Task>()
   for (const t of tasks) {

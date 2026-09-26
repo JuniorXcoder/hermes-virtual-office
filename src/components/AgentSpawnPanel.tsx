@@ -18,6 +18,8 @@ import { useEffect, useState } from 'react'
 type Row = {
   name: string
   total: number
+  /** The profile exists on disk, not only as a task assignee. */
+  profile: boolean
   inOffice: boolean
   reason: string | null
 }
@@ -35,6 +37,10 @@ export default function AgentSpawnPanel({
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -58,6 +64,7 @@ export default function AgentSpawnPanel({
   async function act(action: 'spawn' | 'kill', name: string) {
     setBusy(name)
     setErr(null)
+    setNote(null)
     try {
       const r = await fetch('/api/hermes/agents', {
         method: 'POST',
@@ -72,6 +79,32 @@ export default function AgentSpawnPanel({
       setErr((e as Error).message)
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function create() {
+    const name = newName.trim()
+    if (!name) return
+    setCreating(true)
+    setErr(null)
+    setNote(null)
+    try {
+      const r = await fetch('/api/hermes/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', name, description: newDesc.trim() }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      setNewName('')
+      setNewDesc('')
+      setNote(`profil "${d.name}" dibuat — agent berjalan masuk lewat pintu utama`)
+      await load()
+      onChanged()
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -100,7 +133,36 @@ export default function AgentSpawnPanel({
         </div>
 
         {err && <div className="vp-err">{err}</div>}
+        {note && <div className="vp-ok">{note}</div>}
         {loading && <div className="vp-muted">memuat…</div>}
+
+        <div className="vp-sub">BUAT PROFIL BARU</div>
+        <input
+          className="vp-input"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="nama (huruf kecil, mis. budi)"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void create()
+          }}
+        />
+        <input
+          className="vp-input"
+          value={newDesc}
+          onChange={(e) => setNewDesc(e.target.value)}
+          placeholder="deskripsi (opsional) — dipakai router kanban"
+        />
+        <button
+          className="vp-btn"
+          disabled={creating || !newName.trim()}
+          onClick={create}
+        >
+          {creating ? 'Membuat…' : '+ Buat profil'}
+        </button>
+        <div className="vp-note">
+          Profil dibuat kosong (tanpa model/kunci) dan langsung masuk kantor.
+          Tidak meng-clone kredensial profil lain.
+        </div>
 
         <button className="vp-btn vp-btn-rosy" disabled={!!busy} onClick={load}>
           Segarkan
@@ -111,7 +173,10 @@ export default function AgentSpawnPanel({
           {inOffice.map((r) => (
             <div key={r.name} className="vp-agent-row">
               <div className="vp-agent-meta">
-                <b>{r.name}</b>
+                <b>
+                  {r.name}
+                  {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
+                </b>
                 <i>{r.total} tugas</i>
               </div>
               <button
@@ -134,7 +199,10 @@ export default function AgentSpawnPanel({
               {out.map((r) => (
                 <div key={r.name} className="vp-agent-row off">
                   <div className="vp-agent-meta">
-                    <b>{r.name}</b>
+                    <b>
+                      {r.name}
+                      {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
+                    </b>
                     <i>{r.reason === 'killed' ? 'dimatikan' : 'tanpa tugas'}</i>
                   </div>
                   <button
