@@ -9,6 +9,7 @@
  *
  * Run: npm run selftest
  */
+import { readFileSync } from 'node:fs'
 import {
   CEILING_Y,
   DESKS,
@@ -184,6 +185,31 @@ console.log('geometry')
     }
   }
   check('no furniture blocks a doorway', blocked.length === 0, blocked.join(' | '))
+}
+
+// Every destination that has a direction must express it the same way, and the
+// pose layer must read it from the DATA rather than from a list of pose names.
+//
+// This check exists because the same bug shipped twice: first the gate tested
+// `activity === 'typing' || 'meeting'`, then a hand-kept SEATED set. Each version
+// excluded whatever pose was added next, so `garden` and `dart` agents kept the
+// heading they walked in with and stood with their back to the planter. Grepping
+// the source is a crude check, but it is the one that would have caught both.
+{
+  const src = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+  const offenders: string[] = []
+  if (/const SEATED\s*=/.test(src)) offenders.push('a hand-kept SEATED set exists again')
+  if (/activity === 'typing' \|\| a\.activity === 'meeting'/.test(src)) {
+    offenders.push('the pose-name gate is back')
+  }
+  if (!/a\.seatYaw = undefined/.test(src)) {
+    offenders.push('seatYaw is not cleared per retarget (stale heading can persist)')
+  }
+  check(
+    'facing is decided from destination data, not from a list of pose names',
+    offenders.length === 0,
+    offenders.join(' | '),
+  )
 }
 
 /* ---------------------------------------------------------------- movement -- */

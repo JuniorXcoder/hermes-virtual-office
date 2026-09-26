@@ -809,3 +809,50 @@ gives 1.000. A wrong checker is indistinguishable from a wrong result until you 
 at why it disagrees.
 
 Self-test: 14 checks.
+
+---
+
+## 19. The facing gate was wrong twice, both times for the same reason
+
+An agent at the green corner stood with its back to the planter. The spot declared
+`face: Math.PI / 2`, pointing straight at it — so the data was right and the code
+that consumed it was not.
+
+`seatYaw` is applied by one line in the frame loop, and that line has now been
+written wrong twice:
+
+```ts
+// v1: pose-name test
+if ((a.activity === 'typing' || a.activity === 'meeting') && …)
+// v2: hand-kept set of sitting poses
+if (SEATED.has(a.activity) && …)
+```
+
+Both ask **"is this the right kind of pose?"**. The question that actually matters
+is **"did the destination say which way to look?"** Every version therefore
+silently excludes whatever pose is added next. `garden` and `dart` were the ones it
+excluded, so those agents kept the heading they walked in with — back to the
+planter, back to the dartboard.
+
+The gate is now `a.seatYaw !== undefined`, and there is one path that decides
+facing: `retarget()` sets `seatYaw` for every destination that has a direction
+(desk, meeting seat, reviewer visit, idle spot) and clears it for those that do not.
+The reviewer-visit and spawn-gate branches previously set `a.face` directly, a second
+mechanism doing the same job; they go through `seatYaw` now.
+
+Clearing matters as much as setting: without `a.seatYaw = undefined` at the top of
+`retarget()`, an agent moving from a spot with a direction to one without would keep
+the old heading and the pose layer would snap it there on arrival.
+
+### A self-test for a bug that shipped twice
+
+The check reads `scene.ts` and fails if a hand-kept `SEATED` set reappears, if the
+pose-name comparison returns, or if `seatYaw` stops being cleared per retarget.
+Grepping the source is a blunt instrument, but it is the only check that would have
+caught both versions of this bug, and both versions reached the user.
+
+Directions verified numerically (forward is local +Z, so facing is `(sin y, cos y)`,
+compared against the nearest point on the target rather than its centre when the
+target is a long strip): 7/7 idle spots.
+
+Self-test: 15 checks.

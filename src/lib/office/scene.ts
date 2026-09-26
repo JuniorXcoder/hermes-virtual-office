@@ -373,12 +373,6 @@ export function createScene(
     { x: 9.4, z: 0.6, act: 'idle' as Activity, face: Math.PI / 2 }, // lounge entry
   ].filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
 
-  /**
-   * Poses that sit on something. Each needs a `seatYaw`, otherwise the avatar
-   * keeps the heading it walked in with.
-   */
-  const SEATED = new Set<Activity>(['typing', 'meeting', 'sofa', 'read', 'coffee'])
-
   /** Decide activity + destination for the coming frames. */
   function retarget(
     a: SceneAgent,
@@ -387,13 +381,19 @@ export function createScene(
     index: number,
     total: number,
   ) {
+    // Clear the previous destination's heading first. Each branch below sets it
+    // when its target defines one; the wander fallbacks do not, and would
+    // otherwise inherit the heading of wherever the agent was before — the pose
+    // layer would then snap it to a stale direction on arrival.
+    a.seatYaw = undefined
+
     // 0. entering / leaving: hold at the doorway until the walk completes. This
     //    is what makes spawn and kill read as "walks in / walks out" rather than
     //    popping into existence at a desk.
     if (a.spawnGate && a.spawnGate > 0) {
       a.target = null
       a.activity = 'idle'
-      a.face = Math.PI // face into the room (door is on the south wall)
+      a.seatYaw = Math.PI // face into the room (door is on the south wall)
       return
     }
     if (a.leaving) {
@@ -426,7 +426,9 @@ export function createScene(
         const v = visitorSpot(desk)
         a.target = new THREE.Vector3(v.x, 0, v.z)
         a.activity = 'idle'
-        a.face = Math.atan2(desk.x - v.x, desk.z - v.z)
+        // One path decides facing: route it through seatYaw like every other
+        // destination that has a direction, rather than a second mechanism.
+        a.seatYaw = Math.atan2(desk.x - v.x, desk.z - v.z)
         return
       }
     }
@@ -609,14 +611,18 @@ export function createScene(
       g.rotation.y += diff * Math.min(1, dt * 6)
       g.position.y = 0
 
-      // Square up to the seat once arrived: the seat's yaw wins over the heading
-      // the avatar walked in with.
+      // Face the seat's heading once arrived, when the destination defined one.
       //
-      // This used to be gated on `typing`/`meeting` only, so every other seated
-      // pose (sofa, read, coffee, and the desk-sitting ones after a re-target)
-      // kept whatever direction the avatar happened to walk in — which is why a
-      // sitter ended up facing the sofa's backrest.
-      if (SEATED.has(a.activity) && a.walking < 0.5 && a.seatYaw !== undefined) {
+      // This has been wrong twice, both times because it tested the POSE instead
+      // of the data: first `activity === 'typing' || 'meeting'`, then a hand-kept
+      // SEATED set. Each version silently excluded whatever pose was added next —
+      // `garden` and `dart` were the latest, so those agents kept the heading they
+      // walked in with and ended up with their back to the planter.
+      //
+      // The question is not "is this a sitting pose", it is "did the destination
+      // say which way to look". `retarget()` sets `seatYaw` for every spot that
+      // declares `face`, and clears it for those that do not.
+      if (a.walking < 0.5 && a.seatYaw !== undefined) {
         a.face = a.seatYaw
       }
 
