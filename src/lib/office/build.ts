@@ -36,6 +36,13 @@ import {
   NORTH_WINDOWS,
   SIDE_WINDOWS,
   SIDE_WINDOW_W,
+  SOUTH_WINDOWS,
+  PARAPET_H,
+  PARAPET_T,
+  COPING_H,
+  COPING_LIP,
+  ROOF_DECK_T,
+  ROOF_BAY,
   WINDOW_Y,
   WINDOW_H,
   BOARD_D,
@@ -353,6 +360,8 @@ export type OfficeProps = {
   boardSurface: THREE.Mesh
   streaks: THREE.Mesh[]
   streetGroup: THREE.Group
+  /** The single shadow-casting light; the scene configures its shadow camera. */
+  sun: THREE.DirectionalLight
   /** Advance pedestrians and traffic. */
   animateStreet: (dt: number, t: number) => void
   applyPalette: (hour: number) => void
@@ -471,6 +480,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, -HALF_D, 0, northWindows)
   wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, HALF_D, 0, [
     { x: DOOR.x, y: 1.15, w: 3.4, h: 2.3 },
+    ...SOUTH_WINDOWS.map((w) => ({ x: w.x, y: w.y, w: w.w, h: w.h })),
   ])
   const sideHoles = SIDE_WINDOWS.map((z) => ({ x: z, y: WINDOW_Y, w: SIDE_WINDOW_W, h: WINDOW_H }))
   wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
@@ -522,11 +532,28 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       depthWrite: false,
     }),
   )
+  // Facade materials. Declared HERE, above windowUnit(): its lintel uses bandMat,
+  // and a const declared later in the same scope is in the temporal dead zone —
+  // the call threw "Cannot access 'bandMat' before initialization" at runtime.
+  const bandMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xb9c4cc, map: plasterTex, roughness: 0.7 }),
+  )
+  const sillMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xd8dfe4, map: plasterTex, roughness: 0.75 }),
+  )
   const frameMat = track(
     new THREE.MeshStandardMaterial({ color: 0x9aa8b2, map: metalTex, metalness: 0.55, roughness: 0.35 }),
   )
 
-  /** A glazed opening: frame, mullions and a bright pane. */
+  /**
+   * A glazed opening: reveal, frame, transom, sill, clear pane.
+   *
+   * The first version had two defects visible from outside. It laid a bright
+   * emissive "sky card" behind the glass, so every window read as a lit panel
+   * rather than glass; and the pane was flush with the wall face, which removes
+   * the shadow line that makes an opening legible. The glass is now recessed by
+   * REVEAL behind the outer face and nothing sits behind it — you see the room.
+   */
   const windowUnit = (
     cx: number,
     cy: number,
@@ -536,40 +563,66 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     axis: 'x' | 'z',
   ) => {
     const depth = 0.1
-    const mk = (ww: number, hh: number, ox: number, oy: number, color = 0x9aa8b2) => {
-      const g = new THREE.BoxGeometry(axis === 'x' ? ww : depth + 0.04, hh, axis === 'x' ? depth + 0.04 : ww)
-      const m = new THREE.Mesh(g, color === 0x9aa8b2 ? frameMat : stdMat(color))
-      m.position.set(cx + (axis === 'x' ? ox : 0), cy + oy, cz + (axis === 'x' ? 0 : ox))
+    const REVEAL = 0.07
+    // outward normal of the wall this opening sits on
+    const out = axis === 'x' ? (cz > 0 ? 1 : -1) : cx > 0 ? 1 : -1
+    const off = (d: number) => (axis === 'x' ? { x: 0, z: d * out } : { x: d * out, z: 0 })
+    const mk = (ww: number, hh: number, ox: number, oy: number, outOff = 0) => {
+      const o = off(outOff)
+      const g = new THREE.BoxGeometry(
+        axis === 'x' ? ww : depth + 0.04,
+        hh,
+        axis === 'x' ? depth + 0.04 : ww,
+      )
+      const m = new THREE.Mesh(g, frameMat)
+      m.position.set(cx + (axis === 'x' ? ox : o.x), cy + oy, cz + (axis === 'x' ? o.z : ox))
       group.add(m)
     }
-    mk(w, 0.1, 0, h / 2)
-    mk(w, 0.1, 0, -h / 2)
-    mk(0.1, h, -w / 2, 0)
-    mk(0.1, h, w / 2, 0)
-    mk(0.08, h, 0, 0) // centre mullion
+    // outer frame, set just inside the opening so it reads as a reveal
+    mk(w, depth + 0.04, 0, h / 2, -REVEAL)
+    mk(w, depth + 0.04, 0, -h / 2, -REVEAL)
+    mk(depth + 0.04, h, -w / 2, 0, -REVEAL)
+    mk(depth + 0.04, h, w / 2, 0, -REVEAL)
+    mk(0.08, h, 0, 0, -REVEAL) // centre mullion
+    // transom: a horizontal bar low in the opening, breaking the tall sheet
+    if (h > 1.2) mk(w, 0.07, 0, -h / 2 + 0.55, -REVEAL)
+
+    // the pane itself, recessed so the wall thickness casts a shadow line
+    const o = off(-REVEAL)
     const pane = new THREE.Mesh(
       new THREE.BoxGeometry(axis === 'x' ? w : 0.03, h, axis === 'x' ? 0.03 : w),
       glassMat,
     )
-    pane.position.set(cx, cy, cz)
+    pane.position.set(cx + o.x, cy, cz + o.z)
     group.add(pane)
-    // what is visible through the glass: a bright sky card
-    const sky = new THREE.Mesh(
-      new THREE.BoxGeometry(axis === 'x' ? w - 0.1 : 0.02, h - 0.1, axis === 'x' ? 0.02 : w - 0.1),
-      stdMat(0xcfe6f5, { emissive: 0xbfe0f2, ei: 0.5 }),
+
+    // projecting sill, the detail that gives the elevation a scale cue
+    const so = off(0.06)
+    const sill = new THREE.Mesh(
+      new THREE.BoxGeometry(axis === 'x' ? w + 0.22 : 0.2, 0.09, axis === 'x' ? 0.2 : w + 0.22),
+      sillMat,
     )
-    sky.position.set(
-      cx + (axis === 'x' ? 0 : cz > 0 ? 0.12 : -0.12),
-      cy,
-      cz + (axis === 'x' ? (cz > 0 ? 0.12 : -0.12) : 0),
+    sill.position.set(cx + so.x, cy - h / 2 - 0.05, cz + so.z)
+    group.add(sill)
+    // lintel band above
+    const lo = off(0.04)
+    const lintel = new THREE.Mesh(
+      new THREE.BoxGeometry(axis === 'x' ? w + 0.22 : 0.14, 0.1, axis === 'x' ? 0.14 : w + 0.22),
+      bandMat,
     )
-    group.add(sky)
+    lintel.position.set(cx + lo.x, cy + h / 2 + 0.06, cz + lo.z)
+    group.add(lintel)
   }
   // Sunk slightly into the wall opening so the glass shows on BOTH faces; a unit
   // centred in the wall is buried and invisible from outside.
   const wallN = -HALF_D + WALL_T / 2
   for (const w of NORTH_WINDOWS) {
     windowUnit(w.x, w.y, wallN, w.w, w.h, 'x')
+  }
+  // south elevation: the street facade, previously blind apart from the door
+  const wallS = HALF_D - WALL_T / 2
+  for (const w of SOUTH_WINDOWS) {
+    windowUnit(w.x, w.y, wallS, w.w, w.h, 'x')
   }
   const wallW = -HALF_W + WALL_T / 2
   const wallE = HALF_W - WALL_T / 2
@@ -583,9 +636,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // has no scale cue from outside, so the building read as an untextured box.
   const facadeMat = track(
     new THREE.MeshStandardMaterial({ color: 0xe4eaee, map: plasterTex, roughness: 0.88 }),
-  )
-  const bandMat = track(
-    new THREE.MeshStandardMaterial({ color: 0xb9c4cc, map: plasterTex, roughness: 0.7 }),
   )
   const facadeBand = (
     w: number,
@@ -710,6 +760,99 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       KANBAN_BOARD.z + 0.09,
     )
     group.add(div)
+  }
+
+  /* ---------------------------------------------------------------- roof --- */
+  // The building had no roof at all: the walls simply stopped at WALL_H, so from
+  // outside it read as an open box rather than a building. A parapet with a coping
+  // now runs the whole perimeter, and the entrance strip carries a real roof deck
+  // with plant. The work rooms stay open (dollhouse) so the interior — and the
+  // Kanban board — remain visible.
+  {
+    const wallMatRoof = track(
+      new THREE.MeshStandardMaterial({ color: 0xdfe6ea, map: plasterTex, roughness: 0.9 }),
+    )
+    const copingMat = track(
+      new THREE.MeshStandardMaterial({ color: 0x9aa5ad, map: metalTex, metalness: 0.35, roughness: 0.45 }),
+    )
+    const parY = WALL_H + PARAPET_H / 2
+
+    /** Parapet run of `len` centred at (x,z), rotated ry, with a coping cap. */
+    const parapet = (len: number, x: number, z: number, ry: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(len, PARAPET_H, PARAPET_T), wallMatRoof)
+      m.position.set(x, parY, z)
+      m.rotation.y = ry
+      group.add(m)
+      const cop = new THREE.Mesh(
+        new THREE.BoxGeometry(len, COPING_H, PARAPET_T + COPING_LIP * 2),
+        copingMat,
+      )
+      cop.position.set(x, WALL_H + PARAPET_H + COPING_H / 2, z)
+      cop.rotation.y = ry
+      group.add(cop)
+    }
+    // full perimeter (§ the roofline is what stops it reading as a box)
+    parapet(FLOOR.width + PARAPET_T, 0, -HALF_D, 0)
+    parapet(FLOOR.width + PARAPET_T, 0, HALF_D, 0)
+    parapet(FLOOR.depth, -HALF_W, 0, Math.PI / 2)
+    parapet(FLOOR.depth, HALF_W, 0, Math.PI / 2)
+
+    // roof deck over the entrance strip
+    const deckTop = WALL_H + ROOF_DECK_T
+    const deck = new THREE.Mesh(
+      new THREE.BoxGeometry(FLOOR.width, ROOF_DECK_T, ROOF_BAY.z2 - ROOF_BAY.z1),
+      track(new THREE.MeshStandardMaterial({ color: 0xc9d1d6, map: plasterTex, roughness: 0.95 })),
+    )
+    deck.position.set(0, WALL_H + ROOF_DECK_T / 2, (ROOF_BAY.z1 + ROOF_BAY.z2) / 2)
+    group.add(deck)
+    // fascia along the deck's open edge, so it does not read as a floating slab
+    const fascia = new THREE.Mesh(
+      new THREE.BoxGeometry(FLOOR.width, 0.3, 0.12),
+      track(new THREE.MeshStandardMaterial({ color: 0x9aa5ad, map: metalTex, metalness: 0.3, roughness: 0.5 })),
+    )
+    fascia.position.set(0, deckTop - 0.15, ROOF_BAY.z1 - 0.06)
+    group.add(fascia)
+
+    // rooftop plant: two air handlers, a duct run, three vents, an access hatch
+    const plantMat = track(
+      new THREE.MeshStandardMaterial({ color: 0xb6c0c7, map: metalTex, metalness: 0.4, roughness: 0.5 }),
+    )
+    const ahu = (x: number, z: number, w: number, h: number, d: number) => {
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(w + 0.16, 0.14, d + 0.16), stdMat(0x9aa5ad))
+      curb.position.set(x, deckTop + 0.07, z)
+      group.add(curb)
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), plantMat)
+      m.position.set(x, deckTop + 0.14 + h / 2, z)
+      group.add(m)
+      // louvre on the long face
+      const grille = new THREE.Mesh(new THREE.BoxGeometry(w * 0.72, h * 0.5, 0.04), stdMat(0x6f7a82))
+      grille.position.set(x, deckTop + 0.14 + h * 0.55, z - d / 2 - 0.03)
+      group.add(grille)
+    }
+    ahu(-9.5, 10.8, 3.2, 1.5, 1.8)
+    ahu(9.5, 10.8, 3.2, 1.5, 1.8)
+    // duct run linking the units
+    const duct = new THREE.Mesh(new THREE.BoxGeometry(15.6, 0.6, 0.7), plantMat)
+    duct.position.set(0, deckTop + 1.0, 11.9)
+    group.add(duct)
+    for (const vx of [-4.6, 0, 4.6]) {
+      const v = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.6, 12), plantMat)
+      v.position.set(vx, deckTop + 0.3, 9.7)
+      group.add(v)
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 12), stdMat(0x8d98a0, { metal: 0.4 }))
+      cap.position.set(vx, deckTop + 0.65, 9.7)
+      group.add(cap)
+    }
+    // access hatch with a low curb
+    const hatch = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.16, 1.1), stdMat(0x8d98a0, { metal: 0.3 }))
+    hatch.position.set(-15.2, deckTop + 0.08, 9.6)
+    group.add(hatch)
+    // night wash over the roofline, so plant does not disappear after dark
+    for (const ox of [-13.2, 13.2]) {
+      const l = new THREE.PointLight(0xdfe8ef, hour >= 18 || hour < 6 ? 0.35 : 0, 11)
+      l.position.set(ox, deckTop + 2.2, 9.8)
+      group.add(l)
+    }
   }
 
   /* -------------------------------------------------------------- desks --- */
@@ -1212,22 +1355,83 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   doorGlassOuter.position.set(DOOR.x, 1.4, HALF_D - WALL_T / 2 + 0.02)
   group.add(doorGlassOuter)
 
-  // canopy + step outside the entrance
-  const canopy = box(4.2, 0.14, 1.4, 0x8d9aa4, { metal: 0.3, rough: 0.5 })
-  canopy.position.set(0, 3.1, HALF_D + 0.6)
+  // ---- entrance: canopy on brackets and columns, vestibule, address --------
+  // The canopy was a 0.14 m slab with nothing holding it up, which is why it read
+  // as a floating panel. It is thicker now, carried on two slim columns and a pair
+  // of brackets, and the door sits inside a recessed vestibule.
+  const matSteel = track(
+    new THREE.MeshStandardMaterial({ color: 0x8d98a0, map: metalTex, metalness: 0.45, roughness: 0.45 }),
+  )
+  const CANOPY_W = 5.0
+  const CANOPY_D = 1.8
+  const CANOPY_Y = 3.25
+  const canopyZ = HALF_D + CANOPY_D / 2 - 0.1
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(CANOPY_W, 0.22, CANOPY_D), matSteel)
+  canopy.position.set(0, CANOPY_Y, canopyZ)
   group.add(canopy)
-  const step = box(4.4, 0.12, 0.9, 0xbfc7cc, { rough: 0.8 })
-  step.position.set(0, 0.06, HALF_D + 0.5)
+  // soffit, so the underside is not the same flat grey as the top
+  const soffit = new THREE.Mesh(
+    new THREE.BoxGeometry(CANOPY_W - 0.3, 0.06, CANOPY_D - 0.3),
+    stdMat(0xd6dde2, { rough: 0.85 }),
+  )
+  soffit.position.set(0, CANOPY_Y - 0.14, canopyZ)
+  group.add(soffit)
+  // fascia edge trim
+  const cFascia = new THREE.Mesh(new THREE.BoxGeometry(CANOPY_W + 0.06, 0.1, 0.08), stdMat(0x6f7a82, { metal: 0.5 }))
+  cFascia.position.set(0, CANOPY_Y - 0.02, canopyZ + CANOPY_D / 2)
+  group.add(cFascia)
+  for (const cx of [-CANOPY_W / 2 + 0.35, CANOPY_W / 2 - 0.35]) {
+    // column
+    const col = new THREE.Mesh(new THREE.BoxGeometry(0.14, CANOPY_Y - 0.11, 0.14), matSteel)
+    col.position.set(cx, (CANOPY_Y - 0.11) / 2, canopyZ + CANOPY_D / 2 - 0.25)
+    group.add(col)
+    // base plate
+    const bp = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.08, 0.3), stdMat(0x6f7a82, { metal: 0.5 }))
+    bp.position.set(cx, 0.04, canopyZ + CANOPY_D / 2 - 0.25)
+    group.add(bp)
+    // diagonal bracket back to the wall
+    const br = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 1.0), matSteel)
+    br.position.set(cx, CANOPY_Y - 0.55, HALF_D + 0.35)
+    br.rotation.x = Math.PI / 4
+    group.add(br)
+  }
+  // downlights in the soffit
+  for (const lx of [-1.5, 0, 1.5]) {
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 10), stdMat(0xb9c4cc, { metal: 0.4 }))
+    ring.position.set(lx, CANOPY_Y - 0.18, canopyZ + 0.1)
+    group.add(ring)
+    const lens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.07, 0.02, 10),
+      stdMat(0xfff4e0, { emissive: 0xffe6b8, ei: 1 }),
+    )
+    lens.position.set(lx, CANOPY_Y - 0.2, canopyZ + 0.1)
+    group.add(lens)
+  }
+  // recessed vestibule: side cheeks + a step up
+  for (const vx of [-1.9, 1.9]) {
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.28, 3.0, 0.5), stdMat(0xdde4e8, { rough: 0.85 }))
+    cheek.position.set(vx, 1.5, HALF_D + 0.16)
+    group.add(cheek)
+  }
+  const step = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 1.1), stdMat(0xc3ccd2, { rough: 0.85 }))
+  step.position.set(0, 0.06, HALF_D + 0.62)
   group.add(step)
-  // entrance signage
-  const signPlate = box(2.6, 0.42, 0.08, 0x113b2c, { emissive: 0x1c5c44, ei: 0.5 })
-  signPlate.position.set(0, 3.5, HALF_D - 0.02)
+  const stepTop = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.1, 0.7), stdMat(0xd2dade, { rough: 0.85 }))
+  stepTop.position.set(0, 0.17, HALF_D + 0.5)
+  group.add(stepTop)
+  // entrance signage over the door
+  const signPlate = box(2.9, 0.46, 0.1, 0x113b2c, { emissive: 0x1c5c44, ei: 0.5 })
+  signPlate.position.set(0, 3.72, HALF_D - 0.02)
   group.add(signPlate)
+  // street number plate beside the entrance
+  const numPlate = box(0.4, 0.3, 0.06, 0xe8eef2)
+  numPlate.position.set(2.35, 1.55, HALF_D - 0.01)
+  group.add(numPlate)
 
   /* ----------------------------------------------------------- lighting --- */
   scene.add(new THREE.AmbientLight(0xffffff, 1.15))
   const sun = new THREE.DirectionalLight(0xfff6e5, 1.85)
-  sun.position.set(11, 16, 9)
+  sun.position.set(28, 34, 22)
   scene.add(sun)
   const fill = new THREE.HemisphereLight(0xeaf4ff, 0xcfc0a4, 1.0)
   scene.add(fill)
@@ -1539,5 +1743,5 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const d of disposables) d.dispose()
   }
 
-  return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, applyPalette, dispose }
+  return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, sun, applyPalette, dispose }
 }

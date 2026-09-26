@@ -5,6 +5,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar, type Avatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
@@ -52,6 +53,65 @@ export type SceneEvents = {
 }
 
 
+/**
+ * Enable shadows only on the objects that matter.
+ *
+ * A full-scene shadow pass roughly doubles the draw calls and this scene has 551
+ * meshes. The sun is the only caster, so the filter takes solids above a size
+ * threshold (walls, furniture, vehicles, roof plant) and leaves small trim —
+ * frames, sills, rungs — out of the pass. Those contribute almost nothing to the
+ * shadow silhouette but cost a full render each.
+ */
+const SHADOW_MIN = 0.6
+function selectiveShadow(root: THREE.Object3D, light: THREE.DirectionalLight) {
+  const bb = new THREE.Box3()
+  const size = new THREE.Vector3()
+  root.traverse((o) => {
+    const m = o as THREE.Mesh
+    if (!m.isMesh || !m.geometry) return
+    bb.setFromObject(m)
+    bb.getSize(size)
+    const big = Math.max(size.x, size.y, size.z) >= SHADOW_MIN
+    m.castShadow = big
+    m.receiveShadow = big
+  })
+  light.castShadow = true
+  const cam = light.shadow.camera as THREE.OrthographicCamera
+  cam.left = -34
+  cam.right = 34
+  cam.top = 34
+  cam.bottom = -34
+  cam.near = 1
+  cam.far = 90
+  cam.updateProjectionMatrix()
+  light.shadow.mapSize.set(2048, 2048)
+  light.shadow.bias = -0.0006
+  light.shadow.normalBias = 0.02
+}
+
+/**
+ * Vertical sky gradient. A flat background colour gives the scene no atmosphere:
+ * the horizon should be pale and the zenith deeper, which is also what lets the
+ * roofline and the distant blocks read against it.
+ */
+function skyGradientTexture(stops = ['#9dc4e8', '#c6dcef', '#e2edf6', '#eef4f8']): THREE.Texture {
+  const c = document.createElement('canvas')
+  c.width = 2
+  c.height = 256
+  const g = c.getContext('2d')!
+  const grad = g.createLinearGradient(0, 0, 0, 256)
+  grad.addColorStop(0, stops[0])
+  grad.addColorStop(0.45, stops[1])
+  grad.addColorStop(0.75, stops[2])
+  grad.addColorStop(1, stops[3])
+  g.fillStyle = grad
+  g.fillRect(0, 0, 2, 256)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.mapping = THREE.EquirectangularReflectionMapping
+  return t
+}
+
 export function createScene(
   canvas: HTMLCanvasElement,
   labelHost: HTMLElement,
@@ -59,13 +119,22 @@ export function createScene(
 ) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-  renderer.shadowMap.enabled = false // 600+ meshes: shadows cost more than they add here
-  renderer.shadowMap.type = THREE.PCFShadowMap
+  // Shadows on, but filtered: a 551-mesh scene cannot afford every object in the
+  // shadow pass, so selectiveShadow() keeps the large solids and drops the trim.
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
   // Without an explicit tone mapping + exposure the standard materials render
   // flat and muddy, which is what made the office look dim and lifeless.
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.25
   renderer.outputColorSpace = THREE.SRGBColorSpace
+
+  // Image-based lighting. Without an environment map every metal and glass surface
+  // renders flat and near-black — metalness has nothing to reflect — which is what
+  // made the building look like painted cardboard. The room environment is
+  // generated, so it costs no asset files.
+  const pmrem = new THREE.PMREMGenerator(renderer)
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04)
 
   const labelRenderer = new CSS2DRenderer({ element: labelHost })
   labelRenderer.domElement.style.position = 'absolute'
@@ -73,13 +142,21 @@ export function createScene(
   labelRenderer.domElement.style.pointerEvents = 'none'
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0xdce9f4)
+  scene.environment = envRT.texture
+  scene.environmentIntensity = 0.55 // fill the shadows, do not wash the scene out
+  pmrem.dispose()
+  // A vertical gradient reads as atmosphere; a flat colour reads as paper.
+  scene.background = skyGradientTexture()
+  // Depth cue: distant blocks wash toward the sky, so the street has depth.
+  scene.fog = new THREE.Fog(0xd3e2ef, 70, 190)
 
   const hour = Number(
     new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })
       .format(new Date()),
   )
   const office: OfficeProps = buildOffice(scene, hour)
+  selectiveShadow(office.group, office.sun)
+  selectiveShadow(office.streetGroup, office.sun)
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 400)
   camera.position.set(0, 21, 24)
@@ -345,11 +422,20 @@ export function createScene(
   const stats = { frames: 0, lastDt: 0, fps: 0, fpsAt: performance.now(), fpsFrames: 0 }
   /** 2 = full, 1 = no antialias/soft effects, 0 = bare minimum. */
   let quality = 2
-  const qualityLocked = true // measured in the browser, adjustment is not needed there
+  // Adaptive, not locked: the shadow pass at 2048 with 552 casters is heavy for a
+  // phone or a software rasteriser. Rather than choosing between "no shadows
+  // anywhere" and "unusable on a weak GPU", the shadow resolution steps down with
+  // the quality tier and the pass is dropped only at tier 0.
+  const qualityLocked = false
 
   function setQuality(q: number) {
     quality = Math.max(0, Math.min(2, q))
     renderer.setPixelRatio(q === 2 ? Math.min(devicePixelRatio, 2) : 1)
+    // tier 2 -> 2048, tier 1 -> 1024, tier 0 -> no shadow pass at all
+    renderer.shadowMap.enabled = q > 0
+    office.sun.shadow.mapSize.set(q === 2 ? 2048 : 1024, q === 2 ? 2048 : 1024)
+    office.sun.shadow.map?.dispose()
+    office.sun.shadow.map = null
     if (q < 2) {
       const parent = renderer.domElement.parentElement
       if (parent) renderer.setSize(parent.clientWidth, parent.clientHeight, false)
@@ -590,10 +676,14 @@ export function createScene(
     a.bubbleTimer = ms
   }
 
+  const skyDay = skyGradientTexture()
+  const skyNight = skyGradientTexture(['#20344d', '#31465f', '#4a6076', '#63798c'])
   function setHour(h: number) {
     office.applyPalette(h)
-    // daytime looks out onto a bright sky; night is a lit office, not black
-    scene.background = new THREE.Color(h >= 18 || h < 6 ? 0x76909e : 0xcfe0ee)
+    // Day and night keep the gradient background. A flat colour (the previous
+    // behaviour) threw away the sky's depth the moment the clock ticked over.
+    scene.background = h >= 18 || h < 6 ? skyNight : skyDay
+    scene.fog = new THREE.Fog(h >= 18 || h < 6 ? 0x54697d : 0xd3e2ef, 70, 190)
   }
   setHour(hour)
 

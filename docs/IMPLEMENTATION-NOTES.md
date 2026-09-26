@@ -330,3 +330,67 @@ Rule: if two overlays must line up, give them one parent.
 drops `window.__office`, so every follow-up probe fails with "cannot read
 properties of undefined" and looks like an application bug. Always rebuild with
 the flag when probing.
+
+---
+
+## 11. Architecture pass: roof, glazing, entrance, rendering
+
+### The building had no roof
+
+Walls stopped dead at `WALL_H`. From outside it read as an open box — the
+neighbouring blocks had parapets and it did not. Fixed with a perimeter parapet
+plus coping, and a roof deck over the 4.2 m entrance strip carrying two air
+handlers, a duct run, three capped vents and an access hatch.
+
+The deck is deliberately NOT the whole lobby: a 34 x 9.6 m slab would hide half
+the interior in the default view, and the cutaway is the point. The three work
+rooms stay open so the office and its Kanban board remain readable.
+
+### Windows were lit panels, not glazing
+
+Behind every pane sat an emissive "sky card", so windows read as light boxes; and
+the pane was flush with the wall face, removing the shadow line that makes an
+opening legible. The card is gone (you see the room), the glass is recessed by a
+0.07 m reveal, and each unit gained a transom, a projecting sill and a lintel band.
+The south elevation — the street facade, carrying the entrance — had no windows at
+all; it now has six.
+
+### The canopy floated
+
+A 0.22 m slab with nothing under it. It is now carried on two slim columns with
+base plates and diagonal brackets, with a soffit, fascia trim and three soffit
+downlights, over a recessed vestibule with a two-step threshold.
+
+### Two rendering upgrades that changed everything
+
+- **Image-based lighting.** Without an environment map, `metalness` has nothing to
+  reflect, so every metal and glass surface renders flat and near-black — the
+  building looked like painted cardboard. A generated RoomEnvironment (no asset
+  files) plus `scene.environmentIntensity = 0.55` fills the shadows without
+  washing the scene out.
+- **Shadows, selectively.** The sun casts; `selectiveShadow()` enables casting and
+  receiving only on meshes above 0.6 m, which keeps frames, sills and rungs out of
+  the pass (552 of 701 meshes). The map resolution follows the quality tier
+  (2048 / 1024 / off) instead of being locked, so a phone or a software rasteriser
+  degrades gracefully rather than choking.
+
+Background is now a vertical gradient (separate day and night stops) with matching
+fog, rather than a flat colour — a flat colour gives the scene no depth and
+discards the sky the moment the clock ticks over.
+
+### Trap: a const used above its declaration is a runtime crash, not a compile error
+
+`windowUnit` gained a lintel using `bandMat`, which is declared ~100 lines later in
+the same function scope. TypeScript compiled it happily; at runtime the module threw
+`Cannot access 'bandMat' before initialization` and React unmounted the whole app
+("Application error: a client-side exception"). Order matters for `const` in a
+scope — hoisting only applies to `function`.
+
+### Trap: measure, do not trust the vision pass
+
+The vision model reported "shadow maps disabled, no cast shadows" twice while the
+runtime reported `castShadow: true` on 552 meshes, `shadowMap.enabled` true,
+2048x2048, and the adaptive tier correctly stepping to 1024 under load. An A/B
+capture after the fixes had the same model confirm shadows under vehicles, canopy,
+trees and lamps. On this scene the vision pass is unreliable for lighting; the
+runtime values are the ground truth.

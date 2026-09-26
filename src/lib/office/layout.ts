@@ -124,6 +124,32 @@ export const BOARD_D = 0.14
  * Height is now derived from the wall with a 0.35 m reveal top and bottom, and
  * the centre follows from that.
  */
+/* ------------------------------------------------------------------ roof -- */
+
+/**
+ * The building has no roof at all: a single-storey slab whose perimeter stops
+ * dead at the wall top, which is why it reads as an open box rather than a
+ * building. The lobby bay carries a real roof deck with plant on it; the three
+ * work rooms stay open so the interior — and the Kanban board — stay readable
+ * from outside.
+ */
+export const PARAPET_H = 0.55
+export const PARAPET_T = 0.34
+export const ROOF_DECK_T = 0.22
+/**
+ * Roofed bay: a 4.2 m strip along the street facade, i.e. the entrance zone.
+ * Deliberately NOT the whole lobby: a 34 x 9.6 m slab would hide half the
+ * interior in the default view, and the point of the cutaway is that the office
+ * and its Kanban board stay readable.
+ */
+export const ROOF_BAY_D = 4.2
+export const ROOF_BAY = {
+  x1: -HALF_W,
+  x2: HALF_W,
+  z1: HALF_D - ROOF_BAY_D,
+  z2: HALF_D,
+}
+
 /**
  * The ceiling must sit at the wall TOP. At 4.3 m it was 0.3 m BELOW the 4.6 m wall
  * line, so the ceiling plane sliced across the upper wall and read as a beam
@@ -180,6 +206,20 @@ export const NORTH_WINDOWS = [
   ...northGroup([9.0, 12.0, 15.8], 2.2),
 ]
 
+/**
+ * The south elevation faces the street and carries the entrance, yet it had no
+ * openings at all: 34 m of blind wall on the most visible side. Three windows
+ * per side, clear of the door band (|x| > 1.7).
+ */
+export const SOUTH_WINDOWS = [
+  ...northGroup([-15.8, -12.0, -9.0], 2.2),
+  ...northGroup([9.0, 12.0, 15.8], 2.2),
+]
+
+/** Coping cap on the parapet: without it the roofline is just a cut edge. */
+export const COPING_H = 0.09
+export const COPING_LIP = 0.06
+
 export const SIDE_WINDOWS = [-11.2, -6.7, -2.2, 2.3, 6.8, 11.3] as const
 export const SIDE_WINDOW_W = 2.4
 
@@ -193,6 +233,9 @@ export function windowPlan() {
   const out: { id: string; x: number; z: number; along: 'x' | 'z'; w: number; h: number; y: number }[] = []
   for (const w of NORTH_WINDOWS) {
     out.push({ id: `north@${w.x}`, x: w.x, z: -HALF_D, along: 'x', w: w.w, h: w.h, y: w.y })
+  }
+  for (const w of SOUTH_WINDOWS) {
+    out.push({ id: `south@${w.x}`, x: w.x, z: HALF_D, along: 'x', w: w.w, h: w.h, y: w.y })
   }
   for (const z of SIDE_WINDOWS) {
     out.push({ id: `west@${z}`, x: -HALF_W, z, along: 'z', w: SIDE_WINDOW_W, h: WINDOW_H, y: WINDOW_Y })
