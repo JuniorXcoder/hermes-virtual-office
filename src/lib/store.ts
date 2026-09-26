@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Agent, Meeting, Task } from '@/types/hermes'
+import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
 
@@ -10,6 +10,10 @@ type State = {
   agents: Agent[]
   meeting: Meeting | null
   meetingConfigured: boolean
+  /** Archived meetings on disk, newest first. */
+  meetingHistory: ArchivedMeeting[]
+  /** Id of the archived transcript currently open, if any. */
+  meetingArchive: { id: string; body: string } | null
   loading: boolean
   error: string | null
   view: '3d' | '2d'
@@ -33,6 +37,8 @@ export const useOffice = create<State>((set, get) => ({
   agents: [],
   meeting: null,
   meetingConfigured: false,
+  meetingHistory: [],
+  meetingArchive: null,
   loading: true,
   error: null,
   view: '3d',
@@ -56,12 +62,18 @@ export const useOffice = create<State>((set, get) => ({
     try {
       const r = await fetch('/api/hermes/meeting', { cache: 'no-store' })
       const d = await r.json()
-      const list: Meeting[] = d.meetings || []
+      // `live` are meetings in this process; `archived` are the transcripts on
+      // disk from this and earlier runs. The picker needs both.
+      const list: Meeting[] = d.live || []
       // Only a live meeting may pin agents to the conference table. A finished or
       // failed one still belongs in the panel for its transcript, but the office
       // floor must let those avatars go.
       const active = list.find((m) => m.state === 'queued' || m.state === 'running') ?? null
-      set({ meeting: active ?? list[0] ?? null, meetingConfigured: !!d.configured })
+      set({
+        meeting: active ?? list[0] ?? null,
+        meetingConfigured: !!d.configured,
+        meetingHistory: d.archived || [],
+      })
     } catch {
       /* keep the last known meeting on a blip */
     }

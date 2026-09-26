@@ -6,6 +6,7 @@ import Kanban2D from './Kanban2D'
 import PeekPanel from './PeekPanel'
 import TaskPanel from './TaskPanel'
 import MeetingPanel from './MeetingPanel'
+import AgentSpawnPanel from './AgentSpawnPanel'
 import NewTaskDialog from './NewTaskDialog'
 import { startPolling, useOffice } from '@/lib/store'
 import type { OfficeScene } from '@/lib/office/scene'
@@ -20,9 +21,11 @@ export default function OfficeApp() {
   const meeting = useOffice((s) => s.meeting)
   const select = useOffice((s) => s.select)
   const selected = useOffice((s) => s.selectedAgent)
+  const loadTasks = useOffice((s) => s.load)
 
   const sceneRef = useRef<OfficeScene | null>(null)
   const [meetOpen, setMeetOpen] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
 
   useEffect(() => startPolling(), [])
 
@@ -87,6 +90,9 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setMeetOpen(true)}>
             Ruang rapat{meeting && meeting.state === 'running' ? ' ●' : ''}
           </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setAgentOpen(true)}>
+            Agent ({agents.length})
+          </button>
           <div className="vp-seg">
             <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
             <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>2D</button>
@@ -123,6 +129,11 @@ export default function OfficeApp() {
       <TaskPanel />
       <PeekPanel />
       <MeetingPanel open={meetOpen} onClose={() => setMeetOpen(false)} />
+      <AgentSpawnPanel
+        open={agentOpen}
+        onClose={() => setAgentOpen(false)}
+        onChanged={() => void loadTasks()}
+      />
       <NewTaskDialog />
 
       {error && (

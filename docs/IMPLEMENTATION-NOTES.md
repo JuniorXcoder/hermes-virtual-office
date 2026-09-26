@@ -521,3 +521,65 @@ npm run selftest    10/10 checks passed
 npm run build       ok
 publish hygiene     no private identifiers, no authoring-machine paths
 ```
+
+---
+
+## 14. Spawn/kill, meeting history, and four geometry bugs the measurements found
+
+### Kill must not delete work
+
+`POST /api/hermes/agents` toggles office MEMBERSHIP, not data. An agent exists in
+the room when its Hermes profile is an assignee, so "kill" adds the name to an
+in-memory kill-list and the avatar leaves; its tasks stay on the board. Verified:
+killing `default` drops the office to `['lulu','risko']` while the board still
+reports 10 tasks, two of them `default`'s.
+
+The kill-list lives in memory for the life of the process. That is deliberate —
+persisting it would mean writing office state into the Hermes install, which this
+app otherwise never does. A restart restores "everyone visible". Documented in
+API-SPEC.md rather than left as a surprise.
+
+### Spawn and kill animate through the door
+
+Removal is deferred. `syncAgents()` no longer deletes an agent that disappeared
+from the list; it sets `leaving`, and the avatar paths to the entrance and despawns
+only on arrival. Spawning sets `spawnGate`, a ~1.6 s hold at the threshold facing
+into the room. Without those two, agents pop into and out of existence at a desk,
+which reads as a rendering glitch rather than an agent arriving or leaving.
+
+A task that comes back mid-exit cancels the exit (`leaving = false`), otherwise an
+agent re-hired during its walk-out would vanish anyway.
+
+### "Previous meetings" needed reading the files that were already being written
+
+`persist()` has always written a markdown transcript per meeting. Nothing read them
+back, so `listMeetings()` returned only the in-memory map and a restart emptied the
+UI's history. `listArchived()` parses them with a narrow, tolerant reader: header
+fields by prefix, transcript by its `**speaker**` lines, anything unrecognised
+ignored rather than thrown. One unreadable file must not empty the whole list, so
+per-file errors are swallowed.
+
+`GET /api/hermes/meeting` now returns `{configured, live, active, archived}` in one
+request, and `?id=` returns a single transcript. Measured against the real install:
+3 archived meetings loaded, newest first.
+
+The create form lists agents too — the point of a picker is to show who exists
+before you commit to participants.
+
+### Four geometry bugs, all found by measuring rather than looking
+
+1. **Four of eight paintings hung in mid-air.** The lobby walls were declared as a
+   12 m span centred on `z=6` (0..12) while the partition actually runs 3.4..12.7.
+   Two pieces landed past the end, two before the start. `WallFace` now carries
+   `from`/`to` derived from the room constants, `paintingPlacement()` measures
+   `along` from the wall's start rather than its centre, and the self-test asserts
+   every painting fits its wall.
+2. **Cars drove through each other.** Each car had its own speed inside one lane,
+   so a 10 m/s car lapped a 6 m/s car on the same line. One speed per lane.
+3. **Pedestrians walked through each other** for the same reason, one speed per row
+   — plus `PED_GAP`, because equal speeds alone still let a walker close a gap that
+   started small.
+4. **The pantry stools were inside the cabinet.** Declared at the counter's own z,
+   which put them inside its footprint. The self-test caught this on its first run.
+
+Each was invisible in a screenshot and obvious in a number.

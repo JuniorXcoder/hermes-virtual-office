@@ -1,41 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isConfigured, listMeetings, startMeeting } from '@/lib/meeting-engine'
-import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { activeMeeting, isConfigured, listArchived, listMeetings, readArchived } from '@/lib/meeting-engine'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  return NextResponse.json({
-    configured: isConfigured(),
-    meetings: listMeetings(),
-  })
-}
-
-export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}))
-  try {
-    const tasks = await listTasks()
-    const known = new Set((await listAgents(tasks)).map((a) => a.name))
-    const participants = (Array.isArray(body?.participants) ? body.participants : [])
-      .map((p: unknown) => String(p))
-      .filter((p: string) => known.has(p))
-    if (participants.length < 2) {
+/**
+ * Meeting history.
+ *
+ * The picker needs three things before the user can start anything: whether the
+ * provider is configured, which meetings are live right now, and the previous
+ * meetings on disk. All three come from here so the UI makes one request.
+ *
+ * `GET /api/hermes/meeting?id=<meetingId>` returns one archived transcript.
+ */
+export async function GET(req: NextRequest) {
+  const id = req.nextUrl.searchParams.get('id')
+  if (id) {
+    const body = await readArchived(id)
+    if (body === null) {
       return NextResponse.json(
-        { error: { code: 'invalid_request', message: 'pilih minimal 2 peserta yang dikenal', status: 400 } },
-        { status: 400 },
+        { error: { code: 'invalid_request', message: `rapat "${id}" tidak ditemukan`, status: 404 } },
+        { status: 404 },
       )
     }
-    const meeting = await startMeeting({
-      topic: String(body?.topic || ''),
-      participants,
-      moderator: body?.moderator ? String(body.moderator) : undefined,
-      mode: body?.mode,
-    })
-    return NextResponse.json({ meeting })
-  } catch (err) {
-    return NextResponse.json(
-      { error: { code: 'meeting_failed', message: (err as Error).message, status: 409 } },
-      { status: 409 },
-    )
+    return NextResponse.json({ id, body })
   }
+
+  return NextResponse.json({
+    configured: isConfigured(),
+    /** Live in this process: running, queued, or just-finished with minutes. */
+    live: listMeetings(),
+    /** Held by one meeting at a time; a second start queues behind it. */
+    active: activeMeeting()?.id ?? null,
+    /** Written by this or an earlier server run. */
+    archived: await listArchived(),
+  })
 }

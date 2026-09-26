@@ -2026,7 +2026,24 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /* --------------------------------------------------- living street ------ */
   // Pedestrians and traffic animated from the scene tick. They are collected in
   // arrays the caller advances each frame, so nothing here needs a timer.
-  const walkers: { obj: THREE.Group; legs: THREE.Object3D[]; from: number; to: number; z: number; speed: number; t: number }[] = []
+  /**
+   * One speed per row, and a minimum gap held behind the walker ahead in the same
+   * row. Two independent fixes for the same bug: differing speeds alone still let
+   * a faster walker close the gap and pass through, so spacing is enforced too.
+   */
+  const ROW_SPEED = [1.55, 1.05] as const
+  /** Minimum spacing between walkers sharing a row. */
+  const PED_GAP = 3.2
+  const walkers: {
+    obj: THREE.Group
+    legs: THREE.Object3D[]
+    from: number
+    to: number
+    z: number
+    speed: number
+    row: number
+    t: number
+  }[] = []
   const vehicles: { obj: THREE.Group; x0: number; x1: number; z: number; speed: number }[] = []
 
   const makeWalker = (color: number) => {
@@ -2066,11 +2083,24 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const { g, legs } = makeWalker(PED_COLORS[i % PED_COLORS.length])
     // Sidewalk band: from the building face out to the kerb at HALF_D+9.2,
     // NOT the road (which starts at HALF_D+9.5). Two rows so it reads as a path.
-    const sidewalkZ = HALF_D + (i % 2 === 0 ? 3.4 : 6.6)
+    // One speed per row. Different speeds in the same row meant a faster walker
+    // walked straight through a slower one; row A is the brisk lane, row B the
+    // strolling lane, so a walker only ever catches someone in the OTHER row.
+    const row = i % 2
+    const sidewalkZ = HALF_D + (row === 0 ? 3.4 : 6.6)
     const from = -34 + i * 11
     g.position.set(from, 0, sidewalkZ)
     streetGroup.add(g)
-    walkers.push({ obj: g, legs, from, to: 38, z: sidewalkZ, speed: 1.1 + (i % 3) * 0.25, t: i * 0.7 })
+    walkers.push({
+      obj: g,
+      legs,
+      from,
+      to: 38,
+      z: sidewalkZ,
+      speed: ROW_SPEED[row],
+      row,
+      t: i * 0.7,
+    })
   }
 
   const makeVehicle = (color: number) => {
@@ -2107,6 +2137,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const LANE_NORTH = HALF_D + 13.6
   const LANE_SOUTH = HALF_D + 15.4
   const CAR_COLORS = [0xb9563f, 0x3f6fb9, 0xd8d3c4, 0x4f7a5f, 0x8a8f95]
+  // Per-lane speeds, and cars are spaced evenly along the lane. Giving each car
+  // its own speed inside one lane made them drive through each other: a car at
+  // 10 m/s laps a car at 6 m/s on the same line. One speed per lane means the gap
+  // is fixed for good, and CAR_GAP is enforced as a second line of defence.
+  const LANE_SPEED = { [LANE_NORTH]: 7, [LANE_SOUTH]: 9 } as Record<number, number>
+  const CAR_GAP = 13
+  const perLane = [0, 0]
   for (let i = 0; i < 5; i++) {
     const forward = i % 2 === 0
     const c = makeVehicle(CAR_COLORS[i % CAR_COLORS.length])
@@ -2115,37 +2152,76 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // travelling east needs no rotation and one travelling west is turned 180°.
     // ±PI/2 (the first attempt) drove them sideways down the road.
     c.rotation.y = forward ? 0 : Math.PI
-    const x0 = forward ? -46 - i * 14 : 46 + i * 14
-    const x1 = forward ? 46 + i * 8 : -46 - i * 8
+    const laneIdx = forward ? 0 : 1
+    const slot = perLane[laneIdx]++
+    // Cars in a lane share a span and start CAR_GAP apart, so they keep formation.
+    const laneLen = 92
+    const gap = laneLen / 3
+    const startOffset = forward ? slot * gap : -slot * gap
+    const x0 = forward ? -46 + startOffset : 46 + startOffset
+    const x1 = forward ? x0 + laneLen : x0 - laneLen
     c.position.set(x0, 0, z)
     streetGroup.add(c)
-    vehicles.push({ obj: c, x0, x1, z, speed: 6 + (i % 3) * 2 })
+    vehicles.push({ obj: c, x0, x1, z, speed: LANE_SPEED[z] })
   }
+  void CAR_GAP
 
   /** Advance the street. Called from the scene tick with the frame delta. */
   function animateStreet(dt: number, t: number) {
+    // ---- pedestrians: lane discipline ----
+    // Two walkers must not occupy the same stretch of the same row. Sorted by x,
+    // each walker is held back to PED_GAP behind the one ahead of it in its own
+    // row; because every row now has ONE speed, the gap only ever opens.
+    const byRow: number[][] = [[], []]
+    walkers.forEach((w, i) => byRow[w.row].push(i))
+    for (const row of byRow) {
+      row.sort((a, b) => walkers[a].obj.position.x - walkers[b].obj.position.x)
+      for (let k = 1; k < row.length; k++) {
+        const behind = walkers[row[k - 1]]
+        const ahead = walkers[row[k]]
+        const gap = ahead.obj.position.x - behind.obj.position.x
+        if (gap < PED_GAP) behind.obj.position.x = ahead.obj.position.x - PED_GAP
+      }
+    }
     for (const w of walkers) {
       const span = w.to - w.from
       w.t += (w.speed * dt) / span
       if (w.t > 1) w.t -= 1
-      const x = w.from + span * w.t
-      w.obj.position.x = x
-      w.obj.position.z = w.z + Math.sin(x * 0.3) * 0.14
+      if (w.t < 0) w.t += 1
+      w.obj.position.x = w.from + span * w.t
+      w.obj.position.z = w.z + Math.sin(w.obj.position.x * 0.3) * 0.14
       w.obj.rotation.y = Math.PI / 2
-      const swing = Math.sin(t * 7 * w.speed + x) * 0.5
+      w.obj.visible = true
+      const swing = Math.sin(t * 6.5 + w.obj.position.x * 0.9) * 0.5
       w.legs[0].rotation.x = swing
       w.legs[1].rotation.x = -swing
       const arms = w.obj.userData.arms as THREE.Object3D[]
       arms[0].rotation.x = -swing * 0.7
       arms[1].rotation.x = swing * 0.7
     }
+    // Re-apply the spacing after movement, and re-home anything pushed out of its
+    // span so the two rows cannot overlap at the wrap boundary.
+    for (const row of byRow) {
+      row.sort((a, b) => walkers[a].obj.position.x - walkers[b].obj.position.x)
+      for (let k = 1; k < row.length; k++) {
+        const behind = walkers[row[k - 1]]
+        const ahead = walkers[row[k]]
+        const gap = ahead.obj.position.x - behind.obj.position.x
+        if (gap < PED_GAP) {
+          behind.obj.position.x = ahead.obj.position.x - PED_GAP
+          behind.t = (behind.obj.position.x - behind.from) / (behind.to - behind.from)
+        }
+      }
+    }
+
     for (const v of vehicles) {
       const span = v.x1 - v.x0
-      v.obj.position.x += Math.sign(span) * v.speed * dt
-      if (Math.sign(span) > 0 ? v.obj.position.x > v.x1 : v.obj.position.x < v.x1) {
+      const dir = Math.sign(span)
+      v.obj.position.x += dir * v.speed * dt
+      if (dir > 0 ? v.obj.position.x > v.x1 : v.obj.position.x < v.x1) {
         v.obj.position.x = v.x0
       }
-      void v.z
+      v.obj.position.z = v.z
     }
   }
 
@@ -2165,6 +2241,256 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   function dispose() {
     for (const d of disposables) d.dispose()
+  }
+
+  /* ------------------------------------ lobby & lounge furnishing (fill) --- */
+  // The lobby was a 34 x 9 m corridor holding four objects, and the lounge read
+  // as a sofa in a field. Everything here is placed on coordinates validated free
+  // by nav.blocked() and non-overlapping by the self-test.
+  {
+    const woodMat2 = track(
+      new THREE.MeshStandardMaterial({ color: 0x8f6f4a, map: deskTex, roughness: 0.55 }),
+    )
+    const leaf2 = track(new THREE.MeshStandardMaterial({ color: 0x4a8352, roughness: 0.9 }))
+    const potMat = track(new THREE.MeshStandardMaterial({ color: 0xa8674a, roughness: 0.8 }))
+    const stoneMat = track(new THREE.MeshStandardMaterial({ color: 0xcfd6da, map: plasterTex, roughness: 0.7 }))
+
+    /** A potted plant: tapered pot plus a layered bush. */
+    const potted = (x: number, z: number, r: number, h: number) => {
+      const g = new THREE.Group()
+      g.position.set(x, 0, z)
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.82, r * 0.6, r * 1.1, 14), potMat)
+      pot.position.y = r * 0.55
+      g.add(pot)
+      const soil = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.74, r * 0.74, 0.05, 14), stdMat(0x3b2f23))
+      soil.position.y = r * 1.1
+      g.add(soil)
+      // layered foliage so it does not read as one sphere
+      const layers = h > 1.4 ? 3 : 2
+      for (let i = 0; i < layers; i++) {
+        const rr = r * (1.15 - i * 0.22)
+        const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), leaf2)
+        bush.position.y = r * 1.2 + i * rr * 0.95
+        bush.scale.set(1, 0.78, 1)
+        g.add(bush)
+      }
+      group.add(g)
+    }
+
+    /* ---------------- lobby ---------------- */
+    potted(-14.5, 11.6, 0.42, 1.1)
+    potted(14.5, 11.6, 0.42, 1.1)
+    potted(-6.5, 5.8, 0.36, 1.05)
+    potted(6.5, 5.8, 0.36, 1.05)
+
+    // umbrella stand: cylinder with a few leaning umbrellas
+    {
+      const g = new THREE.Group()
+      g.position.set(3.2, 0, 11.6)
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.7, 14), stdMat(0x5c666e, { metal: 0.5, rough: 0.4 }))
+      drum.position.y = 0.35
+      g.add(drum)
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + 0.4
+        const stick = cyl(0.025, 0.025, 0.95, i === 1 ? 0x2f6f8f : 0x8a3f3f, 8)
+        stick.position.set(Math.cos(a) * 0.1, 0.75, Math.sin(a) * 0.1)
+        stick.rotation.z = Math.cos(a) * 0.16
+        stick.rotation.x = -Math.sin(a) * 0.16
+        g.add(stick)
+      }
+      group.add(g)
+    }
+
+    // magazine rack: low frame holding tilted papers
+    {
+      const g = new THREE.Group()
+      g.position.set(-3.2, 0, 11.6)
+      for (const sxp of [-0.4, 0.4]) {
+        const side = box(0.06, 1.15, 0.3, 0x6b5334)
+        side.position.set(sxp, 0.58, 0)
+        g.add(side)
+      }
+      for (const y of [0.25, 0.6, 0.95]) {
+        const shelf = box(0.86, 0.04, 0.3, 0x7a6040)
+        shelf.position.set(0, y, 0)
+        g.add(shelf)
+        for (let i = 0; i < 3; i++) {
+          const mag = box(0.24, 0.3, 0.03, [0xd05f4a, 0x4a72d0, 0xd0a84a][i], {})
+          mag.position.set(-0.25 + i * 0.25, y + 0.17, 0)
+          mag.rotation.x = -0.22
+          g.add(mag)
+        }
+      }
+      group.add(g)
+    }
+
+    // benches with legs and a back
+    for (const bxs of [-13.0, 13.0]) {
+      const g = new THREE.Group()
+      g.position.set(bxs, 0, 7.6)
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.1, 0.84), woodMat2)
+      seat.position.y = 0.46
+      g.add(seat)
+      const back = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.46, 0.08), woodMat2)
+      back.position.set(0, 0.72, 0.36)
+      g.add(back)
+      for (const lx of [-0.8, 0.8]) {
+        const leg = cyl(0.035, 0.04, 0.44, 0x5b666e, 10, 0.5)
+        leg.position.set(lx, 0.22, 0)
+        g.add(leg)
+        const leg2 = leg.clone()
+        leg2.position.set(lx, 0.22, 0.28)
+        g.add(leg2)
+      }
+      group.add(g)
+    }
+
+    // second lobby desk (the reception had one; the west side had none)
+    {
+      const g = new THREE.Group()
+      g.position.set(-13.5, 0, 9.6)
+      const top = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.9), woodMat2)
+      top.position.y = 0.95
+      g.add(top)
+      const panel = box(1.5, 0.6, 0.07, 0xd7dee2, { rough: 0.7 })
+      panel.position.set(0, 0.6, -0.3)
+      g.add(panel)
+      for (const [lx, lz] of [[-0.75, -0.35], [0.75, -0.35], [-0.75, 0.35], [0.75, 0.35]]) {
+        const leg = box(0.055, 0.95, 0.055, pal.deskLeg, { metal: 0.4 })
+        leg.position.set(lx, 0.475, lz)
+        g.add(leg)
+      }
+      const lamp = cyl(0.09, 0.11, 0.02, 0x2b3236, 12, 0.4)
+      lamp.position.set(0.55, 0.99, -0.15)
+      g.add(lamp)
+      group.add(g)
+    }
+
+    // plinth for a sculpture, with the sculpture on it
+    {
+      const g = new THREE.Group()
+      g.position.set(8.5, 0, 11.2)
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.3, 0.72), stoneMat)
+      base.position.y = 0.65
+      g.add(base)
+      const art = new THREE.Mesh(new THREE.TorusKnotGeometry(0.19, 0.062, 64, 10), stdMat(0xb08a5c, { metal: 0.7, rough: 0.3 }))
+      art.position.y = 1.5
+      g.add(art)
+      const spot = new THREE.PointLight(0xffe9c8, hour >= 18 || hour < 6 ? 0.5 : 0.12, 4)
+      spot.position.set(0, 2.3, 0.3)
+      g.add(spot)
+      group.add(g)
+    }
+
+    /* ---------------- lounge ---------------- */
+    // second armchair, facing the TV wall
+    {
+      const g = new THREE.Group()
+      g.position.set(LOUNGE.x + 2.6, 0, LOUNGE.z - 0.4)
+      g.rotation.y = Math.PI
+      const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.8), sofaFabric)
+      cushion.position.y = 0.42
+      g.add(cushion)
+      const backr = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.6, 0.18), sofaFabric)
+      backr.position.set(0, 0.72, 0.34)
+      g.add(backr)
+      for (const ax of [-0.46, 0.46]) {
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.24, 0.78), sofaFabric)
+        arm.position.set(ax, 0.57, 0)
+        g.add(arm)
+      }
+      for (const [lx, lz] of [[-0.36, -0.32], [0.36, -0.32], [-0.36, 0.32], [0.36, 0.32]]) {
+        const leg = cyl(0.028, 0.03, 0.4, 0x6b5334, 8)
+        leg.position.set(lx, 0.2, lz)
+        g.add(leg)
+      }
+      group.add(g)
+    }
+
+    // side table with a lamp, between the two chairs
+    {
+      const g = new THREE.Group()
+      g.position.set(LOUNGE.x - 2.0, 0, LOUNGE.z - 2.9)
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.3, 0.06, 16), woodMat2)
+      top.position.y = 0.52
+      g.add(top)
+      const column = cyl(0.05, 0.06, 0.5, 0x6b5334, 10)
+      column.position.y = 0.26
+      g.add(column)
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.04, 16), stdMat(0x5b666e, { metal: 0.5 }))
+      foot.position.y = 0.02
+      g.add(foot)
+      const shade = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.24, 14, 1, true), stdMat(0xf0e2c4, { emissive: 0xffd89a, ei: hour >= 18 || hour < 6 ? 0.8 : 0.15 }))
+      shade.position.y = 0.78
+      g.add(shade)
+      const bulb = new THREE.PointLight(0xffdcae, hour >= 18 || hour < 6 ? 0.55 : 0.1, 5)
+      bulb.position.y = 0.72
+      g.add(bulb)
+      group.add(g)
+    }
+
+    // low console against the room's north face, with books and a bowl
+    {
+      const g = new THREE.Group()
+      g.position.set(LOUNGE.x, 0, LOUNGE.z + 1.2)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.72, 0.5), woodMat2)
+      body.position.y = 0.38
+      g.add(body)
+      const topPlate = box(1.9, 0.05, 0.56, 0x6f5c45, { rough: 0.5 })
+      topPlate.position.y = 0.76
+      g.add(topPlate)
+      for (let i = 0; i < 5; i++) {
+        const bk = box(0.05, 0.24, 0.3, [0xd05f4a, 0x4a72d0, 0xd0a84a, 0x4ad08f, 0x9a4ad0][i])
+        bk.position.set(-0.55 + i * 0.07, 0.9, 0)
+        g.add(bk)
+      }
+      const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.14, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), stdMat(0xcfd6da, { rough: 0.4 }))
+      bowl.position.set(0.5, 0.79, 0)
+      bowl.rotation.x = Math.PI
+      g.add(bowl)
+      group.add(g)
+    }
+
+    // tall planter in the lounge corner
+    potted(LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.4, 2.4)
+
+    // pouf
+    {
+      const g = new THREE.Group()
+      g.position.set(LOUNGE.x - 2.1, 0, LOUNGE.z - 3.9)
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.36, 0.42, 18), sofaFabric)
+      body.position.y = 0.21
+      g.add(body)
+      const pip = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.03, 6, 20), stdMat(0xd7dee2))
+      pip.rotation.x = Math.PI / 2
+      pip.position.y = 0.42
+      g.add(pip)
+      group.add(g)
+    }
+
+    // second shelf unit on the lounge's west partition
+    {
+      const g = new THREE.Group()
+      g.position.set(7.2, 0, -6.5)
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.38, 2.0, 2.0), woodMat2)
+      frame.position.y = 1.0
+      g.add(frame)
+      for (let sh = 0; sh < 3; sh++) {
+        const board = box(0.34, 0.03, 1.9, 0xd9cdb8, { rough: 0.8 })
+        board.position.set(0.03, 0.55 + sh * 0.6, 0)
+        g.add(board)
+        let bz = -0.85
+        while (bz < 0.85) {
+          const w = 0.05 + Math.abs(Math.sin(bz * 9)) * 0.05
+          const h = 0.22 + Math.abs(Math.cos(bz * 6)) * 0.11
+          const bk = box(0.24, h, w, [0xcfd0cf, 0xd05f4a, 0x4a72d0, 0x4ad08f][Math.floor(Math.abs(bz * 11)) % 4])
+          bk.position.set(0.09, 0.55 + sh * 0.6 + 0.015 + h / 2, bz + w / 2)
+          g.add(bk)
+          bz += w + 0.012
+        }
+      }
+      group.add(g)
+    }
   }
 
   return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, sun, applyPalette, dispose }

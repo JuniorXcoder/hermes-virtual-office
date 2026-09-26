@@ -48,6 +48,10 @@ export type SceneAgent = AnimAgent & {
   bubble: CSS2DObject
   label: CSS2DObject
   bubbleTimer: number
+  /** Seconds remaining of the "entering through the door" walk. */
+  spawnGate?: number
+  /** Set when the agent is leaving: walk out of the door, then despawn. */
+  leaving?: boolean
 }
 
 export type SceneEvents = {
@@ -229,14 +233,18 @@ export function createScene(
       bubble,
       label,
       bubbleTimer: 0,
+      spawnGate: 0,
+      leaving: false,
     }
     agents.push(a)
     byName.set(data.name, a)
     setLabel(a)
-    // enter through the door
-    // spawn just INSIDE the doorway: the threshold itself is outside the
-    // walkable band, so an avatar placed on it can never path anywhere
-    av.group.position.set(DOOR.x + (Math.random() - 0.5) * 1.2, 0, DOOR.z - 1.0)
+    // Spawn just INSIDE the doorway: the threshold itself is outside the walkable
+    // band, so an avatar placed on it could never path anywhere. `spawnGate` below
+    // turns this into a real entrance walk — the agent steps in through the door
+    // and walks to its station instead of materialising at it.
+    av.group.position.set(DOOR.x, 0, DOOR.z - 0.9)
+    a.spawnGate = 1.6   // seconds of "just walked in" before it heads to work
     return a
   }
 
@@ -256,11 +264,22 @@ export function createScene(
 
   /** Reconcile the avatar list with the latest agent roster. */
   function syncAgents(list: Agent[]) {
+    // Removal is deferred: an agent that disappears from the list first walks out
+    // of the door, and only despawns once it arrives. `leaving` is what turns a
+    // kill into an exit rather than a vanish.
     for (const [name, a] of [...byName]) {
-      if (!list.some((x) => x.name === name)) removeAgent(a)
+      if (!list.some((x) => x.name === name) && !a.leaving) {
+        a.leaving = true
+        a.path = []
+        a.destKey = ''
+      }
     }
     for (const data of list) {
       const existing = byName.get(data.name)
+      if (existing && existing.leaving) {
+        // It came back before finishing its exit — cancel the exit.
+        existing.leaving = false
+      }
       if (existing) {
         const changed =
           existing.data.status !== data.status ||
@@ -353,6 +372,21 @@ export function createScene(
     index: number,
     total: number,
   ) {
+    // 0. entering / leaving: hold at the doorway until the walk completes. This
+    //    is what makes spawn and kill read as "walks in / walks out" rather than
+    //    popping into existence at a desk.
+    if (a.spawnGate && a.spawnGate > 0) {
+      a.target = null
+      a.activity = 'idle'
+      a.face = Math.PI // face into the room (door is on the south wall)
+      return
+    }
+    if (a.leaving) {
+      a.target = new THREE.Vector3(DOOR.x, 0, DOOR.z)
+      a.activity = 'idle'
+      return
+    }
+
     const st = a.data.status
 
     // 1. meeting wins over everything — but ONLY while it is actually live. A
@@ -534,6 +568,22 @@ export function createScene(
         }
       } else {
         a.walking = 0
+      }
+
+      // Tick the entrance gate: while it runs the agent stands at the threshold
+      // facing into the room, which is what sells "just walked in".
+      if (a.spawnGate && a.spawnGate > 0) {
+        a.spawnGate = Math.max(0, a.spawnGate - dt)
+        a.walking = 0
+      }
+
+      // A leaving agent despawns when it reaches the doorway.
+      if (a.leaving && !a.path.length) {
+        const dd = Math.hypot(g.position.x - DOOR.x, g.position.z - DOOR.z)
+        if (dd < 0.6) {
+          removeAgent(a)
+          return // forEach callback, not a loop body
+        }
       }
 
       // smooth turn toward the facing direction

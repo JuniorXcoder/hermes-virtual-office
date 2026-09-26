@@ -88,6 +88,26 @@ console.log('geometry')
   check('no artwork buried inside a wall', buried.length === 0, `${PAINTINGS.length} pieces`)
 }
 
+// Artwork must also FIT the wall it names. A painting whose body extends past
+// either end of its wall hangs in mid-air — which is how four of eight pieces
+// ended up floating, because the lobby walls were declared with the wrong centre.
+{
+  const off: string[] = []
+  for (const [i, p] of PAINTINGS.entries()) {
+    const tx = Math.cos(p.wall.ry)
+    const tz = -Math.sin(p.wall.ry)
+    const centre = p.wall.from + p.along
+    const lo = centre - p.w / 2
+    const hi = centre + p.w / 2
+    void tx
+    void tz
+    if (lo < p.wall.from || hi > p.wall.to) {
+      off.push(`art${i} ${lo.toFixed(2)}..${hi.toFixed(2)} vs ${p.wall.from.toFixed(2)}..${p.wall.to.toFixed(2)}`)
+    }
+  }
+  check('every painting fits within its wall', off.length === 0, off.join(' | '))
+}
+
 // Footprints must not sit on top of one another (corners of walls excepted).
 {
   const bad: string[] = []

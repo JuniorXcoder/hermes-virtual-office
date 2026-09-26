@@ -164,6 +164,22 @@ function roleFor(name: string): AgentRole {
   return 'backend'
 }
 
+/**
+ * Every profile the Hermes install knows about, with how many tasks each holds.
+ * This is the spawn menu: an assignee that exists here can be given work, and
+ * assigning it work is what brings it into the office.
+ */
+export async function listAssignees(): Promise<{ name: string; onDisk: boolean; total: number }[]> {
+  const raw = await kanbanJson<RawAssignee[]>(['assignees'])
+  return raw
+    .map((r) => ({
+      name: r.name,
+      onDisk: r.on_disk ?? true,
+      total: Object.values(r.counts ?? {}).reduce((a, b) => a + b, 0),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 export async function listAgents(tasks: Task[]): Promise<Agent[]> {
   const raw = await kanbanJson<RawAssignee[]>(['assignees'])
   const names = raw.map((r) => r.name).sort()

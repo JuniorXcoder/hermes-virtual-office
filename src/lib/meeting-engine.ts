@@ -12,7 +12,7 @@
  * - In-process state only. A meeting is an interactive session; if the server
  *   restarts, the transcript lives on in /data/meetings.
  */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Meeting, MeetingMode, MeetingTurn } from '@/types/hermes'
 
@@ -30,6 +30,100 @@ const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
 /** One meeting at a time per server; a second start queues behind it. */
 const meetings = new Map<string, Meeting>()
 let busy = false
+
+/**
+ * Meetings written by earlier server runs, loaded lazily from DATA_DIR.
+ *
+ * `listMeetings()` used to return only the in-memory map, so a restart wiped the
+ * history and the UI could not offer "previous meetings". The files were always
+ * being written — nothing was reading them back.
+ *
+ * Markdown is parsed with a narrow, tolerant reader rather than a full parser:
+ * the header fields are read by prefix, the transcript by its `**speaker**` lines,
+ * and anything unrecognised is ignored rather than throwing. A hand-edited file
+ * therefore degrades to fewer fields instead of breaking the list.
+ */
+type ArchivedMeeting = {
+  id: string
+  topic: string
+  file: string
+  startedAt: string
+  participants: string[]
+  moderator: string
+  mode: MeetingMode
+  turnCount: number
+  preview: string
+  archived: true
+}
+
+let archiveCache: ArchivedMeeting[] | null = null
+
+function parseArchive(name: string, text: string): ArchivedMeeting | null {
+  const lines = text.split('\n')
+  const topic = (lines.find((l) => l.startsWith('# ')) || '').slice(2).trim()
+  const field = (key: string) => {
+    const l = lines.find((x) => x.startsWith(`- ${key}:`))
+    return l ? l.slice(key.length + 3).trim() : ''
+  }
+  const turnCount = Number(field('giliran')) || 0
+  const previewLine = lines.find((l) => l.startsWith('**') && l.includes('): '))
+  return {
+    // <date>-<id>.md
+    id: name.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, ''),
+    topic: topic || '(tanpa topik)',
+    file: path.join(DATA_DIR, 'meetings', name),
+    startedAt: name.slice(0, 10),
+    participants: field('peserta') ? field('peserta').split(',').map((x) => x.trim()).filter(Boolean) : [],
+    moderator: field('pembawa acara'),
+    mode: (field('mode') || 'auto') as MeetingMode,
+    turnCount,
+    preview: previewLine ? previewLine.slice(0, 160) : '',
+    archived: true,
+  }
+}
+
+/** Archived meetings on disk, newest first. Cached after the first read. */
+export async function listArchived(): Promise<ArchivedMeeting[]> {
+  if (archiveCache) return archiveCache
+  try {
+    const dir = path.join(DATA_DIR, 'meetings')
+    const names = await readdir(dir)
+    const out: ArchivedMeeting[] = []
+    for (const n of names) {
+      if (!n.endsWith('.md')) continue
+      try {
+        const text = await readFile(path.join(dir, n), 'utf8')
+        const m = parseArchive(n, text)
+        if (m) out.push(m)
+      } catch {
+        // one unreadable file must not empty the whole history
+      }
+    }
+    out.sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
+    archiveCache = out
+    return out
+  } catch {
+    archiveCache = []
+    return []
+  }
+}
+
+/** Drop the archive cache so a new meeting shows up immediately. */
+function invalidateArchive() {
+  archiveCache = null
+}
+
+/** Read one archived transcript by meeting id. */
+export async function readArchived(id: string): Promise<string | null> {
+  const all = await listArchived()
+  const hit = all.find((m) => m.id === id)
+  if (!hit) return null
+  try {
+    return await readFile(hit.file, 'utf8')
+  } catch {
+    return null
+  }
+}
 
 export function isConfigured(): boolean {
   return Boolean(AI_URL && AI_KEY)
@@ -248,6 +342,7 @@ async function persist(meeting: Meeting): Promise<string | null> {
       '',
     ].join('\n')
     await writeFile(file, body, 'utf8')
+    invalidateArchive()
     return file
   } catch {
     return null
@@ -372,6 +467,16 @@ export function getMeeting(id: string): Meeting | null {
   return meetings.get(id) || null
 }
 
+/**
+ * Live meetings in this process, newest first. Finished ones stay in the map (so
+ * the UI can show the minutes it just generated) but are also on disk, and the
+ * history endpoint is what the "previous meetings" list reads.
+ */
 export function listMeetings(): Meeting[] {
   return [...meetings.values()].sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)))
+}
+
+/** A meeting currently holding the single execution slot. */
+export function activeMeeting(): Meeting | null {
+  return listMeetings().find((m) => m.state === 'running' || m.state === 'queued') ?? null
 }

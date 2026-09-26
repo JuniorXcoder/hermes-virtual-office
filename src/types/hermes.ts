@@ -70,6 +70,22 @@ export type Meeting = {
   file?: string | null
 }
 
+/** A meeting transcript stored on disk (see meeting-engine.listArchived). */
+export type ArchivedMeeting = {
+  id: string
+  topic: string
+  file: string
+  /** YYYY-MM-DD, taken from the filename. */
+  startedAt: string
+  participants: string[]
+  moderator: string
+  mode: MeetingMode
+  turnCount: number
+  /** First transcript line, for the list. */
+  preview: string
+  archived: true
+}
+
 /** A single line of live agent telemetry, shown in the screen-peeker modal. */
 export type AgentActivity = {
   agent: string

@@ -337,29 +337,62 @@ export function facadeConflicts(): { kind: string; a: string; b: string }[] {
  * outward normal, and `paintingPlacement()` derives frame + canvas coordinates
  * from the wall thickness.
  */
-export type WallFace = { x: number; z: number; ry: number; span: number; along: 'x' | 'z' }
+/** `along` is an offset along the wall's tangent, measured from `wall.from`. */
 export type PaintingSpec = { wall: WallFace; along: number; y: number; w: number; h: number }
 
-const WEST_PART: WallFace = { x: ROOMS.work.x1, z: 1, ry: Math.PI / 2, span: 16, along: 'z' }
-const EAST_PART: WallFace = { x: ROOMS.work.x2, z: 1, ry: -Math.PI / 2, span: 16, along: 'z' }
-const NORTH: WallFace = { x: 0, z: -HALF_D, ry: 0, span: 34, along: 'x' }
-const LOBBY_W: WallFace = { x: -HALF_W, z: 6, ry: Math.PI / 2, span: 12, along: 'z' }
-const LOBBY_E: WallFace = { x: HALF_W, z: 6, ry: -Math.PI / 2, span: 12, along: 'z' }
+/**
+ * Every `WallFace` carries the wall's real extent (`from`/`to` along the tangent),
+ * because the painting list is only as correct as this geometry. Getting it wrong
+ * is how four of eight paintings ended up hanging in mid-air: the lobby walls were
+ * declared as a 12 m span centred on z=6 (i.e. 0..12) when the partition actually
+ * runs from the room boundary to the inside of the south wall.
+ *
+ * `wallFace()` derives the extent from the room constants, so it cannot drift.
+ */
+export type WallFace = {
+  x: number
+  z: number
+  ry: number
+  /** Wall centre along the tangent axis (for reference only). */
+  span: number
+  along: 'x' | 'z'
+  /** Extent along the tangent, in world coordinates. */
+  from: number
+  to: number
+}
+
+const wallFace = (
+  x: number,
+  z: number,
+  ry: number,
+  along: 'x' | 'z',
+  from: number,
+  to: number,
+): WallFace => ({ x, z, ry, along, from, to, span: to - from })
+
+// Interior partitions beside the work bay run from the north wall's inner face
+// down to the room's south wall.
+const WEST_PART = wallFace(ROOMS.work.x1, 1, Math.PI / 2, 'z', -HALF_D + WALL_T, ROOMS.work.z2)
+const EAST_PART = wallFace(ROOMS.work.x2, 1, -Math.PI / 2, 'z', -HALF_D + WALL_T, ROOMS.work.z2)
+// Lobby side walls: from the lobby's north boundary to the south wall's inner face.
+const LOBBY_W = wallFace(-HALF_W, 6, Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
+const LOBBY_E = wallFace(HALF_W, 6, -Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
 
 /** Facing an inward normal: `ry` is 0 for a frame facing +Z, ±PI/2 for ±X. */
 export const PAINTINGS: PaintingSpec[] = [
-  // work bay, on both partitions
-  { wall: WEST_PART, along: -6.0, y: 1.9, w: 1.5, h: 1.1 },
-  { wall: WEST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
-  { wall: EAST_PART, along: -4.4, y: 1.9, w: 1.5, h: 1.1 },
-  { wall: EAST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
-  // Lobby side walls only: the north face is fully glazed, so art there collided
-  // with window openings. `facadeConflicts()` enforces the separation.
-  // lobby side walls, placed in the gaps between side windows
-  { wall: LOBBY_W, along: -5.6, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_W, along: -9.0, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: -5.6, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: -9.0, y: 1.95, w: 1.3, h: 1.7 },
+  // Art is placed by a fraction along each wall, so it always lands on the wall
+  // and never in the gaps where the windows are.
+  // work-bay partitions: one piece per wall, clear of the doorway at z > 3.4
+  { wall: WEST_PART, along: 4.2, y: 1.9, w: 1.5, h: 1.1 },
+  { wall: WEST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
+  { wall: EAST_PART, along: 6.0, y: 1.9, w: 1.5, h: 1.1 },
+  { wall: EAST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
+  // lobby side walls: side windows sit at z 5.1/7.7/10.2/12.8, so art goes in
+  // the 2.6 m gaps between them
+  { wall: LOBBY_W, along: 3.3, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_W, along: 6.0, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: 3.3, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: 6.0, y: 1.95, w: 1.3, h: 1.7 },
 ]
 
 /**
@@ -385,9 +418,13 @@ export function paintingPlacement(spec: PaintingSpec) {
   const matteOut = surface + FRAME_D + 0.01
   const canvasOut = matteOut + 0.012
 
+  // `along` is measured from the wall's start, so the tangent coordinate is
+  // from + along. The previous version added it to the wall's CENTRE, which put
+  // art past the end of short walls.
+  const tangent = wall.from + along
   const at = (out: number) => ({
-    x: wall.x + nx * out + tx * along,
-    z: wall.z + nz * out + tz * along,
+    x: wall.x + nx * out + tx * tangent,
+    z: wall.z + nz * out + tz * tangent,
     y,
   })
   return { frame: at(frameOut), matte: at(matteOut), canvas: at(canvasOut), ry: wall.ry, w, h }
@@ -505,6 +542,26 @@ export const FOOTPRINTS: Footprint[] = [
   fp('plant-lobby-b', 16.0, 5.4, 0.4, 0.4, 1.0),
   fp('coat-rack', -11.0, 11.4, 0.35, 0.35, 1.75),
   fp('doormat', 0, HALF_D - WALL_T - 0.9, 1.5, 0.7, 0, 'prop'),
+
+  // ---- lobby, filled out: it was a 34 x 9 m corridor with four objects in it ----
+  fp('lobby-planter-w', -14.5, 11.6, 0.5, 0.5, 1.1),
+  fp('lobby-planter-e', 14.5, 11.6, 0.5, 0.5, 1.1),
+  fp('umbrella-stand', 3.2, 11.6, 0.28, 0.28, 0.75),
+  fp('magazine-rack', -3.2, 11.6, 0.45, 0.3, 1.15),
+  fp('lobby-bench-w', -13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
+  fp('lobby-bench-e', 13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
+  fp('lobby-desk-2', -13.5, 9.6, 0.85, 0.45, 0.95, 'desk'),
+  fp('lobby-art-plinth', 8.5, 11.2, 0.4, 0.4, 1.35),
+  fp('lobby-plant-mid-w', -6.5, 5.8, 0.42, 0.42, 1.05),
+  fp('lobby-plant-mid-e', 6.5, 5.8, 0.42, 0.42, 1.05),
+
+  // ---- lounge, filled out ----
+  fp('lng-armchair-2', LOUNGE.x + 2.6, LOUNGE.z - 0.4, 0.5, 0.5, 0.85, 'seat'),
+  fp('lng-side-table', LOUNGE.x - 2.0, LOUNGE.z - 2.9, 0.34, 0.34, 0.52, 'desk'),
+  fp('lng-console', LOUNGE.x, LOUNGE.z + 1.2, 0.9, 0.28, 0.78),
+  fp('lng-planter', LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.42, 0.42, 2.4),
+  fp('lng-pouf', LOUNGE.x - 2.1, LOUNGE.z - 3.9, 0.4, 0.4, 0.42, 'seat'),
+  fp('lng-shelf-2', 7.2, -6.5, 0.2, 1.0, 2.0),
 ]
 
 /** Doorway openings so the walkable graph knows where it may pass. */
