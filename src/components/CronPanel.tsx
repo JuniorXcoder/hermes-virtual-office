@@ -323,10 +323,6 @@ export default function CronPanel({
               onChange={(e) => setSchedule(e.target.value)}
               placeholder="30m  ·  every 2h  ·  0 9 * * *"
             />
-            <div className="vp-muted">
-              format: <code>30m</code>, <code>every 2h</code>, atau cron{' '}
-              <code>0 9 * * *</code>
-            </div>
 
             <label className="vp-sub">PROMPT</label>
             <textarea
@@ -334,7 +330,7 @@ export default function CronPanel({
               rows={3}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="perintah yang dijalankan tiap jadwal"
+              placeholder="perintah"
             />
 
             <label className="vp-sub">NAMA (opsional)</label>
@@ -342,7 +338,7 @@ export default function CronPanel({
               className="vp-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="mis. cek rilis harian"
+              placeholder="cek rilis harian"
             />
 
             <label className="vp-check">

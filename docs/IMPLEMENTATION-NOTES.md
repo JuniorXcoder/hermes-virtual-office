@@ -962,3 +962,37 @@ POST prompt=''          -> 400 'isi prompt atau script'
 The probe job was created paused and deleted; `jobs.json` is back to zero.
 
 Self-test: 16 checks (the route-method assertion now covers `/api/hermes/cron`).
+
+---
+
+## 23. Helper text removed, and the two kinds that were kept
+
+Removed every explanatory blurb from the UI:
+
+- "Profil dibuat kosong (tanpa model/kunci) dan langsung masuk kantor. Tidak
+  meng-clone kredensial profil lain." (Agent panel)
+- "Spawn dan kill mengubah keanggotaan kantor saja — tugas agent tidak dihapus…"
+  (Agent panel)
+- "format: 30m, every 2h, atau cron 0 9 * * *" (Cron panel — the placeholder
+  already shows all three)
+- The 3D control legend ("seret = putar · scroll = zoom · …") and its CSS.
+- Explanatory clauses in placeholders: "nama (huruf kecil, mis. budi)" became
+  "budi", "deskripsi (opsional) — dipakai router kanban" became "deskripsi", and
+  so on. Examples stay, explanations go.
+
+Two kinds of text were deliberately kept, because removing them would hide
+something the user needs at the moment they need it:
+
+1. **Warnings that gate an action.** The meeting panel still says the LLM is not
+   configured when it is not — without it the start button is disabled for no
+   visible reason.
+2. **Results of an action.** "Arahan terkirim ke worker.", "Dibuat: t_…", and the
+   error messages. These are feedback, not explanation, and they appear only after
+   something happened.
+
+The distinction is the point: helper text tells you how the system works, feedback
+tells you what it just did. The first is clutter once you know it; the second is
+never safe to remove.
+
+Everything reasoned above was also removed from the CSS (`.vp-hint`, `.vp-hint kbd`,
+and its media-query rule) so no dead rules remain.

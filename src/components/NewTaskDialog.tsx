@@ -60,7 +60,7 @@ export default function NewTaskDialog() {
             className="vp-input"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="mis. Tambah test idempotensi refund"
+            placeholder="Tambah test idempotensi refund"
           />
 
           <label className="vp-sub">PENANGGUNG JAWAB</label>
@@ -80,7 +80,7 @@ export default function NewTaskDialog() {
             rows={4}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder="Konteks, kriteria penerimaan, berkas terkait…"
+            placeholder="Konteks, kriteria penerimaan"
           />
 
           <label className="vp-sub">PRIORITAS</label>

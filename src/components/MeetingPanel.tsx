@@ -300,7 +300,7 @@ export default function MeetingPanel({
               rows={2}
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="mis. Rencana rilis endpoint refund minggu ini"
+              placeholder="Rencana rilis endpoint refund"
             />
 
             <label className="vp-sub">PESERTA (2–4) · {agents.length} agent aktif</label>

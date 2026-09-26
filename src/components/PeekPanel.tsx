@@ -121,7 +121,7 @@ export default function PeekPanel() {
               <textarea
                 className="vp-input"
                 rows={3}
-                placeholder="mis. fokus ke test postgres saja, lewati integrasi"
+                placeholder="fokus ke test postgres saja"
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
               />

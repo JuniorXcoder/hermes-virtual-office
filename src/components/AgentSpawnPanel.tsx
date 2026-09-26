@@ -141,7 +141,7 @@ export default function AgentSpawnPanel({
           className="vp-input"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder="nama (huruf kecil, mis. budi)"
+          placeholder="budi"
           onKeyDown={(e) => {
             if (e.key === 'Enter') void create()
           }}
@@ -150,7 +150,7 @@ export default function AgentSpawnPanel({
           className="vp-input"
           value={newDesc}
           onChange={(e) => setNewDesc(e.target.value)}
-          placeholder="deskripsi (opsional) — dipakai router kanban"
+          placeholder="deskripsi"
         />
         <button
           className="vp-btn"
@@ -159,10 +159,6 @@ export default function AgentSpawnPanel({
         >
           {creating ? 'Membuat…' : '+ Buat profil'}
         </button>
-        <div className="vp-note">
-          Profil dibuat kosong (tanpa model/kunci) dan langsung masuk kantor.
-          Tidak meng-clone kredensial profil lain.
-        </div>
 
         <button className="vp-btn vp-btn-rosy" disabled={!!busy} onClick={load}>
           Segarkan
@@ -218,11 +214,6 @@ export default function AgentSpawnPanel({
             </div>
           </>
         )}
-
-        <div className="vp-note">
-          Spawn dan kill mengubah keanggotaan kantor saja — tugas agent tidak
-          dihapus. Agent berjalan lewat pintu utama saat masuk dan keluar.
-        </div>
       </div>
     </aside>
   )

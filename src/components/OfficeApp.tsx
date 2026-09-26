@@ -123,13 +123,6 @@ export default function OfficeApp() {
         )
       })()}
 
-      {/* ------------------------------------------------------- footer hint */}
-      {view === '3d' && (
-        <footer className="vp-hint">
-          seret = putar · scroll = zoom · klik avatar = detail · klik monitor = intip layar ·
-          <kbd>N</kbd> tugas · <kbd>M</kbd> rapat · <kbd>2</kbd>/<kbd>3</kbd> ganti tampilan
-        </footer>
-      )}
 
       <TaskPanel />
       <PeekPanel />

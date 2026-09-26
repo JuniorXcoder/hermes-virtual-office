@@ -331,27 +331,7 @@ kbd {
 .vp-label[data-status='review'] { border-color: #f0b556; color: #f5d79a; }
 .vp-label[data-status='blocked'] { border-color: #e5726f; color: #f3b0ae; }
 
-.vp-hint {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 10px;
-  z-index: 18;
-  font-size: 11.5px;
-  color: var(--muted);
-  background: #0b1015d9;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 14px;
-  white-space: nowrap;
-}
-.vp-hint kbd {
-  background: #1b252d;
-  border: 1px solid #33424c;
-  border-radius: 3px;
-  padding: 0 4px;
-  color: var(--text);
-}
+
 .vp-banner {
   position: absolute;
   left: 50%;
@@ -368,7 +348,6 @@ kbd {
 
 @media (max-width: 720px) {
   .vp-panel { width: calc(100vw - 24px); }
-  .vp-hint { display: none; }
 }
 
 /* ------------------------------------------------------- kanban wall board -- */
