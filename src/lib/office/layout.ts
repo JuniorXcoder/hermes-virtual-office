@@ -207,7 +207,12 @@ export const DOOR = { x: 0, z: HALF_D - WALL_T }
  * at z = -11.5 in the work bay the planter stood directly in front of the Kanban
  * board and covered its lower edge.
  */
-export const GARDEN = { x: 11.6, z: -11.6 }
+/**
+ * The green corner sat at z = -11.6, which is behind the TV unit (TV at z = -9.5)
+ * — an agent assigned there stood with its back to a screen, in a corner nobody
+ * can see. Moved to the lounge's east wall, beside the side glazing.
+ */
+export const GARDEN = { x: 15.4, z: -6.6 }
 /**
  * The book nook used to sit at x=0, z=1.7 — directly in front of the work bay's
  * doorway (the door is at x=0, 3.4 m wide, opening inward from z=3.4). Three of
@@ -619,9 +624,9 @@ export const FOOTPRINTS: Footprint[] = [
   fp('bins', 7.0, 3.0, 0.55, 0.25, 0.7),
 
   // ---- green corner (garden activity) + book nook (read) + pantry stools ---
-  fp('garden-box', GARDEN.x, GARDEN.z, 1.45, 0.28, 0.55),
-  fp('garden-pot-a', GARDEN.x - 2.0, GARDEN.z, 0.3, 0.3, 0.5),
-  fp('garden-pot-b', GARDEN.x + 2.0, GARDEN.z, 0.3, 0.3, 0.5),
+  fp('garden-box', GARDEN.x, GARDEN.z, 0.28, 1.45, 0.55),
+  fp('garden-pot-a', GARDEN.x, GARDEN.z - 2.0, 0.3, 0.3, 0.5),
+  fp('garden-pot-b', GARDEN.x, GARDEN.z + 2.0, 0.3, 0.3, 0.5),
   fp('book-shelf', BOOK_NOOK.x, BOOK_NOOK.z - 1.3, 1.3, 0.22, 2.0),
   fp('book-chair', BOOK_NOOK.x, BOOK_NOOK.z + 0.75, 0.5, 0.5, 0.85, 'seat'),
   fp('book-table', BOOK_NOOK.x - 1.15, BOOK_NOOK.z + 0.75, 0.32, 0.32, 0.5, 'desk'),
@@ -658,7 +663,6 @@ export const FOOTPRINTS: Footprint[] = [
   fp('lng-console', LOUNGE.x, LOUNGE.z + 1.2, 0.9, 0.28, 0.78),
   fp('lng-planter', LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.42, 0.42, 2.4),
   fp('lng-pouf', LOUNGE.x - 2.1, LOUNGE.z - 3.9, 0.4, 0.4, 0.42, 'seat'),
-  fp('lng-shelf-2', 7.6, -10.6, 1.0, 0.2, 2.0),
 ]
 
 /** Doorway openings so the walkable graph knows where it may pass. */

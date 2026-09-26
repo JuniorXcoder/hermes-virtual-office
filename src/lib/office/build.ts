@@ -1155,6 +1155,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     /* ---- green corner: a raised planter and two pots ---- */
     const garden = new THREE.Group()
     garden.position.set(GARDEN.x, 0, GARDEN.z)
+    // The planter now runs along the east wall, so it is turned 90 degrees.
+    garden.rotation.y = Math.PI / 2
     const boxBody = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.55, 0.56), woodMat)
     boxBody.position.y = 0.28
     garden.add(boxBody)
@@ -1571,7 +1573,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const side of [-1, 1]) {
       const chair = new THREE.Group()
       chair.position.set(0, 0, side * 1.0)
-      chair.rotation.y = side > 0 ? Math.PI : 0
+      // The backrest is at local +Z, so the chair must be turned to put its BACK
+      // on the far side of the table: +Z for the chair at -Z, -Z (PI) for the
+      // chair at +Z. The previous condition had both chairs facing away.
+      chair.rotation.y = side > 0 ? 0 : Math.PI
       const s2 = box(0.5, 0.07, 0.48, 0xa8b8c4, { rough: 0.75 })
       s2.position.y = 0.46
       chair.add(s2)
@@ -2480,29 +2485,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       group.add(g)
     }
 
-    // second shelf unit on the lounge's west partition
-    {
-      const g = new THREE.Group()
-      g.position.set(7.6, 0, -10.6)
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 0.38), woodMat2)
-      frame.position.y = 1.0
-      g.add(frame)
-      for (let sh = 0; sh < 3; sh++) {
-        const board = box(1.9, 0.03, 0.34, 0xd9cdb8, { rough: 0.8 })
-        board.position.set(0, 0.55 + sh * 0.6, 0.03)
-        g.add(board)
-        let bx = -0.85
-        while (bx < 0.85) {
-          const w = 0.05 + Math.abs(Math.sin(bx * 9)) * 0.05
-          const h = 0.22 + Math.abs(Math.cos(bx * 6)) * 0.11
-          const bk = box(w, h, 0.24, [0xcfd0cf, 0xd05f4a, 0x4a72d0, 0x4ad08f][Math.floor(Math.abs(bx * 11)) % 4])
-          bk.position.set(bx + w / 2, 0.55 + sh * 0.6 + 0.015 + h / 2, 0.09)
-          g.add(bk)
-          bx += w + 0.012
-        }
-      }
-      group.add(g)
-    }
   }
 
   return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, sun, applyPalette, dispose }

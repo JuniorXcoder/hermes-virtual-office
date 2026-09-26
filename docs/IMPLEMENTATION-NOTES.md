@@ -748,3 +748,64 @@ room. A `no furniture blocks a doorway` assertion now covers all three room door
 so this cannot come back silently.
 
 Self-test: 14 checks.
+
+---
+
+## 18. Idle poses had no heading, and two more hand-placed rotations
+
+### Seated agents faced whatever direction they walked in from
+
+`seatYaw` existed and was applied — but only for `typing` and `meeting`:
+
+```ts
+if ((a.activity === 'typing' || a.activity === 'meeting') && a.walking < 0.5 && a.seatYaw !== undefined)
+```
+
+Every other seated pose (sofa, read, coffee) fell through, so the avatar kept the
+heading it arrived with. Sitting on the sofa, that meant facing the backrest
+depending on which way you walked in — which is exactly what was reported.
+
+Worse, the idle spots never set `seatYaw` at all: the code assigned `a.target` and
+`a.activity` and stopped. There was no heading to apply even if the gate had allowed
+it. Both halves are fixed:
+
+- `SEATED` is now a set of every pose that sits (`typing`, `meeting`, `sofa`,
+  `read`, `coffee`), and the yaw applies to all of them.
+- Every idle spot declares `face`, seated or standing. A standing agent staring at
+  nothing is the same bug in a different pose.
+
+Directions are verified numerically — the avatar's forward is local +Z, so the
+facing is `(sin y, cos y)` and the check is the dot product with the vector to the
+target. 7/7 spots now face what they are meant to.
+
+### The garden was behind the television
+
+The green corner sat at `z = -11.6`; the TV unit is at `z = -9.5`. An agent sent
+there stood with its back to a screen in the far corner. Moved to the lounge's east
+wall beside the side glazing, rotated 90°, with two stools facing the planter.
+
+### Two chairs in the meeting pods had inverted rotations
+
+```ts
+chair.rotation.y = side > 0 ? Math.PI : 0
+```
+
+The backrest is at local +Z, so the chair at `-Z` needs `+Z` (no rotation) and the
+one at `+Z` needs `PI`. The condition had both backwards — both pod chairs faced
+away from their table. Now verified by direction: each chair's facing vector points
+at the table centre.
+
+### Two shelves in one corner
+
+`book-shelf` and `lng-shelf-2` both ended up in the lounge's west corner after the
+earlier reshuffle. `lng-shelf-2` is removed; the book nook keeps its own shelf.
+
+### Note on the checker
+
+The first pass at verifying the garden direction reported `dot=0.62` and looked like
+a failure. The check compared against the planter's CENTRE, but the planter is a
+2.9 m strip — the correct comparison is against the nearest point on it, which
+gives 1.000. A wrong checker is indistinguishable from a wrong result until you look
+at why it disagrees.
+
+Self-test: 14 checks.
