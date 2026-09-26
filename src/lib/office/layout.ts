@@ -260,6 +260,9 @@ export function windowPlan() {
   for (const w of SOUTH_WINDOWS) {
     out.push({ id: `south@${w.x}`, x: w.x, z: HALF_D, along: 'x', w: w.w, h: w.h, y: w.y })
   }
+  // Side windows sit at world z = the listed offset, because build.ts negates the
+  // same values when cutting the holes. Keeping both sides in agreement is the
+  // point: when they disagreed, the checker passed and the wall was wrong.
   for (const z of SIDE_WINDOWS) {
     out.push({ id: `west@${z}`, x: -HALF_W, z, along: 'z', w: SIDE_WINDOW_W, h: WINDOW_H, y: WINDOW_Y })
     out.push({ id: `east@${z}`, x: HALF_W, z, along: 'z', w: SIDE_WINDOW_W, h: WINDOW_H, y: WINDOW_Y })
@@ -276,13 +279,17 @@ export function facadeConflicts(): { kind: string; a: string; b: string }[] {
   const wins = windowPlan()
   // Compare in WORLD coordinates. Using each painting's raw `along` mixed two
   // frames of reference and reported overlaps that do not exist.
+  // World placement comes from paintingPlacement() — the single function that
+  // knows how `along` maps to world space. Deriving it here by hand is what let
+  // this checker report "0 conflicts" while two paintings sat on a window: the
+  // hand-rolled version used the wall CENTRE while the real placement uses the
+  // wall's START, so the two disagreed by a whole offset.
   const art = PAINTINGS.map((p, i) => {
-    const tx = Math.cos(p.wall.ry)
-    const tz = -Math.sin(p.wall.ry)
+    const at = paintingPlacement(p)
     return {
       id: `art${i}`,
-      x: p.wall.x + tx * p.along,
-      z: p.wall.z + tz * p.along,
+      x: at.frame.x,
+      z: at.frame.z,
       onX: p.wall.along === 'x',
       w: p.w,
     }
@@ -361,14 +368,32 @@ export type WallFace = {
   to: number
 }
 
+/**
+ * Build a wall face from its WORLD extent (`lo`..`hi`), converting to tangent
+ * coordinates.
+ *
+ * This conversion is the whole point. For `ry = +PI/2` the tangent points toward
+ * -Z (tz = -sin(ry) = -1), so a wall occupying world z 3.4..12.7 has tangent
+ * coordinates -6.7..2.6, not 3.4..12.7. Storing world bounds here while
+ * `paintingPlacement` adds `along` in tangent space put half the artwork outside
+ * its wall — and the self-test agreed, because it compared the same two wrong
+ * numbers against each other.
+ */
 const wallFace = (
   x: number,
   z: number,
   ry: number,
   along: 'x' | 'z',
-  from: number,
-  to: number,
-): WallFace => ({ x, z, ry, along, from, to, span: to - from })
+  lo: number,
+  hi: number,
+): WallFace => {
+  const t = along === 'z' ? -Math.sin(ry) : Math.cos(ry)
+  const centre = along === 'z' ? z : x
+  // tangent = (world - centre) / t  when t > 0, reversed when t < 0
+  const a = (lo - centre) * t
+  const b = (hi - centre) * t
+  return { x, z, ry, along, from: Math.min(a, b), to: Math.max(a, b), span: Math.abs(b - a) }
+}
 
 // Interior partitions beside the work bay run from the north wall's inner face
 // down to the room's south wall.
@@ -377,6 +402,38 @@ const EAST_PART = wallFace(ROOMS.work.x2, 1, -Math.PI / 2, 'z', -HALF_D + WALL_T
 // Lobby side walls: from the lobby's north boundary to the south wall's inner face.
 const LOBBY_W = wallFace(-HALF_W, 6, Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
 const LOBBY_E = wallFace(HALF_W, 6, -Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
+
+/**
+ * World Z of a point `along` the lobby side walls.
+ *
+ * The two walls have OPPOSITE tangent directions (ry = ±PI/2), so the same
+ * `along` value lands on mirrored positions. Writing the offsets by eye is what
+ * put paintings on windows on one side only; this makes the world position the
+ * input instead.
+ */
+export function lobbySideZ(wall: WallFace, along: number): number {
+  const tz = -Math.sin(wall.ry)
+  return wall.z + tz * along
+}
+
+/**
+ * The `along` offset that puts a piece of art at world Z `z` on a side wall.
+ *
+ * Two conversions, and getting either one wrong is silent:
+ *   1. world Z -> absolute tangent  =  (z - wall.z) / tz
+ *   2. absolute tangent -> `along`  =  tangent - wall.from
+ *
+ * `paintingPlacement()` adds `along` to `wall.from`, so skipping step 2 lands the
+ * art a whole wall-length away — which is exactly what happened, and why the
+ * paintings appeared to be on walls they were nowhere near.
+ */
+export function lobbyAlongForWorldZ(wall: WallFace, z: number): number {
+  const tz = -Math.sin(wall.ry)
+  return (z - wall.z) / tz - wall.from
+}
+// NORTH is unused by the artwork list (that elevation is fully glazed) but kept so
+// the helper is exercised on the X axis too.
+void wallFace(0, -HALF_D, 0, 'x', -HALF_W, HALF_W)
 
 /** Facing an inward normal: `ry` is 0 for a frame facing +Z, ±PI/2 for ±X. */
 export const PAINTINGS: PaintingSpec[] = [
@@ -387,12 +444,18 @@ export const PAINTINGS: PaintingSpec[] = [
   { wall: WEST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
   { wall: EAST_PART, along: 6.0, y: 1.9, w: 1.5, h: 1.1 },
   { wall: EAST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
-  // lobby side walls: side windows sit at z 5.1/7.7/10.2/12.8, so art goes in
-  // the 2.6 m gaps between them
-  { wall: LOBBY_W, along: 3.3, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_W, along: 6.0, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: 3.3, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: 6.0, y: 1.95, w: 1.3, h: 1.7 },
+  // Lobby side walls. Of the six side windows only two fall inside the lobby
+  // (world z 6.8 and 11.3); the rest serve the meeting room and lounge along the
+  // same elevation. The two remaining gaps are world z ~9.05 and ~4.50, and that
+  // is where these go — `alongFor` converts from world Z so the number in the
+  // list is checkable against the drawing.
+  // The two free gaps between the lobby's side windows are at world z 4.55 and
+  // 9.05 on BOTH walls (measured, not assumed — the tangent runs the other way on
+  // the east wall, so identical `along` values land mirrored).
+  { wall: LOBBY_W, along: lobbyAlongForWorldZ(LOBBY_W, 4.55), y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_W, along: lobbyAlongForWorldZ(LOBBY_W, 9.05), y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: lobbyAlongForWorldZ(LOBBY_E, 4.55), y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: lobbyAlongForWorldZ(LOBBY_E, 9.05), y: 1.95, w: 1.3, h: 1.7 },
 ]
 
 /**
@@ -404,6 +467,17 @@ export const PAINTINGS: PaintingSpec[] = [
  * wall's inner face.
  */
 export const FRAME_D = 0.06
+
+/**
+ * Convert an absolute position ALONG a wall (tangent coordinates, the same space
+ * as `wall.from`/`wall.to`) into the `along` offset that `paintingPlacement()`
+ * expects. Using this instead of hand-arithmetic is what keeps the list readable:
+ * `alongFor(WALL, 4.5)` says "4.5 units along the wall" without the caller needing
+ * to know whether the tangent points toward +Z or -Z.
+ */
+export function alongFor(wall: WallFace, tangent: number): number {
+  return tangent - wall.from
+}
 
 export function paintingPlacement(spec: PaintingSpec) {
   const { wall, along, y, w, h } = spec

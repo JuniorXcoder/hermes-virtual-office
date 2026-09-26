@@ -583,3 +583,76 @@ before you commit to participants.
    which put them inside its footprint. The self-test caught this on its first run.
 
 Each was invisible in a screenshot and obvious in a number.
+
+---
+
+## 15. Three frame-of-reference bugs in one wall, and why the checks agreed with the bug
+
+The user reported this twice — "paintings still floating / colliding" and, earlier,
+"the side windows are mirrored, just holes". Both were real, both survived a
+previous "fix", and both survived the self-test. The reason is the same in every
+case: **two pieces of code disagreed about a coordinate, and the check compared the
+same two wrong numbers against each other.**
+
+### The side windows were mirrored
+
+`wallPanel()` cuts a hole at world `z = z - holes.x · sin(ry)`, which for the side
+elevations (`ry = +PI/2`) is `z = -holes.x`. `windowUnit()` places its mesh at its
+`cz` argument directly. Both were handed `SIDE_WINDOWS`, so:
+
+```
+holes:  z = -x  →  11.2,  6.7,  2.2, -2.3, -6.8, -11.3
+glass:  z = +x  → -11.2, -6.7, -2.2,  2.3,  6.8,  11.3
+```
+
+Not one window unit sat in its opening. The side elevations were six holes and six
+panes of glass on opposite sides of the building. Fixed by negating the hole list.
+
+### Artwork was placed in tangent space and validated in world space
+
+`paintingPlacement()` adds `along` to `wall.from`, so `along` must be a **tangent
+offset from the wall's start**. The painting list was hand-written as if `along`
+were an absolute world coordinate, and with `ry = ±PI/2` the tangent also runs
+**backwards** on one side of the building — so the same number landed mirrored.
+
+The fix is not more careful arithmetic; it is removing the arithmetic:
+
+- `wallFace()` now takes the wall's WORLD extent and converts to tangent space
+  itself.
+- `lobbyAlongForWorldZ(wall, z)` takes a world Z and returns the offset, doing both
+  conversions (`world → tangent` and `tangent → offset`).
+- The painting list reads in world coordinates, which is what you can check against
+  the building.
+
+### The self-test passed while four paintings floated
+
+`facadeConflicts()` derived a painting's world position by hand — `wall.x + tx·along`
+— using the wall **centre** while `paintingPlacement()` uses the wall **start**. Two
+different formulas, so the checker and the geometry disagreed by a whole offset and
+the check reported "0 conflicts". The same helper now derives the art position by
+calling `paintingPlacement()`, so there is one formula.
+
+The integrity check was also weak in a second way: "is the art inside its room" is
+not the same as "is the art clear of the glass". Side windows span several rooms, so
+a painting could sit inside the lobby and still land on a window in it — which two
+of them did. There is now a dedicated `no painting covers a side window` assertion,
+and it is the assertion that would have caught the original report.
+
+### Verify with a diagram, not a screenshot
+
+The browser harness dies on this scene before it can hand back a frame (900+ meshes
+with a shadow pass under a software rasteriser), so visual confirmation is
+unavailable. The elevation is therefore rendered from the real layout data:
+
+```
+=== DINDING TIMUR x=+17 ===
+ 3.45 |  WWWWWWWWWW       WWWWWWWWWWW       WWWWWWWWWW       WWWWWWWWWW.......WWWWWWWWWW.......WWWWWWWWWW.
+ 2.88 |  WWWWWWWWWW       WWWWWWWWWWW       WWWWWWWWWW       WWWWWWWWWWAAAAAA.WWWWWWWWWWAAAAAA.WWWWWWWWWW.
+ 1.15 |                                                              ..AAAAAA...........AAAAAA............
+```
+`W` = window, `A` = artwork, `.` = lobby zone, `X` = collision. No `X` on either
+wall, and both elevations are now identical — they should be, and before this they
+were not.
+
+Measured after the fix: 6/6 window holes match their glass, 8/8 paintings inside
+their wall and clear of every opening, 12/12 self-test checks.

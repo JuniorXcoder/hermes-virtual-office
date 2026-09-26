@@ -712,7 +712,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     { x: DOOR.x, y: 1.15, w: 3.4, h: 2.3 },
     ...SOUTH_WINDOWS.map((w) => ({ x: w.x, y: w.y, w: w.w, h: w.h })),
   ])
-  const sideHoles = SIDE_WINDOWS.map((z) => ({ x: z, y: WINDOW_Y, w: SIDE_WINDOW_W, h: WINDOW_H }))
+  // wallPanel() places a hole at world z = -holes.x (it computes z - hx*sin(ry),
+  // and ry = +PI/2 here), while windowUnit() places its mesh at cz directly.
+  // Passing the same list to both therefore mirrored them: holes at z = -x, glass
+  // at z = +x, so no window unit ever sat in its opening — the side elevations
+  // were a solid wall with six holes in it.
+  const sideHoles = SIDE_WINDOWS.map((z) => ({ x: -z, y: WINDOW_Y, w: SIDE_WINDOW_W, h: WINDOW_H }))
   wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
   wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
 

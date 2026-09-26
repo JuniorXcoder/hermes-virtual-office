@@ -21,6 +21,8 @@ import {
   WALL_T,
   WINDOW_H,
   WINDOW_Y,
+  SIDE_WINDOWS,
+  SIDE_WINDOW_W,
   facadeConflicts,
   paintingPlacement,
   windowPlan,
@@ -88,24 +90,48 @@ console.log('geometry')
   check('no artwork buried inside a wall', buried.length === 0, `${PAINTINGS.length} pieces`)
 }
 
-// Artwork must also FIT the wall it names. A painting whose body extends past
-// either end of its wall hangs in mid-air — which is how four of eight pieces
-// ended up floating, because the lobby walls were declared with the wrong centre.
+// Artwork must fit the wall it names AND land in the room, not outside it.
+//
+// The first version of this check compared `wall.from + along` against
+// `wall.from..wall.to` — the same numbers on both sides, so it passed while half
+// the paintings hung outside their wall in world space. It has to be checked in
+// WORLD coordinates against the ROOM, which is what actually exists.
 {
+  const rooms: Record<string, { lo: number; hi: number }> = {
+    '-6': { lo: -13 + 0.3, hi: 3.4 }, // west partition, world z
+    '6': { lo: -13 + 0.3, hi: 3.4 },
+    '-17': { lo: 3.4, hi: 13 - 0.3 }, // lobby side wall, world z
+    '17': { lo: 3.4, hi: 13 - 0.3 },
+  }
   const off: string[] = []
   for (const [i, p] of PAINTINGS.entries()) {
-    const tx = Math.cos(p.wall.ry)
-    const tz = -Math.sin(p.wall.ry)
-    const centre = p.wall.from + p.along
-    const lo = centre - p.w / 2
-    const hi = centre + p.w / 2
-    void tx
-    void tz
-    if (lo < p.wall.from || hi > p.wall.to) {
-      off.push(`art${i} ${lo.toFixed(2)}..${hi.toFixed(2)} vs ${p.wall.from.toFixed(2)}..${p.wall.to.toFixed(2)}`)
+    const at = paintingPlacement(p)
+    const b = rooms[String(p.wall.x)]
+    if (!b) {
+      off.push(`art${i} has no room bound for wall x=${p.wall.x}`)
+      continue
+    }
+    const lo = at.frame.z - p.w / 2
+    const hi = at.frame.z + p.w / 2
+    if (lo < b.lo || hi > b.hi) {
+      off.push(`art${i} z ${lo.toFixed(2)}..${hi.toFixed(2)} outside ${b.lo.toFixed(1)}..${b.hi.toFixed(1)}`)
     }
   }
-  check('every painting fits within its wall', off.length === 0, off.join(' | '))
+  check('every painting lands inside its room (world space)', off.length === 0, off.join(' | '))
+
+  // ...and must not sit on a side window. The side elevations carry six windows
+  // spanning several rooms, so "is the art inside the lobby" is not enough.
+  const win = SIDE_WINDOWS.map((z) => ({ z, lo: z - SIDE_WINDOW_W / 2, hi: z + SIDE_WINDOW_W / 2 }))
+  const onGlass: string[] = []
+  for (const [i, p] of PAINTINGS.entries()) {
+    if (Math.abs(p.wall.x) !== HALF_W) continue
+    const at = paintingPlacement(p)
+    const lo = at.frame.z - p.w / 2
+    const hi = at.frame.z + p.w / 2
+    const hit = win.filter((w) => hi > w.lo && lo < w.hi)
+    if (hit.length) onGlass.push(`art${i} z ${lo.toFixed(2)}..${hi.toFixed(2)} on window ${hit[0].z}`)
+  }
+  check('no painting covers a side window', onGlass.length === 0, onGlass.join(' | '))
 }
 
 // Footprints must not sit on top of one another (corners of walls excepted).
