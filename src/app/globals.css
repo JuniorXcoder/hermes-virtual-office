@@ -399,12 +399,26 @@ kbd {
   overflow: visible;
 }
 /* the grid's geometry lives inline (see board.ts) so it cannot be overridden */
-.vp-board-cols { pointer-events: none; }
+.vp-board-cols {
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* header row and card row share the same flex track widths, so the labels always
+   sit over their own column */
+.vp-board-colheads,
+.vp-board-cols-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.vp-board-colheads > .vp-board-col { flex: 1 1 0; min-width: 0; text-align: center; }
 .vp-board-cards-col {
   flex: 1 1 0;
   min-width: 0;
   /* the column scrolls so a long backlog stays INSIDE the board */
-  max-height: 250px;
+  max-height: 210px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;

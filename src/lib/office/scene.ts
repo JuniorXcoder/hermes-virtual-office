@@ -95,26 +95,15 @@ export function createScene(
   controls.enablePan = true
   controls.screenSpacePanning = false
 
-  // ---- Kanban board legend: header row above the card grid, on the board face
-  const BOARD_COLUMNS = BOARD_COLS
+  // ---- Kanban board title. Column headers are built inside board.ts so that the
+  // labels and the card grid share one flex layout and cannot drift apart.
   {
     const titleEl = document.createElement('div')
     titleEl.className = 'vp-board-title'
     titleEl.textContent = 'SPRINT · PAPAN KANBAN'
     const title = new CSS2DObject(titleEl)
-    title.position.set(0, KANBAN_BOARD.h / 2 - 0.34, 0.09)
+    title.position.set(0, KANBAN_BOARD.h / 2 + 0.26, 0.09)
     office.boardSurface.add(title)
-
-    BOARD_COLUMNS.forEach((name, i) => {
-      const el = document.createElement('div')
-      el.className = 'vp-board-col'
-      el.textContent = name
-      const obj = new CSS2DObject(el)
-      const step = KANBAN_BOARD.w / BOARD_COLUMNS.length
-      // just under the title, above the scrolling card area
-      obj.position.set(-KANBAN_BOARD.w / 2 + step * (i + 0.5), KANBAN_BOARD.h / 2 - 0.78, 0.09)
-      office.boardSurface.add(obj)
-    })
   }
 
   // ---- cards pinned to the wall board (child of the board mesh)

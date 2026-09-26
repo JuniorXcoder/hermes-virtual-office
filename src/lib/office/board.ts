@@ -59,6 +59,26 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
   grid.style.transform = 'translate(-50%, -50%)'
   root.appendChild(grid)
 
+  // Header row lives INSIDE the grid. Previously the column labels were separate
+  // CSS2DObjects positioned in board-local world units while the cards were laid
+  // out in pixels: the two could never line up (measured label pitch 211px vs
+  // column pitch 189px), so the labels floated over the wrong columns. One flex
+  // parent makes that impossible.
+  const headRow = document.createElement('div')
+  headRow.className = 'vp-board-colheads'
+  grid.appendChild(headRow)
+
+  const bodyRow = document.createElement('div')
+  bodyRow.className = 'vp-board-cols-row'
+  grid.appendChild(bodyRow)
+
+  for (let i = 0; i < BOARD_COLUMNS.length; i++) {
+    const head = document.createElement('div')
+    head.className = 'vp-board-col'
+    head.textContent = BOARD_COLUMNS[i]
+    headRow.appendChild(head)
+  }
+
   const columns: HTMLDivElement[] = []
   for (let i = 0; i < BOARD_COLUMNS.length; i++) {
     const col = document.createElement('div')
@@ -68,7 +88,7 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
       e.preventDefault()
       col.scrollTop += (e as WheelEvent).deltaY
     })
-    grid.appendChild(col)
+    bodyRow.appendChild(col)
     columns.push(col)
   }
 
@@ -134,10 +154,10 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
     // (560px) was 2.6x the board's real on-screen width (~218px), so the columns
     // rendered beside the board instead of on it.
     const w = Math.max(180, Math.min(900, widthPx * 0.9))
-    // leave headroom for the title row and the column headers
-    const h = Math.max(40, Math.min(420, heightPx * 0.56))
+    // Height follows the board's projection minus a title strip; the header row is
+    // inside the grid now, so no manual offset for it.
+    const h = Math.max(40, Math.min(420, heightPx * 0.66))
     grid.style.width = `${w}px`
-    grid.style.height = `${h}px`
     for (const col of columns) col.style.maxHeight = `${h}px`
   }
 

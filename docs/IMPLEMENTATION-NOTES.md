@@ -282,3 +282,51 @@ With `dt` up to 0.25 s a 3.4 m/s walker advances 0.85 m in one step. If that
 overshoots the current waypoint, the next frame turns around and the avatar
 oscillates in place — which reads as "stuck at the door". The step is now clamped
 to the distance remaining on the leg (`Math.min(SPEED * dt, dist)`).
+
+---
+
+## 10. Facade openings, board mounting, and frames of reference
+
+### Openings must be checked in world coordinates
+
+`facadeConflicts()` first compared a painting's local `along` offset against a
+window's world Z. They are different frames of reference, so it reported overlaps
+that did not exist and hid ones that did. Everything is projected to world
+coordinates before comparison. The invariant it now enforces:
+
+> No two openings overlap; no opening falls inside the Kanban band; no artwork
+> overlaps an opening.
+
+Windows are generated from data (`NORTH_WINDOWS`, `SIDE_WINDOWS`) rather than
+hand-placed, so the layout is checkable and reproducible.
+
+### An object must fit the surface it is mounted on
+
+The Kanban board was 7.6 m tall on a 4.6 m wall. Its lower edge drove 0.9 m
+through the floor and its top stood 2.1 m proud of the wall — which is exactly why
+it read as detached. Board height now derives from the wall with a fixed reveal,
+so a later wall change cannot reintroduce the overlap. The same check applies to
+the ceiling: a ceiling at 4.3 m under a 4.6 m wall sliced across the upper wall
+and looked like a beam crossing the board. It is now flush with the wall top.
+
+Artwork has the same failure mode in a smaller size: a frame box centred on the
+wall's coordinate is buried inside the wall. `paintingPlacement()` measures
+outward from the wall's inner face (`WALL_T/2 + FRAME_D/2`).
+
+### One layout parent, or the parts drift
+
+Column labels were CSS2DObjects positioned in board-local *world* units while the
+card grid was laid out in *pixels*. Measured pitch: labels 211 px, columns 189 px —
+the labels floated over the wrong columns and no constant could reconcile them
+because one side scaled with the camera and the other did not. The headers now
+live inside the same flex grid as the cards, inside board.ts. Measured after the
+fix: header and column centres differ by 0 px.
+
+Rule: if two overlays must line up, give them one parent.
+
+### Trap: the E2E hook is build-time
+
+`NEXT_PUBLIC_E2E_HOOK` is inlined at build time. A rebuild without it silently
+drops `window.__office`, so every follow-up probe fails with "cannot read
+properties of undefined" and looks like an application bug. Always rebuild with
+the flag when probing.

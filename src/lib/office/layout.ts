@@ -113,7 +113,31 @@ export function visitorSpot(desk: Desk) {
 
 // Sized so the card grid has real screen area: at 4.0 tall the projected board
 // was only ~60px high and the cards overflowed it.
-export const KANBAN_BOARD = { x: 0, y: 2.6, z: -HALF_D + WALL_T + 0.16, w: 13.6, h: 8.4 }
+// z: the board's BACK face must touch the wall's inner surface. The surface is at
+// -HALF_D + WALL_T/2; the board is BOARD_D deep, so its centre sits half a depth
+// further in. The previous value left it hovering 24 cm off the wall.
+export const BOARD_D = 0.14
+/**
+ * The board must FIT the wall it hangs on: the previous 7.6 m height on a 4.6 m
+ * wall drove its lower edge 0.9 m through the floor and left its top 2.1 m above
+ * the wall line — which is what made it read as detached from the building.
+ * Height is now derived from the wall with a 0.35 m reveal top and bottom, and
+ * the centre follows from that.
+ */
+/**
+ * The ceiling must sit at the wall TOP. At 4.3 m it was 0.3 m BELOW the 4.6 m wall
+ * line, so the ceiling plane sliced across the upper wall and read as a beam
+ * cutting through the Kanban board. Flush with the wall, it cannot.
+ */
+export const CEILING_Y = WALL_H
+export const BOARD_REVEAL = 0.35
+export const KANBAN_BOARD = {
+  x: 0,
+  y: (CEILING_Y - BOARD_REVEAL * 2) / 2 + BOARD_REVEAL,
+  z: -HALF_D + WALL_T / 2 + BOARD_D / 2 + 0.01,
+  w: 13.6,
+  h: Math.min(13.6 * 0.62, CEILING_Y - BOARD_REVEAL * 2),
+}
 export const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI'] as const
 
 export const CONFERENCE = { x: -11.4, z: -4.6, radius: 2.4 }
@@ -133,22 +157,112 @@ export const RECEPTION = { x: -8.4, z: 8.4 }
  * hole — the first version passed a wall-centre-relative value and every cut-out
  * landed above the wall line, so the facade had no windows at all.
  */
+/**
+ * Windows are laid out from data, not by hand.
+ *
+ * The north face is glazed in three groups with clear wall between them: the
+ * Kanban board occupies the centre 14 m, so no opening may fall inside x = ±7.
+ * Side elevations use a regular 4.5 m pitch. `windowConflicts()` proves that no
+ * opening overlaps another, the board, or any artwork.
+ */
+export const WINDOW_Y = 2.7
+export const WINDOW_H = 1.9
+/** Half-width of the Kanban board plus clearance: no window inside this band. */
+export const BOARD_CLEAR_X = 7.4
+
+const northGroup = (centres: number[], w: number) =>
+  centres.map((x) => ({ x, y: WINDOW_Y, w, h: WINDOW_H }))
+
+export const NORTH_WINDOWS = [
+  // Three per side, clear of the board band. Centres chosen so every pair has
+  // >= 0.6 m of solid wall between openings (verified by facadeConflicts()).
+  ...northGroup([-15.8, -12.0, -9.0], 2.2),
+  ...northGroup([9.0, 12.0, 15.8], 2.2),
+]
+
+export const SIDE_WINDOWS = [-11.2, -6.7, -2.2, 2.3, 6.8, 11.3] as const
+export const SIDE_WINDOW_W = 2.4
+
 export const WINDOWS = [
-  { x: -12.4, y: 2.7, w: 4.6, h: 1.9 },
-  { x: 12.4, y: 2.7, w: 4.6, h: 1.9 },
-  // a continuous band either side of the Kanban board so the north face reads
-  // as a glazed elevation rather than two punched holes
-  { x: -17.0, y: 2.7, w: 3.6, h: 1.9 },
-  { x: 17.0, y: 2.7, w: 3.6, h: 1.9 },
-  { x: -5.6, y: 2.7, w: 1.8, h: 1.9 },
-  { x: 5.6, y: 2.7, w: 1.8, h: 1.9 },
-  // side elevations
-  { x: -16.2, y: 2.7, w: 1.6, h: 1.9, west: true },
-  { x: 16.2, y: 2.7, w: 1.6, h: 1.9, east: true },
+  ...NORTH_WINDOWS,
+  ...SIDE_WINDOWS.map((z) => ({ x: z, y: WINDOW_Y, w: SIDE_WINDOW_W, h: WINDOW_H, side: true })),
 ] as const
 
-/** Window positions along the side walls (world Z on the ±X elevations). */
-export const SIDE_WINDOWS = [-9.0, -4.0, 1.0, 6.0, 11.0] as const
+/** Every opening on the plan, resolved to a world position, for conflict checks. */
+export function windowPlan() {
+  const out: { id: string; x: number; z: number; along: 'x' | 'z'; w: number; h: number; y: number }[] = []
+  for (const w of NORTH_WINDOWS) {
+    out.push({ id: `north@${w.x}`, x: w.x, z: -HALF_D, along: 'x', w: w.w, h: w.h, y: w.y })
+  }
+  for (const z of SIDE_WINDOWS) {
+    out.push({ id: `west@${z}`, x: -HALF_W, z, along: 'z', w: SIDE_WINDOW_W, h: WINDOW_H, y: WINDOW_Y })
+    out.push({ id: `east@${z}`, x: HALF_W, z, along: 'z', w: SIDE_WINDOW_W, h: WINDOW_H, y: WINDOW_Y })
+  }
+  return out
+}
+
+/**
+ * Openings and wall art must not overlap. Checked in 1-D along each wall, which
+ * is all that is needed because both live on the same plane.
+ */
+export function facadeConflicts(): { kind: string; a: string; b: string }[] {
+  const out: { kind: string; a: string; b: string }[] = []
+  const wins = windowPlan()
+  // Compare in WORLD coordinates. Using each painting's raw `along` mixed two
+  // frames of reference and reported overlaps that do not exist.
+  const art = PAINTINGS.map((p, i) => {
+    const tx = Math.cos(p.wall.ry)
+    const tz = -Math.sin(p.wall.ry)
+    return {
+      id: `art${i}`,
+      x: p.wall.x + tx * p.along,
+      z: p.wall.z + tz * p.along,
+      onX: p.wall.along === 'x',
+      w: p.w,
+    }
+  })
+  const overlaps = (a: number, b: number, wa: number, wb: number) => Math.abs(a - b) < (wa + wb) / 2
+
+  for (let i = 0; i < wins.length; i++) {
+    for (let j = i + 1; j < wins.length; j++) {
+      const A = wins[i]
+      const B = wins[j]
+      if (A.along !== B.along) continue
+      const sameWall =
+        A.along === 'x'
+          ? Math.abs(A.z - B.z) < 0.5
+          : Math.abs(A.x - B.x) < 0.5
+      if (!sameWall) continue
+      const pa = A.along === 'x' ? A.x : A.z
+      const pb = B.along === 'x' ? B.x : B.z
+      if (overlaps(pa, pb, A.w, B.w)) out.push({ kind: 'window-window', a: A.id, b: B.id })
+    }
+    // nothing may sit inside the Kanban board band
+    const W = wins[i]
+    if (W.along === 'x' && Math.abs(W.z + HALF_D) < 0.5) {
+      const pa = W.x
+      if (Math.abs(pa) - W.w / 2 < BOARD_CLEAR_X) {
+        out.push({ kind: 'window-board', a: W.id, b: 'kanban' })
+      }
+    }
+  }
+  for (const A of wins) {
+    for (const P of art) {
+      // same wall plane?
+      const sameWall =
+        A.along === 'x'
+          ? Math.abs(A.z - P.z) < 0.5 && !P.onX
+          : Math.abs(A.x - P.x) < 0.5 && P.onX
+      if (!sameWall) continue
+      const pa = A.along === 'x' ? A.x : A.z
+      const pb = A.along === 'x' ? P.x : P.z
+      if (overlaps(pa, pb, A.w, P.w)) {
+        out.push({ kind: 'window-art', a: A.id, b: P.id })
+      }
+    }
+  }
+  return out
+}
 
 /**
  * Artwork is defined by the WALL it hangs on, not by a hand-typed position: the
@@ -157,14 +271,14 @@ export const SIDE_WINDOWS = [-9.0, -4.0, 1.0, 6.0, 11.0] as const
  * outward normal, and `paintingPlacement()` derives frame + canvas coordinates
  * from the wall thickness.
  */
-export type WallFace = { x: number; z: number; ry: number; span: number }
+export type WallFace = { x: number; z: number; ry: number; span: number; along: 'x' | 'z' }
 export type PaintingSpec = { wall: WallFace; along: number; y: number; w: number; h: number }
 
-const WEST_PART: WallFace = { x: ROOMS.work.x1, z: 1, ry: Math.PI / 2, span: 16 }
-const EAST_PART: WallFace = { x: ROOMS.work.x2, z: 1, ry: -Math.PI / 2, span: 16 }
-const NORTH: WallFace = { x: 0, z: -HALF_D, ry: 0, span: 34 }
-const LOBBY_W: WallFace = { x: -HALF_W, z: 6, ry: Math.PI / 2, span: 12 }
-const LOBBY_E: WallFace = { x: HALF_W, z: 6, ry: -Math.PI / 2, span: 12 }
+const WEST_PART: WallFace = { x: ROOMS.work.x1, z: 1, ry: Math.PI / 2, span: 16, along: 'z' }
+const EAST_PART: WallFace = { x: ROOMS.work.x2, z: 1, ry: -Math.PI / 2, span: 16, along: 'z' }
+const NORTH: WallFace = { x: 0, z: -HALF_D, ry: 0, span: 34, along: 'x' }
+const LOBBY_W: WallFace = { x: -HALF_W, z: 6, ry: Math.PI / 2, span: 12, along: 'z' }
+const LOBBY_E: WallFace = { x: HALF_W, z: 6, ry: -Math.PI / 2, span: 12, along: 'z' }
 
 /** Facing an inward normal: `ry` is 0 for a frame facing +Z, ±PI/2 for ±X. */
 export const PAINTINGS: PaintingSpec[] = [
@@ -173,37 +287,44 @@ export const PAINTINGS: PaintingSpec[] = [
   { wall: WEST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
   { wall: EAST_PART, along: -4.4, y: 1.9, w: 1.5, h: 1.1 },
   { wall: EAST_PART, along: 1.6, y: 1.9, w: 1.1, h: 1.4 },
-  // north wall, either side of the Kanban board
-  { wall: NORTH, along: -9.0, y: 1.95, w: 1.8, h: 1.2 },
-  { wall: NORTH, along: 9.0, y: 1.95, w: 1.8, h: 1.2 },
-  { wall: NORTH, along: -15.2, y: 1.95, w: 1.4, h: 1.6 },
-  { wall: NORTH, along: 15.2, y: 1.95, w: 1.4, h: 1.6 },
-  // lobby side walls
-  { wall: LOBBY_W, along: -1.5, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_W, along: 2.2, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: -1.5, y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: 2.2, y: 1.95, w: 1.3, h: 1.7 },
+  // Lobby side walls only: the north face is fully glazed, so art there collided
+  // with window openings. `facadeConflicts()` enforces the separation.
+  // lobby side walls, placed in the gaps between side windows
+  { wall: LOBBY_W, along: -5.6, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_W, along: -9.0, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: -5.6, y: 1.95, w: 1.3, h: 1.7 },
+  { wall: LOBBY_E, along: -9.0, y: 1.95, w: 1.3, h: 1.7 },
 ]
 
-/** Frame + canvas world placement for a painting, clear of the wall surface. */
+/**
+ * Frame + canvas placement, derived from the wall SURFACE.
+ *
+ * A frame is a box of depth FRAME_D; centring it on the wall's coordinate buried
+ * it inside the wall (the wall is WALL_T thick), which is why artwork looked
+ * either invisible or z-fighting. Everything is now measured outward from the
+ * wall's inner face.
+ */
+export const FRAME_D = 0.06
+
 export function paintingPlacement(spec: PaintingSpec) {
   const { wall, along, y, w, h } = spec
-  const outward = 1 // distance from the wall centre to its inner surface
-  const half = WALL_T / 2
-  // slide `along` units along the wall, then stand `outward` off its surface
   const nx = Math.sin(wall.ry)
   const nz = Math.cos(wall.ry)
+  // tangent along the wall, pointing in +along direction
   const tx = Math.cos(wall.ry)
   const tz = -Math.sin(wall.ry)
-  const frameOut = half + 0.03
-  const canvasOut = half + 0.075
-  return {
-    frame: { x: wall.x + nx * frameOut + tx * along, z: wall.z + nz * frameOut + tz * along, y },
-    canvas: { x: wall.x + nx * canvasOut + tx * along, z: wall.z + nz * canvasOut + tz * along, y },
-    ry: wall.ry,
-    w,
-    h,
-  }
+
+  const surface = WALL_T / 2 // from the wall centre out to its inner face
+  const frameOut = surface + FRAME_D / 2 + 0.005
+  const matteOut = surface + FRAME_D + 0.01
+  const canvasOut = matteOut + 0.012
+
+  const at = (out: number) => ({
+    x: wall.x + nx * out + tx * along,
+    z: wall.z + nz * out + tz * along,
+    y,
+  })
+  return { frame: at(frameOut), matte: at(matteOut), canvas: at(canvasOut), ry: wall.ry, w, h }
 }
 
 /* -------------------------------------------------------------- footprints -- */

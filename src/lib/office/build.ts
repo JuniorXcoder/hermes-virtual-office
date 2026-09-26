@@ -19,6 +19,7 @@ import {
   DOOR,
   DART,
   FLOOR,
+  CEILING_Y,
   FOOTPRINTS,
   HALF_D,
   HALF_W,
@@ -26,12 +27,18 @@ import {
   LOUNGE,
   PAINTINGS,
   paintingPlacement,
+  FRAME_D,
   RECEPTION,
   ROOMS,
   WALL_H,
   WALL_T,
   WINDOWS,
+  NORTH_WINDOWS,
   SIDE_WINDOWS,
+  SIDE_WINDOW_W,
+  WINDOW_Y,
+  WINDOW_H,
+  BOARD_D,
   paletteFor,
   type Desk,
   type Palette,
@@ -458,17 +465,14 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   // north wall with the two window bands; south wall with the entrance
-  const northWindows = WINDOWS.filter((w) => !('west' in w) && !('east' in w)).map((w) => ({
-    x: w.x,
-    y: w.y,
-    w: w.w,
-    h: w.h,
-  }))
+  // North elevation openings come from NORTH_WINDOWS, which guarantees the
+  // central Kanban band stays solid (enforced by facadeConflicts()).
+  const northWindows = NORTH_WINDOWS.map((w) => ({ x: w.x, y: w.y, w: w.w, h: w.h }))
   wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, -HALF_D, 0, northWindows)
   wallPanel(FLOOR.width, WALL_H, 0, WALL_H / 2, HALF_D, 0, [
     { x: DOOR.x, y: 1.15, w: 3.4, h: 2.3 },
   ])
-  const sideHoles = SIDE_WINDOWS.map((z) => ({ x: z, y: 2.7, w: 2.2, h: 1.9 }))
+  const sideHoles = SIDE_WINDOWS.map((z) => ({ x: z, y: WINDOW_Y, w: SIDE_WINDOW_W, h: WINDOW_H }))
   wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
   wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
 
@@ -564,19 +568,16 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // Sunk slightly into the wall opening so the glass shows on BOTH faces; a unit
   // centred in the wall is buried and invisible from outside.
   const wallN = -HALF_D + WALL_T / 2
-  for (const w of WINDOWS) {
-    if ('west' in w || 'east' in w) continue
+  for (const w of NORTH_WINDOWS) {
     windowUnit(w.x, w.y, wallN, w.w, w.h, 'x')
   }
   const wallW = -HALF_W + WALL_T / 2
   const wallE = HALF_W - WALL_T / 2
   for (const z of SIDE_WINDOWS) {
-    windowUnit(wallW, 2.7, z, 2.2, 1.9, 'z')
-    windowUnit(wallE, 2.7, z, 2.2, 1.9, 'z')
+    windowUnit(wallW, WINDOW_Y, z, SIDE_WINDOW_W, WINDOW_H, 'z')
+    windowUnit(wallE, WINDOW_Y, z, SIDE_WINDOW_W, WINDOW_H, 'z')
   }
-  // lobby: wide street-facing window beside the entrance
-  windowUnit(-5.4, 2.3, wallN, 3.2, 1.7, 'x')
-  windowUnit(5.4, 2.3, wallN, 3.2, 1.7, 'x')
+
 
   // Facade relief: horizontal banding and corner pilasters. A flat plaster slab
   // has no scale cue from outside, so the building read as an untextured box.
@@ -645,7 +646,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const at = paintingPlacement(spec)
 
     const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(spec.w + 0.14, spec.h + 0.14, 0.06),
+      new THREE.BoxGeometry(spec.w + 0.14, spec.h + 0.14, FRAME_D),
       stdMat(0x6f5c45, { rough: 0.6 }),
     )
     frame.position.set(at.frame.x, at.frame.y, at.frame.z)
@@ -656,7 +657,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       new THREE.BoxGeometry(spec.w + 0.04, spec.h + 0.04, 0.02),
       stdMat(0xece5d8, { rough: 0.9 }),
     )
-    matte.position.set(at.canvas.x, at.canvas.y, at.canvas.z)
+    matte.position.set(at.matte.x, at.matte.y, at.matte.z)
     matte.rotation.y = at.ry
     group.add(matte)
 
@@ -1233,18 +1234,22 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   // recessed ceiling panels in a grid, each with a fixture and a point light
   const streaks: THREE.Mesh[] = []
-  for (const cz of [-10, -5.5, -1, 6.5, 10.5]) {
+  // Ceiling at 4.3 m, not 3.3: the old height cut straight through the Kanban
+  // board, which reaches 4.25 m. A 4.3 m ceiling also reads as a loft office.
+  // z=-10 omitted: that row sat directly in front of the Kanban board and read
+  // as a beam cutting through it.
+  for (const cz of [-5.5, -1, 6.5, 10.5]) {
     const housing = box(FLOOR.width - 1.6, 0.12, 0.42, 0xd9dfe4, { metal: 0.25, rough: 0.5 })
-    housing.position.set(0, 3.3, cz)
+    housing.position.set(0, CEILING_Y, cz)
     group.add(housing)
     const panel = box(FLOOR.width - 2.0, 0.04, 0.3, 0xffffff, { emissive: 0xfff4e0, ei: 1 })
-    panel.position.set(0, 3.23, cz)
+    panel.position.set(0, CEILING_Y - 0.07, cz)
     group.add(panel)
     streaks.push(panel)
     // One light per ceiling row: 25 point lights measurably starved the frame
     // budget for no visible gain, since the emissive panel already reads as lit.
     const l = new THREE.PointLight(0xfff6e6, 0.55, 22)
-    l.position.set(0, 3.0, cz)
+    l.position.set(0, CEILING_Y - 0.3, cz)
     group.add(l)
   }
 
@@ -1313,22 +1318,52 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const b = box(w, h, d, color, { rough: 0.9 })
     b.position.set(x, h / 2, z)
     streetGroup.add(b)
-    // window grid so the facade is not a blank slab
+
+    // Window grid on ALL FOUR faces. The first version only glazed the face on
+    // the outward side of the group, so most neighbours read as blank slabs, and
+    // the panes were offset by a whole half-depth instead of sitting on the wall.
+    const winMat = stdMat(0x8fb6cf, { emissive: 0x6f9cbb, ei: 0.5 })
+    const frameMat2 = stdMat(0x6b7681, { metal: 0.2, rough: 0.6 })
     const rows = Math.max(2, Math.floor(h / 3))
-    const cols = Math.max(2, Math.floor(w / 2.4))
-    const winMat = stdMat(0x8fb6cf, { emissive: 0x6f9cbb, ei: 0.35 })
+    const colsX = Math.max(2, Math.floor(w / 2.6)) // windows along the X faces
+    const colsZ = Math.max(2, Math.floor(d / 2.6)) // windows along the Z faces
+
+    const pane = (px: number, py: number, pz: number, alongX: boolean) => {
+      const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(alongX ? 1.3 : 0.08, 1.6, alongX ? 0.08 : 1.3),
+        frameMat2,
+      )
+      frame.position.set(px, py, pz)
+      streetGroup.add(frame)
+      const glass = new THREE.Mesh(
+        new THREE.BoxGeometry(alongX ? 1.1 : 0.05, 1.4, alongX ? 0.05 : 1.1),
+        winMat,
+      )
+      glass.position.set(px, py, pz)
+      streetGroup.add(glass)
+    }
+
     for (let r = 1; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const win = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 0.06), winMat)
-        win.position.set(
-          x - w / 2 + 1.2 + c * (w / cols),
-          1.8 + r * (h / rows),
-          z + (d / 2 + 0.04) * (z > 0 ? 1 : -1),
-        )
-        streetGroup.add(win)
+      const py = 1.6 + r * (h / rows)
+      // north and south faces
+      for (let c = 0; c < colsX; c++) {
+        const px = x - w / 2 + (w / colsX) * (c + 0.5)
+        pane(px, py, z - d / 2 - 0.06, true)
+        pane(px, py, z + d / 2 + 0.06, true)
+      }
+      // east and west faces
+      for (let c = 0; c < colsZ; c++) {
+        const pz = z - d / 2 + (d / colsZ) * (c + 0.5)
+        pane(x - w / 2 - 0.06, py, pz, false)
+        pane(x + w / 2 + 0.06, py, pz, false)
       }
     }
+    // roof parapet so the skyline is not a bare box
+    const parapet = box(w + 0.4, 0.5, d + 0.4, 0x76808a, { rough: 0.9 })
+    parapet.position.set(x, h + 0.25, z)
+    streetGroup.add(parapet)
   }
+
   building(-26, -14, 12, 10, 13, 0x8e9aa6)
   building(27, -12, 14, 10, 9, 0x9aa39c)
   building(-30, 14, 10, 8, 7, 0xa39d94)
@@ -1342,14 +1377,19 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   streetGroup.add(kerb)
 
   for (const lx of [-16, 16]) {
-    const post = cyl(0.07, 0.09, 5.0, 0x6d7378, 8, 0.5)
-    post.position.set(lx, 2.5, HALF_D + 10.5)
+    // On the sidewalk, near the kerb, not in the traffic lane.
+    const lampZ = HALF_D + 6.4
+    const post = cyl(0.07, 0.09, 5.4, 0x6d7378, 8, 0.5)
+    post.position.set(lx, 2.7, lampZ)
     streetGroup.add(post)
-    const head = box(1.1, 0.14, 0.3, 0x6d7378, { metal: 0.5 })
-    head.position.set(lx + 0.45, 4.95, HALF_D + 10.5)
+    const arm = box(0.14, 0.1, 1.2, 0x6d7378, { metal: 0.5 })
+    arm.position.set(lx, 5.3, lampZ + 0.5)
+    streetGroup.add(arm)
+    const head = box(0.6, 0.14, 0.34, 0x6d7378, { metal: 0.5 })
+    head.position.set(lx, 5.24, lampZ + 1.05)
     streetGroup.add(head)
-    const lamp = new THREE.PointLight(0xfff0cf, hour >= 18 || hour < 6 ? 0.9 : 0.1, 16)
-    lamp.position.set(lx + 0.9, 4.8, HALF_D + 10.5)
+    const lamp = new THREE.PointLight(0xfff0cf, hour >= 18 || hour < 6 ? 1.0 : 0.1, 18)
+    lamp.position.set(lx, 5.05, lampZ + 1.05)
     streetGroup.add(lamp)
   }
 
@@ -1396,7 +1436,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const PED_COLORS = [0xc9553f, 0x3f6fc9, 0x4f9a63, 0xd8a83f, 0x8a5fc9, 0x3fa8a8]
   for (let i = 0; i < 6; i++) {
     const { g, legs } = makeWalker(PED_COLORS[i % PED_COLORS.length])
-    const sidewalkZ = HALF_D + 11.6
+    // Sidewalk band: from the building face out to the kerb at HALF_D+9.2,
+    // NOT the road (which starts at HALF_D+9.5). Two rows so it reads as a path.
+    const sidewalkZ = HALF_D + (i % 2 === 0 ? 3.4 : 6.6)
     const from = -34 + i * 11
     g.position.set(from, 0, sidewalkZ)
     streetGroup.add(g)
@@ -1441,7 +1483,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const forward = i % 2 === 0
     const c = makeVehicle(CAR_COLORS[i % CAR_COLORS.length])
     const z = forward ? LANE_NORTH : LANE_SOUTH
-    c.rotation.y = forward ? Math.PI / 2 : -Math.PI / 2
+    // The body's length is its LOCAL X. The lane runs along world X, so a car
+    // travelling east needs no rotation and one travelling west is turned 180°.
+    // ±PI/2 (the first attempt) drove them sideways down the road.
+    c.rotation.y = forward ? 0 : Math.PI
     const x0 = forward ? -46 - i * 14 : 46 + i * 14
     const x1 = forward ? 46 + i * 8 : -46 - i * 8
     c.position.set(x0, 0, z)
