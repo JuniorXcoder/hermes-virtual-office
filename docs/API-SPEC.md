@@ -179,14 +179,84 @@ Releases the worker's claim on the task.
 
 ## 6. `GET /api/hermes/meeting`
 
+Everything the meeting picker needs, in one request.
+
 ```json
-{ "configured": true, "meetings": [ { "id": "m_1", "topic": "…", "state": "running" } ] }
+{
+  "configured": true,
+  "live": [ { "id": "m_1", "topic": "…", "state": "running" } ],
+  "active": "m_1",
+  "archived": [
+    {
+      "id": "m1790411341397",
+      "topic": "meeting dummy",
+      "startedAt": "2026-09-26",
+      "participants": ["lulu", "risko"],
+      "moderator": "lulu",
+      "mode": "auto",
+      "turnCount": 7,
+      "preview": "**lulu** (opening r1): …",
+      "archived": true
+    }
+  ]
+}
 ```
 
-`configured` is `Boolean(AI_BASE_URL && AI_API_KEY)`. When `false`, the UI disables
-the meeting button instead of letting the user start something that cannot run.
+- `configured` is `Boolean(AI_BASE_URL && AI_API_KEY)`. When `false` the UI says so
+  instead of letting the user start something that cannot run.
+- `live` are meetings in this process. `state` is `queued | running | done | error | idle`.
+- `active` is the id holding the single execution slot, or `null`. A second start
+  queues behind it.
+- `archived` are markdown transcripts on disk under `DATA_DIR/meetings`, newest
+  first. Reading is tolerant: a hand-edited or unparseable file yields fewer fields
+  rather than failing the request, and one bad file never empties the list.
 
-Meeting `state` is one of `queued`, `running`, `done`, `failed`.
+### `GET /api/hermes/meeting?id=<meetingId>`
+
+Returns one archived transcript verbatim: `{ "id": "…", "body": "# topic…" }`.
+`404 invalid_request` when the id is not on disk.
+
+---
+
+## 5b. `GET /api/hermes/agents`
+
+The spawn/kill menu.
+
+```json
+{
+  "available": [
+    { "name": "lulu", "total": 2, "inOffice": true,  "reason": null },
+    { "name": "risko", "total": 1, "inOffice": false, "reason": "killed" }
+  ],
+  "killed": ["risko"]
+}
+```
+
+`available` is every Hermes profile with its task count; `inOffice` says whether it
+is currently shown in the room. `reason` is `killed` (removed here), `unknown`
+(absent for another reason), or `null`.
+
+## 5c. `POST /api/hermes/agents`
+
+```json
+{ "action": "kill", "name": "risko" }
+```
+
+- `action`: `"spawn"` or `"kill"` (required)
+- `name`: must be a profile the install knows (required)
+
+Responses:
+
+- `200` → `{ "success": true, "action", "name", "changed": true, "killed": [...] }`.
+  `changed` is `false` when the profile was already in the requested state.
+- `400 invalid_request` → unknown action, missing name, or `profil "x" tidak dikenal`
+- `502 action_failed` → the CLI failed while listing profiles
+
+**This changes office membership only.** Killing a profile removes its avatar; its
+tasks stay on the board, and `GET /api/hermes/tasks` still reports them. The
+kill-list lives in memory for the life of the server process — a restart restores
+everyone. Persisting it would mean writing office state into the Hermes install,
+which this app never does.
 
 ---
 
