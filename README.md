@@ -132,13 +132,13 @@ Hermes Virtual Office is designed with clean boundary layers:
 │                   Browser Client                       │
 │    Next.js UI + Three.js 3D Isometric View + HUD      │
 └──────────────────────────┬─────────────────────────────┘
-                           │ HTTP / SSE
+                           │ HTTP
 ┌──────────────────────────▼─────────────────────────────┐
 │                 Next.js App Server                     │
-│  ├── /api/hermes/sync       (SSE Realtime Poller)      │
-│  ├── /api/hermes/tasks      (Kanban Task CRUD)         │
-│  ├── /api/hermes/chat       (Direct & Group Chat)      │
-│  └── /api/hermes/meeting    (Meeting Room Orchestrator)│
+│  ├── /api/hermes/tasks        (board snapshot)         │
+│  ├── /api/hermes/tasks/create (create + dispatch)      │
+│  ├── /api/hermes/tasks/{id}   (log tail; steer/cancel) │
+│  └── /api/hermes/meeting      (Meeting Room Orchestrator)│
 └──────────────────────────┬─────────────────────────────┘
                            │
              ┌─────────────┴─────────────┐

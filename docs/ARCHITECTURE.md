@@ -31,15 +31,17 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |                                                                               |
 |  +------------------------------------v------------------------------------+  |
 |  |                       API Route Handlers                                |  |
-|  |  • /api/hermes/sync       (SSE Realtime Event Stream)                   |  |
-|  |  • /api/hermes/tasks      (Kanban Task CRUD)                            |  |
-|  |  • /api/hermes/meeting    (Multi-Agent Meeting Orchestration)           |  |
-|  |  • /api/hermes/chat       (Direct & Group Messaging)                    |  |
+|  |  • GET  /api/hermes/tasks         (board snapshot: tasks + agents)      |  |
+|  |  • POST /api/hermes/tasks/create  (create and dispatch a task)          |  |
+|  |  • GET  /api/hermes/tasks/{id}    (run history + log tail)              |  |
+|  |  • POST /api/hermes/tasks/{id}    (steer or cancel a running task)      |  |
+|  |  • GET  /api/hermes/meeting       (configured flag + meeting list)      |  |
+|  |  • POST /api/hermes/meeting       (start a simulated meeting)           |  |
 |  +------------------------------------^------------------------------------+  |
 |                                       |                                       |
 |  +------------------------------------v------------------------------------+  |
-|  |                    Hermes Client Adapter Layer                          |  |
-|  |  Interface: IHermesClient (getTasks, dispatchTask, getProfiles)         |  |
+|  |                 Hermes CLI adapter (src/lib/hermes/kanban.ts)           |  |
+|  |  spawns:  hermes kanban [--board B] <args> --json                       |  |
 |  +---------------------+-------------------------------+-------------------+  |
 |                        |                               |                      |
 +------------------------|-------------------------------|----------------------+
@@ -204,16 +206,17 @@ The meeting subsystem handles multi-agent discussions safely without tripping up
 
 ---
 
-## 6. Realtime Synchronization & SSE Protocol
+## 6. Synchronisation: polling, not SSE
 
-The client maintains a single Server-Sent Events (SSE) connection to `/api/hermes/sync`:
+There is **no** event stream. The client polls `GET /api/hermes/tasks` every
+`NEXT_PUBLIC_POLL_MS` (default 4000 ms) and replaces the store snapshot.
 
-- **Heartbeat**: Sent every 15 seconds (`: ping`).
-- **`tasks_update`**: Dispatched on Kanban status change.
-- **`agent_activity`**: Dispatched when an agent starts a command or tool call.
-- **`meeting_turn`**: Emitted during live meeting speech.
+Polling is a deliberate choice rather than a shortcut: the server's only channel to
+Hermes is the CLI, which has no subscription mode. An SSE endpoint would have to be
+fed by a poller anyway, and would then be a second source of truth to keep in step
+with the first — strictly more moving parts for the same data.
 
-The client store updates in memory without forcing full component re-renders.
+The cost is bounded: one request per interval per open tab, against a local CLI.
 
 ---
 
@@ -221,15 +224,14 @@ The client store updates in memory without forcing full component re-renders.
 
 ### 7.1. Intip Layar Monitor (Live Screen Peeking)
 - **Trigger**: Click directly on an active PC monitor on any desk, or click "Peek Screen" in the agent's popup card.
-- **Component**: `<TerminalPeekerModal />`
-- **Mechanism**: Streams stdout, commands executed, tool calls, and git diff snapshots from the agent's live run history via `/api/hermes/tasks/[id]/runs`.
+- **Component**: `<PeekPanel />`
+- **Mechanism**: `GET /api/hermes/tasks/{id}` returns the run history and a bounded log tail (the CLI's `--tail`, so a chatty task cannot stream without limit).
 
 ### 7.2. Intervensi Cepat ("Tegur Meja" / Quick Steer)
 - **Trigger**: Hover over or click an agent at their workstation to open the Desk Action Drawer.
 - **Actions**:
-  - `Steer Task`: Submit mid-flight guidance without interrupting the session process (`POST /api/hermes/tasks/[id]/steer`).
-  - `Cancel / Stop`: Gracefully stop a runaway process or stuck loop.
-  - `Reassign`: Hand off the current task to another idle agent in the room.
+  - `Steer`: appends a comment the worker picks up mid-flight (`POST /api/hermes/tasks/{id}`, `action: "steer"`).
+  - `Cancel`: releases the worker's claim so a stuck loop stops (`action: "cancel"`). A task that is not running answers `409 not_running` — correct behaviour reported honestly, not an error.
 
 ### 7.3. Pair Programming & Reviewer Walk
 - **Trigger**: Task lifecycle moves to `status: "review"`.

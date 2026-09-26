@@ -26,14 +26,16 @@ We are committed to providing a welcoming, constructive, and inclusive environme
    ```
 
 3. **Configure Environment for Development**:
-   To test without running a live Hermes gateway, use the built-in `mock` driver:
    ```bash
    cp .env.example .env.local
    ```
-   Set in `.env.local`:
-   ```env
-   HERMES_DRIVER=mock
-   ```
+   Set at minimum `HERMES_BIN` to your `hermes` executable — the board is read
+   through its CLI, so the office cannot run without it. Meetings are optional:
+   leave the `AI_*` variables unset and the 3D office still works, while starting a
+   meeting returns a clear "not configured" error instead of failing halfway.
+
+   `npm run selftest` needs no configuration at all: it only asserts geometry and
+   reachability invariants.
 
 4. **Start the Dev Server**:
    ```bash
