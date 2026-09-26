@@ -225,6 +225,7 @@ console.log('geometry')
     'src/app/api/hermes/tasks/[id]/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/meeting/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/agents/route.ts': ['GET', 'POST'],
+    'src/app/api/hermes/cron/route.ts': ['GET', 'POST'],
   }
   const missing: string[] = []
   for (const [file, methods] of Object.entries(routes)) {

@@ -908,3 +908,57 @@ always expanded, so there was no single "which card is open" concept to build on
 
 The create form now clears its fields after a successful start, so opening it again
 does not silently re-use the previous topic and participants.
+
+---
+
+## 22. Cron management, and why its reads come from two different places
+
+`hermes cron list` has **no `--json` mode** — the same gap as `hermes profile list`.
+Parsing a human table would break on a column reorder or a long job name, and the
+office would silently show the wrong schedule, which is worse than showing nothing.
+
+So reads are split by what is stable:
+
+- **Jobs** come from `$HERMES_HOME/cron/jobs.json`. Its shape (`{jobs: [...],
+  updated_at}`) is fixed, the CLI writes it, and a job object carries everything the
+  panel needs: schedule, enabled state, `next_run_at`, `last_status`,
+  `failure_streak`, `deliver`, `repeat`.
+- **Executions** come from `hermes cron runs`, because that table's shape is the
+  CLI's business and it already offers `--limit` to bound the rows.
+
+Writes go through the CLI — `cron create`, `pause`, `resume`, `run`, `remove` — so
+schedule parsing, validation and the lock protocol stay the CLI's job. The schedule
+string is still pattern-checked before it is passed, because it becomes an argv
+entry.
+
+### Two safety rules in the UI, one of them not enforced by the API
+
+1. **New jobs are created paused.** A job created live can fire before anyone has
+   read it back, and the schedule syntax is easy to get wrong. The create form has
+   an explicit "langsung aktif" checkbox.
+2. **Actions need a second click.** The button becomes "Yakin jeda?" in place, and a
+   click anywhere else cancels.
+
+The second rule is a UI courtesy only, and the docs say so: the API cannot tell a
+confirmed click from an unconfirmed one, so anything able to reach
+`POST /api/hermes/cron` can pause or delete a job. Pretending otherwise would be a
+worse kind of documentation than admitting it.
+
+### Verified end to end
+
+```
+GET    (no jobs)        -> jobs: 0, runs: 0
+create                  -> 201, id 86c71c7de2cf, enabled=false, state=paused
+resume                  -> enabled=true, state=scheduled, next=2026-09-27T09:00
+pause                   -> enabled=false, state=paused
+remove                  -> success, job=null; jobs.json back to 0
+GET ?id=unknown         -> 404
+POST action=hapus       -> 400 'action harus salah satu dari: create, pause, …'
+POST id=unknown         -> 400 'job "tidakada" tidak ditemukan'
+POST schedule=''        -> 400 'jadwal wajib diisi'
+POST prompt=''          -> 400 'isi prompt atau script'
+```
+
+The probe job was created paused and deleted; `jobs.json` is back to zero.
+
+Self-test: 16 checks (the route-method assertion now covers `/api/hermes/cron`).

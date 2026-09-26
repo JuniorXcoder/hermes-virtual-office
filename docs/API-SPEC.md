@@ -338,6 +338,85 @@ adding SSE would mean inventing a second source of truth.
 
 ---
 
+## 8b. `GET /api/hermes/cron`
+
+Every scheduled job plus recent executions.
+
+```json
+{
+  "jobs": [
+    {
+      "id": "86c71c7de2cf",
+      "name": "cek rilis harian",
+      "prompt": "…",
+      "schedule": "0 9 * * *",
+      "scheduleKind": "cron",
+      "enabled": true,
+      "state": "scheduled",
+      "nextRunAt": "2026-09-27T09:00:00+07:00",
+      "lastRunAt": null,
+      "lastStatus": null,
+      "lastError": null,
+      "failureStreak": 0,
+      "deliver": "local",
+      "noAgent": false,
+      "script": null,
+      "skills": [],
+      "repeatTimes": null,
+      "repeatCompleted": 0
+    }
+  ],
+  "runs": [
+    { "id": 42, "jobId": "86c71c7de2cf", "status": "success", "source": "scheduler",
+      "startedAt": "2026-09-26 09:00", "finishedAt": "2026-09-26 09:00" }
+  ]
+}
+```
+
+### Why the jobs are read from a file and the runs from the CLI
+
+`hermes cron list` has **no `--json` mode**, so parsing its table would break on a
+column reorder or a long job name and the office would silently show the wrong
+schedule — worse than showing nothing. The job list is read from
+`$HERMES_HOME/cron/jobs.json`, whose shape is stable and which the CLI itself
+writes. Executions come from `hermes cron runs`, where the table shape is the CLI's
+business, not ours; `--limit` bounds the rows.
+
+`GET /api/hermes/cron?id=<jobId>` returns one job and its runs; `404` when the id is
+unknown.
+
+## 8c. `POST /api/hermes/cron`
+
+### Create
+
+```json
+{ "action": "create", "schedule": "0 9 * * *", "prompt": "…", "name": "…", "paused": true }
+```
+
+- `schedule` — `30m`, `every 2h`, or a cron expression. Validated against
+  `^[0-9A-Za-z*/,:\- ]{1,64}$` before it reaches the CLI.
+- `prompt` or `script` — one is required.
+- `paused` — **defaults to `true`**. A job created live can fire before anyone has
+  read it back. Pass `false` to start it immediately.
+
+`201` → `{ "success": true, "id": "86c71c7de2cf", "job": { … } }`.
+
+### Act
+
+```json
+{ "action": "pause", "id": "86c71c7de2cf" }
+```
+
+`action` is one of `pause`, `resume`, `run`, `remove`. `200` →
+`{ "success": true, "action", "id", "job" }` (`job` is `null` for `remove`).
+
+**The endpoint executes what it is told.** The UI asks for a second click before
+acting, but that is a UI courtesy — the API cannot tell a confirmed click from an
+unconfirmed one. Anything able to reach this route can pause or delete a job.
+
+Errors: `400 invalid_request` for an unknown action, a missing id, an unknown job id,
+or a missing/oversized schedule; `502 action_failed` when the CLI fails.
+
 ## 9. Server-side limits worth knowing
 
 - **One meeting at a time per server process.** State lives in memory, so a

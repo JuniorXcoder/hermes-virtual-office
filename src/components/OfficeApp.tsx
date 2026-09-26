@@ -7,6 +7,7 @@ import PeekPanel from './PeekPanel'
 import TaskPanel from './TaskPanel'
 import MeetingPanel from './MeetingPanel'
 import AgentSpawnPanel from './AgentSpawnPanel'
+import CronPanel from './CronPanel'
 import NewTaskDialog from './NewTaskDialog'
 import { startPolling, useOffice } from '@/lib/store'
 import type { OfficeScene } from '@/lib/office/scene'
@@ -26,6 +27,7 @@ export default function OfficeApp() {
   const sceneRef = useRef<OfficeScene | null>(null)
   const [meetOpen, setMeetOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
+  const [cronOpen, setCronOpen] = useState(false)
 
   useEffect(() => startPolling(), [])
 
@@ -93,6 +95,9 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setAgentOpen(true)}>
             Agent ({agents.length})
           </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setCronOpen(true)}>
+            Cron
+          </button>
           <div className="vp-seg">
             <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
             <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>2D</button>
@@ -134,6 +139,7 @@ export default function OfficeApp() {
         onClose={() => setAgentOpen(false)}
         onChanged={() => void loadTasks()}
       />
+      <CronPanel open={cronOpen} onClose={() => setCronOpen(false)} />
       <NewTaskDialog />
 
       {error && (

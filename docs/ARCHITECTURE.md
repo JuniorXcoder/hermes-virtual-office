@@ -37,6 +37,8 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |  |  • POST /api/hermes/tasks/{id}    (steer or cancel a running task)      |  |
 |  |  • GET  /api/hermes/meeting       (configured flag + meeting list)      |  |
 |  |  • POST /api/hermes/meeting       (start a simulated meeting)           |  |
+|  |  • GET  /api/hermes/cron          (scheduled jobs + recent runs)        |  |
+|  |  • POST /api/hermes/cron          (create / pause / resume / run / rm)  |  |
 |  +------------------------------------^------------------------------------+  |
 |                                       |                                       |
 |  +------------------------------------v------------------------------------+  |
