@@ -17,6 +17,10 @@ import {
   DESKS,
   DESK_CHAIR,
   DOOR,
+  GARDEN,
+  BOOK_NOOK,
+  PANTRY,
+  PANTRY_STOOLS,
   DART,
   FLOOR,
   CEILING_Y,
@@ -328,6 +332,211 @@ function pavementTexture(base: string, joint: string) {
   })
 }
 
+/** Fine furniture-grade wood: tighter grain, subtle sheen, no plank seams. */
+function deskWoodTexture(base: string, grain: string, edge: string) {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(131)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    // BROAD tonal bands FIRST. Measured: fine lines alone retain only ~10% of
+    // their contrast after mipmapping (512 -> 64 px averaged them away), which is
+    // exactly why the desk read as a solid colour on screen despite the texture
+    // being present. Wide bands survive downsampling at ~80%, so they carry the
+    // grain that the eye actually sees.
+    for (let b = 0; b < 16; b++) {
+      c.strokeStyle = b % 3 === 0 ? edge : grain
+      c.globalAlpha = 0.16 + rand() * 0.2
+      c.lineWidth = 7 + rand() * 16
+      const y0 = rand() * s
+      c.beginPath()
+      c.moveTo(0, y0)
+      for (let x = 0; x <= s; x += 16) {
+        c.lineTo(x, y0 + Math.sin((x + b * 47) * 0.006) * (4 + rand() * 5))
+      }
+      c.stroke()
+    }
+    // Long figure lines: furniture veneer runs the length of the top. These carry
+    // the fine detail once the broad bands have established the tone.
+    for (let i = 0; i < 170; i++) {
+      c.strokeStyle = rand() > 0.6 ? grain : edge
+      c.globalAlpha = 0.10 + rand() * 0.22
+      c.lineWidth = rand() > 0.85 ? 2.6 : 1.1
+      const y = rand() * s
+      c.beginPath()
+      c.moveTo(0, y)
+      for (let x = 0; x <= s; x += 24) {
+        c.lineTo(x, y + Math.sin((x + i * 31) * 0.018) * (0.8 + rand() * 1.4))
+      }
+      c.stroke()
+    }
+    // occasional darker figure streak
+    for (let i = 0; i < 16; i++) {
+      c.strokeStyle = edge
+      c.globalAlpha = 0.12 + rand() * 0.14
+      c.lineWidth = 3 + rand() * 4
+      const y = rand() * s
+      c.beginPath()
+      c.moveTo(0, y)
+      c.bezierCurveTo(s * 0.3, y + 6, s * 0.6, y - 6, s, y + 2)
+      c.stroke()
+    }
+    // fine pore speckle so it does not read as flat vinyl
+    for (let i = 0; i < 3400; i++) {
+      c.fillStyle = rand() > 0.5 ? grain : edge
+      c.globalAlpha = 0.06 + rand() * 0.12
+      c.fillRect(rand() * s, rand() * s, 1.2, 1.2)
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Upholstery vinyl: fine pebble grain, low sheen, for task chairs. */
+function vinylTexture(base: string, crease: string) {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(151)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 3600; i++) {
+      const r = 1.2 + rand() * 2.4
+      c.globalAlpha = 0.08 + rand() * 0.16
+      c.fillStyle = rand() > 0.45 ? crease : '#ffffff'
+      c.beginPath()
+      c.ellipse(rand() * s, rand() * s, r, r * 0.7, rand() * Math.PI, 0, Math.PI * 2)
+      c.fill()
+    }
+    // shallow creases where the foam compresses
+    for (let i = 0; i < 16; i++) {
+      c.strokeStyle = crease
+      c.globalAlpha = 0.05 + rand() * 0.06
+      c.lineWidth = 1 + rand() * 1.6
+      const x = rand() * s
+      c.beginPath()
+      c.moveTo(x, 0)
+      c.lineTo(x + (rand() - 0.5) * 30, s)
+      c.stroke()
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/** Short-pile carpet: dense fibre noise plus a faint square nap grid. */
+function carpetTexture(base: string, fibre: string) {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(167)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 26000; i++) {
+      c.globalAlpha = 0.06 + rand() * 0.16
+      c.strokeStyle = rand() > 0.5 ? fibre : '#ffffff'
+      c.lineWidth = 0.8
+      const x = rand() * s
+      const y = rand() * s
+      const a = rand() * Math.PI
+      c.beginPath()
+      c.moveTo(x, y)
+      c.lineTo(x + Math.cos(a) * 3, y + Math.sin(a) * 3)
+      c.stroke()
+    }
+    // tuft rows give the surface a direction
+    c.strokeStyle = fibre
+    c.globalAlpha = 0.04
+    for (let i = 0; i < s; i += 8) {
+      c.beginPath()
+      c.moveTo(0, i)
+      c.lineTo(s, i)
+      c.stroke()
+    }
+    c.globalAlpha = 1
+  })
+}
+
+/**
+ * Monitor content. A flat emissive colour reads as a switched-off panel; this
+ * draws actual UI, so the screens read as running work. Tiles are laid out on a
+ * grid and each one gets a distinct layout (editor, terminal, chart, chat) so a
+ * row of monitors does not look cloned.
+ */
+function screenTexture() {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(193)
+    const accent = ['#5fd0a6', '#7ab8ff', '#ffd479', '#ff9c9c']
+    const cell = s / 2
+    for (let gy = 0; gy < 2; gy++) {
+      for (let gx = 0; gx < 2; gx++) {
+        const ox = gx * cell
+        const oy = gy * cell
+        // window chrome
+        c.fillStyle = '#101a22'
+        c.fillRect(ox, oy, cell, cell)
+        c.fillStyle = '#18242e'
+        c.fillRect(ox, oy, cell, 22)
+        for (let i = 0; i < 3; i++) {
+          c.fillStyle = ['#ff5f56', '#ffbd2e', '#27c93f'][i]
+          c.beginPath()
+          c.arc(ox + 14 + i * 13, oy + 11, 4, 0, Math.PI * 2)
+          c.fill()
+        }
+        const kind = (gx + gy) % 4
+        c.font = '700 10px ui-monospace, monospace'
+        c.fillStyle = accent[(gx + gy) % accent.length]
+        if (kind === 0) {
+          // code editor: line numbers + syntax-coloured bars
+          for (let l = 0; l < 11; l++) {
+            const y = oy + 40 + l * 18
+            c.fillStyle = '#4a5a66'
+            c.fillRect(ox + 10, y, 14, 7)
+            let x = ox + 32
+            const blocks = 2 + Math.floor(rand() * 4)
+            for (let b = 0; b < blocks; b++) {
+              const w = 16 + rand() * 52
+              c.fillStyle = ['#5fd0a6', '#7ab8ff', '#ffd479', '#c9a6ff'][Math.floor(rand() * 4)]
+              c.globalAlpha = 0.75
+              c.fillRect(x, y, w, 7)
+              c.globalAlpha = 1
+              x += w + 7
+            }
+          }
+        } else if (kind === 1) {
+          // terminal: prompt + output lines
+          for (let l = 0; l < 10; l++) {
+            const y = oy + 42 + l * 20
+            c.fillStyle = l % 3 === 0 ? '#5fd0a6' : '#8fb0c4'
+            c.globalAlpha = 0.8
+            c.fillRect(ox + 12, y, 8 + rand() * (cell - 40), 6)
+            c.globalAlpha = 1
+          }
+        } else if (kind === 2) {
+          // dashboard: bars growing from the baseline
+          const base = oy + cell - 18
+          for (let b = 0; b < 9; b++) {
+            const h = 12 + rand() * (cell - 70)
+            c.fillStyle = accent[b % accent.length]
+            c.globalAlpha = 0.7
+            c.fillRect(ox + 14 + b * ((cell - 28) / 9), base - h, (cell - 28) / 9 - 5, h)
+            c.globalAlpha = 1
+          }
+        } else {
+          // chat: alternating message bubbles
+          for (let l = 0; l < 7; l++) {
+            const y = oy + 40 + l * 26
+            const mine = l % 2 === 0
+            const w = 40 + rand() * 70
+            c.fillStyle = mine ? '#2f6f8f' : '#1d2a34'
+            const bx = mine ? ox + cell - w - 12 : ox + 12
+            c.beginPath()
+            c.roundRect(bx, y, w, 18, 6)
+            c.fill()
+            c.fillStyle = '#b9cbd6'
+            c.globalAlpha = 0.7
+            c.fillRect(bx + 7, y + 7, w - 20, 4)
+            c.globalAlpha = 1
+          }
+        }
+      }
+    }
+  })
+}
+
 /** Painted artwork for the wall frames — abstract, deterministic per seed. */
 function artTexture(seed: number) {
   const hues = [212, 24, 148, 340, 44, 268, 190, 8]
@@ -392,6 +601,21 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   metalTex.repeat.set(2, 2)
   const fabricTex = track(fabricTexture('#8fb0d4', '#5f80a4'))
   const fabricTex2 = track(fabricTexture('#8397a4', '#5b6c78'))
+  // Furniture-grade surfaces. The floor wood has 30 cm planks with visible seams —
+  // wrong on a desk top, so furniture gets its own finer veneer. Chairs get vinyl
+  // (office task chairs are not woven), the rug gets pile, and monitors get real
+  // UI content instead of a flat emissive colour.
+  const deskTex = track(deskWoodTexture('#b08a5c', '#7d5f3c', '#5f4728'))
+  // Same canvas drives roughness: wood figure is slightly glossier in the light
+  // bands, so the top catches highlights instead of reading as one flat plane.
+  const deskRough = track(deskWoodTexture('#909090', '#666666', '#3f3f3f'))
+  // One tile per 0.55 m: at a 1 m tile the grain halved in size and mip
+  // filtering washed it out at normal viewing distance.
+  deskTex.repeat.set(3.6, 1.8)
+  const vinylTex = track(vinylTexture('#5f7382', '#38454f'))
+  const carpetTex = track(carpetTexture('#c6b9a2', '#9c907a'))
+  carpetTex.repeat.set(3, 2.6)
+  const screenTex = track(screenTexture())
   const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
   asphaltTex.repeat.set(24, 3)
   const pavementTex = track(pavementTexture('#a3a8ab', '#8d9296'))
@@ -415,8 +639,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   group.add(lobbyFloor)
 
   // meeting room gets a rug, lounge too
-  const rug = (x: number, z: number, w: number, d: number, color: number) => {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stdMat(color, { rough: 0.95 }))
+  const rug = (x: number, z: number, w: number, d: number, color: number, carpet = true) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      carpet
+        ? track(new THREE.MeshStandardMaterial({ color, map: carpetTex, roughness: 1 }))
+        : stdMat(color, { rough: 0.95 }),
+    )
     m.rotation.x = -Math.PI / 2
     m.position.set(x, 0.012, z)
     group.add(m)
@@ -855,6 +1084,195 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     }
   }
 
+  /* ------------------------------------------------ contact shadows (AO-ish) --- */
+  // A cheap stand-in for ambient occlusion: a soft radial darkening under every
+  // large object. Without it the desk legs and chair bases visually detach from
+  // the floor, because the real shadow map is one directional pass and cannot
+  // darken a contact patch.
+  const contactTex = track(
+    (() => {
+      const cv = document.createElement('canvas')
+      cv.width = cv.height = 64
+      const g2 = cv.getContext('2d')!
+      const rg = g2.createRadialGradient(32, 32, 2, 32, 32, 32)
+      rg.addColorStop(0, 'rgba(0,0,0,0.42)')
+      rg.addColorStop(0.55, 'rgba(0,0,0,0.16)')
+      rg.addColorStop(1, 'rgba(0,0,0,0)')
+      g2.fillStyle = rg
+      g2.fillRect(0, 0, 64, 64)
+      const t = new THREE.CanvasTexture(cv)
+      t.colorSpace = THREE.SRGBColorSpace
+      return t
+    })(),
+  )
+  const contactMat = track(
+    new THREE.MeshBasicMaterial({
+      map: contactTex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.85,
+    }),
+  )
+  const contact = (x: number, z: number, w: number, d: number, y = 0.02) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), contactMat)
+    m.rotation.x = -Math.PI / 2
+    m.position.set(x, y, z)
+    m.renderOrder = 1
+    group.add(m)
+  }
+  for (const desk of DESKS) {
+    contact(desk.x, desk.z, 2.6, 1.7)
+    const cs = Math.sin(desk.facing)
+    const cc = Math.cos(desk.facing)
+    contact(desk.x + DESK_CHAIR.z * cs, desk.z + DESK_CHAIR.z * cc, 1.1, 1.1)
+  }
+  contact(LOUNGE.x, LOUNGE.z - 1.45, 4.2, 1.9)
+  contact(LOUNGE.x, LOUNGE.z - 4.9, 3.2, 1.2)
+  contact(CONFERENCE.x, CONFERENCE.z, 5.6, 5.6)
+  for (const f of FOOTPRINTS) {
+    if (f.kind === 'wall' || f.h < 0.7 || f.hw < 0.4) continue
+    contact(f.x, f.z, Math.max(0.9, f.hw * 2.6), Math.max(0.9, f.hd * 2.6))
+  }
+
+  /* ------------------------------------------- activity props (idle life) --- */
+  // Props for the extra idle activities. Without a prop the pose has nothing to
+  // interact with and reads as an agent staring at a wall, so each activity added
+  // to anim.ts gets real furniture here first.
+  {
+    const woodMat = track(
+      new THREE.MeshStandardMaterial({ color: 0x8a6a44, map: deskTex, roughness: 0.55 }),
+    )
+    const leafMat = track(
+      new THREE.MeshStandardMaterial({ color: 0x4f8b55, roughness: 0.85 }),
+    )
+    // Local upholstery material: `sofaFabric` is declared in the lounge block
+    // BELOW this one, and a `const` used above its declaration throws at runtime.
+    const nookFabric = track(
+      new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, roughness: 0.95 }),
+    )
+
+    /* ---- green corner: a raised planter and two pots ---- */
+    const garden = new THREE.Group()
+    garden.position.set(GARDEN.x, 0, GARDEN.z)
+    const boxBody = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.55, 0.56), woodMat)
+    boxBody.position.y = 0.28
+    garden.add(boxBody)
+    // soil
+    const soil = new THREE.Mesh(
+      new THREE.BoxGeometry(2.7, 0.06, 0.44),
+      stdMat(0x3c2f22, { rough: 1 }),
+    )
+    soil.position.y = 0.57
+    garden.add(soil)
+    // a row of leafy plants, sized so they read as herbs rather than trees
+    for (let i = 0; i < 7; i++) {
+      const px = -1.15 + i * 0.383
+      const stem = cyl(0.018, 0.02, 0.24, 0x5d7f45, 8)
+      stem.position.set(px, 0.71, 0)
+      garden.add(stem)
+      for (let l = 0; l < 4; l++) {
+        const leaf = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.09 + (l % 2) * 0.03, 0),
+          leafMat,
+        )
+        const a = (l / 4) * Math.PI * 2
+        leaf.position.set(px + Math.cos(a) * 0.1, 0.82 + (l % 2) * 0.07, Math.sin(a) * 0.08)
+        leaf.scale.set(1, 0.6, 1)
+        garden.add(leaf)
+      }
+    }
+    // two floor pots at the ends
+    for (const px of [-2.0, 2.0]) {
+      const pot = cyl(0.17, 0.13, 0.3, 0xa8674a, 12)
+      pot.position.set(px, 0.15, 0)
+      garden.add(pot)
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), leafMat)
+      bush.position.set(px, 0.46, 0)
+      bush.scale.set(1, 0.85, 1)
+      garden.add(bush)
+    }
+    group.add(garden)
+
+    /* ---- book nook: shelf + armchair + side table ---- */
+    const nook = new THREE.Group()
+    nook.position.set(BOOK_NOOK.x, 0, BOOK_NOOK.z)
+    // shelf against the partition
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.0, 1.9), woodMat)
+    shelf.position.set(-1.9, 1.0, 0)
+    nook.add(shelf)
+    const bookCols = [0xd05f4a, 0x4a72d0, 0xd0a84a, 0x4ad08f, 0x9a4ad0, 0xcfd0cf]
+    for (let sh = 0; sh < 3; sh++) {
+      const y = 0.55 + sh * 0.6
+      const board = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.03, 1.8), stdMat(0xd9cdb8, { rough: 0.8 }))
+      board.position.set(-1.9, y - 0.26, 0)
+      nook.add(board)
+      let bz = -0.82
+      while (bz < 0.82) {
+        const w = 0.05 + (Math.abs(Math.sin(bz * 7)) * 0.05)
+        const h = 0.24 + Math.abs(Math.cos(bz * 5)) * 0.1
+        const book = new THREE.Mesh(
+          new THREE.BoxGeometry(0.26, h, w),
+          stdMat(bookCols[Math.floor(Math.abs(bz * 13)) % bookCols.length], { rough: 0.85 }),
+        )
+        book.position.set(-1.72, y - 0.24 + h / 2, bz + w / 2)
+        nook.add(book)
+        bz += w + 0.012
+      }
+    }
+    // armchair, facing the shelf
+    const chair = new THREE.Group()
+    chair.position.set(0.55, 0, 0)
+    const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.8), nookFabric)
+    cushion.position.y = 0.4
+    chair.add(cushion)
+    const backr = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.62, 0.2), nookFabric)
+    backr.position.set(0, 0.72, 0.36)
+    chair.add(backr)
+    for (const ax of [-0.46, 0.46]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.26, 0.8), nookFabric)
+      arm.position.set(ax, 0.58, 0)
+      chair.add(arm)
+    }
+    nook.add(chair)
+    // side table with a mug
+    const tbl = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.28, 0.05, 14), woodMat)
+    tbl.position.set(1.35, 0.5, 0)
+    nook.add(tbl)
+    const tleg = cyl(0.045, 0.05, 0.5, 0x6b6f73, 10, 0.4)
+    tleg.position.set(1.35, 0.25, 0)
+    nook.add(tleg)
+    const nookMug = cyl(0.05, 0.045, 0.1, 0xeae4d8, 10)
+    nookMug.position.set(1.35, 0.575, 0)
+    nook.add(nookMug)
+    group.add(nook)
+
+    /* ---- pantry stools ---- */
+    for (const sx of PANTRY_STOOLS) {
+      const st = new THREE.Group()
+      st.position.set(sx, 0, PANTRY.z)
+      const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.07, 14), stdMat(0x7c4f34, { rough: 0.7 }))
+      seat.position.y = 0.62
+      st.add(seat)
+      for (const [dx, dz] of [
+        [-0.14, -0.14],
+        [0.14, -0.14],
+        [-0.14, 0.14],
+        [0.14, 0.14],
+      ]) {
+        const lg = cyl(0.022, 0.025, 0.6, 0x5b666e, 8, 0.5)
+        lg.position.set(dx, 0.3, dz)
+        lg.rotation.z = -dx * 0.5
+        lg.rotation.x = dz * 0.5
+        st.add(lg)
+      }
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.014, 6, 16), stdMat(0x5b666e, { metal: 0.5 }))
+      ring.rotation.x = Math.PI / 2
+      ring.position.y = 0.24
+      st.add(ring)
+      group.add(st)
+    }
+  }
+
   /* -------------------------------------------------------------- desks --- */
   const monitors: THREE.Mesh[] = []
   const lamps: THREE.PointLight[] = []
@@ -864,7 +1282,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     d.position.set(desk.x, 0, desk.z)
     d.rotation.y = desk.facing
 
-    const top = box(2.0, 0.07, 1.0, pal.deskTop, { rough: 0.45 })
+    const top = new THREE.Mesh(
+      new THREE.BoxGeometry(2.0, 0.07, 1.0),
+      track(
+        new THREE.MeshStandardMaterial({
+          color: pal.deskTop,
+          map: deskTex,
+          roughnessMap: deskRough,
+          roughness: 0.5,
+          metalness: 0.04,
+        }),
+      ),
+    )
     top.position.y = 0.72
     d.add(top)
     const skirt = box(1.9, 0.5, 0.08, 0xc9d2d8, { rough: 0.6 })
@@ -890,9 +1319,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const screen = new THREE.Mesh(
       new THREE.PlaneGeometry(0.86, 0.48),
       new THREE.MeshStandardMaterial({
-        color: pal.screen,
-        emissive: 0x0d3b28,
-        emissiveIntensity: 1.1,
+        color: 0xffffff,
+        map: screenTex,
+        emissive: 0xffffff,
+        emissiveMap: screenTex,
+        emissiveIntensity: 0.85,
         side: THREE.DoubleSide,
       }),
     )
@@ -921,10 +1352,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // faces the monitor by construction
     const chair = new THREE.Group()
     chair.position.set(DESK_CHAIR.x, 0, DESK_CHAIR.z)
+    // Task chairs are vinyl/foam, not woven fabric: the weave map read as cloth.
     const chairFabric = new THREE.MeshStandardMaterial({
       color: pal.chair,
-      map: fabricTex2,
-      roughness: 0.85,
+      map: vinylTex,
+      roughness: 0.62,
     })
     const seat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.07, 0.54), chairFabric)
     seat.position.y = 0.47

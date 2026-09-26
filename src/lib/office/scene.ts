@@ -18,6 +18,10 @@ import {
   DESKS,
   DOOR,
   KANBAN_BOARD,
+  GARDEN,
+  BOOK_NOOK,
+  PANTRY_STOOLS,
+  PANTRY,
   DART,
   LOUNGE,
   ROOMS,
@@ -318,16 +322,27 @@ export function createScene(
   // Idle lounging spots. Each MUST be walkable — `nav.blocked()` validates them
   // at startup and drops any that land inside furniture, so an agent can never
   // be assigned a destination it cannot reach.
+  // Each entry pairs a POSITION with the pose that belongs there, and the prop at
+  // that position exists in build.ts. A pose without its prop (or a spot inside
+  // furniture) reads as an agent staring at a blank wall.
   const IDLE_SPOTS = [
-    { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa' as Activity },
+    { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa' as Activity, seated: true },
     { x: DART.x - 2.6, z: DART.z + 0.4, act: 'dart' as Activity },
+    // green corner: stand at the planter's face
+    { x: GARDEN.x, z: GARDEN.z + 0.95, act: 'garden' as Activity },
+    { x: GARDEN.x - 1.6, z: GARDEN.z + 0.95, act: 'garden' as Activity },
+    // book nook: sit in the armchair, facing the shelf
+    { x: BOOK_NOOK.x + 0.55, z: BOOK_NOOK.z, act: 'read' as Activity, seated: true },
+    // pantry stools at the counter
+    { x: PANTRY_STOOLS[0], z: PANTRY.z + 0.72, act: 'coffee' as Activity, seated: true },
+    { x: PANTRY_STOOLS[1], z: PANTRY.z + 0.72, act: 'coffee' as Activity, seated: true },
     { x: 15.0, z: -3.4, act: 'idle' as Activity }, // by the water cooler
     { x: -8.6, z: 1.0, act: 'idle' as Activity }, // meeting room doorway
     { x: -4.0, z: 4.6, act: 'idle' as Activity }, // lobby, west side
     { x: 4.0, z: 4.6, act: 'idle' as Activity }, // lobby, east side
     { x: -8.4, z: 6.6, act: 'idle' as Activity }, // reception
     { x: 9.4, z: 0.6, act: 'idle' as Activity }, // lounge entry
-  ].filter((p) => !blocked(p.x, p.z, BODY_R))
+  ].filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
 
   /** Decide activity + destination for the coming frames. */
   function retarget(

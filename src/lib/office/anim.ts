@@ -28,6 +28,9 @@ export type Activity =
   | 'gaming'
   | 'dart'
   | 'sofa'
+  | 'garden'
+  | 'read'
+  | 'coffee'
 
 export type AnimAgent = {
   avatar: Avatar
@@ -162,6 +165,82 @@ function dart(a: AnimAgent, t: number) {
   L.elbow.rotation.x = -30 * D
 }
 
+/** Crouched over the planter, tending plants: snipping and repotting. */
+function garden(a: AnimAgent, t: number) {
+  const av = a.avatar
+  // crouch: hips drop, knees fold forward, torso leans over the soil
+  const k = Math.min(1, a.ease)
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.x = -74 * D * k
+    leg.shoulder.rotation.z = sign * 16 * D * k
+    leg.elbow.rotation.x = 96 * D * k
+  }
+  av.hips.position.y = HIP_STAND - (HIP_STAND - 0.46) * k
+  av.chest.rotation.x = -26 * D
+  av.chest.rotation.y = wave(t, 0.5, a.phase) * 10 * D
+  av.neck.rotation.x = 10 * D
+  av.head.rotation.x = 14 * D
+  av.head.rotation.y = wave(t, 0.65, a.phase) * 14 * D
+  const [L, R] = av.arms
+  // both arms reach down into the bed; one hand works in a small repeated motion
+  const work = wave(t, 2.1, a.phase)
+  L.shoulder.rotation.x = (-52 + work * 5) * D
+  L.shoulder.rotation.z = -14 * D
+  L.elbow.rotation.x = (-64 + work * 8) * D
+  R.shoulder.rotation.x = (-56 - work * 6) * D
+  R.shoulder.rotation.z = 16 * D
+  R.elbow.rotation.x = (-70 - work * 10) * D
+}
+
+/** Seated in the armchair with a book: page turns every few seconds. */
+function read(a: AnimAgent, t: number) {
+  const av = a.avatar
+  sit(a, 0.55, -88, 82)
+  av.chest.rotation.x = -14 * D
+  av.chest.rotation.y = wave(t, 0.28, a.phase) * 5 * D
+  av.neck.rotation.x = 14 * D
+  av.head.rotation.x = 12 * D
+  // slow scan across the page
+  av.head.rotation.y = wave(t, 0.22, a.phase) * 12 * D
+  const [L, R] = av.arms
+  // both forearms up in front of the chest, holding the book open
+  L.shoulder.rotation.x = -34 * D
+  L.shoulder.rotation.z = -22 * D
+  L.elbow.rotation.x = -78 * D
+  R.shoulder.rotation.x = -34 * D
+  R.shoulder.rotation.z = 22 * D
+  R.elbow.rotation.x = -78 * D
+  // a page turn every ~7 s
+  const turn = ((t * 0.14 + a.phase) % 1) < 0.12 ? 1 : 0
+  R.elbow.rotation.x += turn * -10 * D
+  R.shoulder.rotation.z += turn * -8 * D
+}
+
+/** Perched on a pantry stool with a mug: sip, lower, glance around. */
+function coffee(a: AnimAgent, t: number) {
+  const av = a.avatar
+  // stools are counter height, so the hip rides higher than a desk chair
+  sit(a, 0.66, -84, 74)
+  const sip = Math.max(0, wave(t, 0.55, a.phase))
+  av.chest.rotation.x = (-4 - sip * 5) * D
+  av.chest.rotation.y = wave(t, 0.3, a.phase) * 7 * D
+  av.neck.rotation.x = (-2 - sip * 6) * D
+  av.head.rotation.x = (5 - sip * 10) * D
+  av.head.rotation.y = wave(t, 0.4, a.phase) * 16 * D
+  const [L, R] = av.arms
+  // right hand carries the mug up to the mouth on the sip beat
+  R.shoulder.rotation.x = (-40 - sip * 34) * D
+  R.shoulder.rotation.z = (12 + sip * 4) * D
+  R.elbow.rotation.x = (-64 + sip * 46) * D
+  // left hand rests on the counter
+  L.shoulder.rotation.x = -28 * D
+  L.shoulder.rotation.z = -16 * D
+  L.elbow.rotation.x = -52 * D
+}
+
 /** Relaxed sit on the sofa without a controller. */
 function sofa(a: AnimAgent, t: number) {
   const av = a.avatar
@@ -201,6 +280,9 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   gaming,
   dart,
   sofa,
+  garden,
+  read,
+  coffee,
 }
 
 /** Apply the pose for this frame. `dt` ramps `ease` so transitions are not snaps. */
@@ -219,4 +301,14 @@ export function animate(a: AnimAgent, t: number, dt: number) {
   }
 }
 
-export const ACTIVITIES: Activity[] = ['idle', 'typing', 'meeting', 'gaming', 'dart', 'sofa']
+export const ACTIVITIES: Activity[] = [
+  'idle',
+  'typing',
+  'meeting',
+  'gaming',
+  'dart',
+  'sofa',
+  'garden',
+  'read',
+  'coffee',
+]

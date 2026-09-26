@@ -55,8 +55,18 @@ function inOpening(x: number, z: number, pad: number) {
 /**
  * Point test used by the mover. `pad` is the body radius, so callers get
  * "would my centre at (x,z) put my body inside something".
+ *
+ * `opts.allowSeat` ignores chair/sofa footprints. Walking must respect them (you
+ * cannot walk through a sofa) but a SEATED IDLE SPOT is by definition ON a seat,
+ * so validating those with seats solid discarded every sit-down spot — including
+ * the `sofa` spot that had been silently absent long before this change.
  */
-export function blocked(x: number, z: number, pad = BODY_R): boolean {
+export function blocked(
+  x: number,
+  z: number,
+  pad = BODY_R,
+  opts: { allowSeat?: boolean } = {},
+): boolean {
   // Outside the building. Kept inside the wall line (not the wall centre) so the
   // walkable band matches the room the avatar can actually see.
   if (Math.abs(x) > HALF_W - WALL_T - BODY_R * 0.5 || Math.abs(z) > HALF_D - WALL_T - BODY_R * 0.5) return true
@@ -64,6 +74,7 @@ export function blocked(x: number, z: number, pad = BODY_R): boolean {
     if (inside(w, x, z, pad) && !inOpening(x, z, pad)) return true
   }
   for (const p of solidProps) {
+    if (opts.allowSeat && p.kind === 'seat') continue
     if (inside(p, x, z, pad)) return true
   }
   return false

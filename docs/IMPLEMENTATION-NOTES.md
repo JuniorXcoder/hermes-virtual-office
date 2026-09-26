@@ -394,3 +394,66 @@ runtime reported `castShadow: true` on 552 meshes, `shadowMap.enabled` true,
 capture after the fixes had the same model confirm shadows under vehicles, canopy,
 trees and lamps. On this scene the vision pass is unreliable for lighting; the
 runtime values are the ground truth.
+
+---
+
+## 12. Textures, props, and idle life
+
+### The board was inside two walls
+
+The Kanban board was 13.6 m wide in a 12.0 m work bay, so it passed clean through
+both partitions at x = +-6 — the same class of bug as the 7.6 m board on a 4.6 m
+wall. Width is 11.2 m, leaving 0.28 m clear of each partition face, and it is now
+derived from the ROOM rather than chosen by eye. When an object is mounted inside a
+space, both the surface it hangs on AND the enclosure around it are constraints.
+
+### Fine texture detail does not survive mipmapping
+
+The desk grain was present in the map (`map: deskTex`, verified in the served
+bundle) yet the desk read as flat tan. Measured cause: fine lines at 1-2 px lose
+their contrast when the mip chain averages them — a 512 -> 64 downsample retained
+only **10%** of the standard deviation. Adding broad tonal bands (7-23 px wide)
+first raises retention to **75%**, because low-frequency features survive
+downsampling. Contrast was also raised from 0.03-0.07 to 0.10-0.32 alpha, which had
+been invisible past a metre. A second copy of the canvas drives `roughnessMap`, so
+the figure catches highlights instead of reading as one flat plane.
+
+Rule: when a procedural texture must read at normal viewing distance, put the
+signal in low frequencies. High-frequency detail is decoration that the GPU will
+average away.
+
+### Contact shadows are not the same thing as shadows
+
+The directional shadow map cannot darken a contact patch, so desk legs and chair
+bases visually detached from the floor. A radial gradient decal under every large
+solid is a cheap stand-in for ambient occlusion and fixes the read.
+
+### A seat footprint blocks its own seat
+
+`blockingFootprints()` keeps anything above 0.5 m. Chairs and sofas qualify, so
+validating an idle spot with `blocked()` discarded every sit-down spot — including
+the `sofa` spot, which had been silently absent long before this change. `blocked()`
+now takes `opts.allowSeat`: walking still respects seats (you cannot walk through a
+sofa) while a seated spot is allowed to be ON one. Sofas and waiting benches were
+also re-tagged from `prop` to `seat` for the same reason.
+
+### Idle activities need a prop first
+
+`garden`, `read` and `coffee` were added with real furniture before the poses:
+a raised planter with herbs and two floor pots, a book nook (shelf with generated
+spines, armchair, side table) and two pantry stools. A pose with nothing to
+interact with reads as an agent staring at a wall, so the prop is built first and
+the spot is validated against it.
+
+`IDLE_SPOTS` went from 8 to 13 entries, and the seated ones carry `seated: true`
+so they validate with `allowSeat`. Measured: 13/13 walkable (was 10/13 before the
+seat fix, and the sit-down spots were dropped entirely).
+
+### Trap: the vision pass is unreliable for texture and lighting
+
+It reported "flat solid tan, zero grain" on the desk, "no shadows" twice, and
+"flat untextured shading" across the scene while the runtime reported 552
+shadow-casting meshes, a populated `map`, and a 2048 shadow map. After the fixes
+it confirmed grain, contact shadows and grid alignment in the same scene. Use
+runtime values and pixel statistics as ground truth; treat the vision pass as a
+hint, and where it and the runtime disagree, believe the runtime.

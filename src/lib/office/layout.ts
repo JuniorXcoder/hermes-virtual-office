@@ -118,11 +118,14 @@ export function visitorSpot(desk: Desk) {
 // further in. The previous value left it hovering 24 cm off the wall.
 export const BOARD_D = 0.14
 /**
- * The board must FIT the wall it hangs on: the previous 7.6 m height on a 4.6 m
- * wall drove its lower edge 0.9 m through the floor and left its top 2.1 m above
- * the wall line — which is what made it read as detached from the building.
- * Height is now derived from the wall with a 0.35 m reveal top and bottom, and
- * the centre follows from that.
+ * The board must FIT the wall it hangs on, AND the room it is in.
+ *
+ * Two bugs live here. The first: a 7.6 m height on a 4.6 m wall drove its lower
+ * edge 0.9 m through the floor and put its top 2.1 m above the wall line.
+ *
+ * The second, found later: 13.6 m of width inside a 12.0 m work bay, so the board
+ * passed clean through both partitions at x = +-6. Width is now 11.2 m, which
+ * with the 0.24 m frame leaves ~0.28 m clear of each partition face.
  */
 /* ------------------------------------------------------------------ roof -- */
 
@@ -161,8 +164,8 @@ export const KANBAN_BOARD = {
   x: 0,
   y: (CEILING_Y - BOARD_REVEAL * 2) / 2 + BOARD_REVEAL,
   z: -HALF_D + WALL_T / 2 + BOARD_D / 2 + 0.01,
-  w: 13.6,
-  h: Math.min(13.6 * 0.62, CEILING_Y - BOARD_REVEAL * 2),
+  w: 11.2,
+  h: Math.min(11.2 * 0.62, CEILING_Y - BOARD_REVEAL * 2),
 }
 export const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI'] as const
 
@@ -176,6 +179,22 @@ export const CONFERENCE_CHAIRS = {
 export const LOUNGE = { x: 11.6, z: -4.6 }
 export const DART = { x: HALF_W - WALL_T - 0.2, z: -9.4 }
 export const DOOR = { x: 0, z: HALF_D - WALL_T }
+
+/**
+ * Anchors for the additional idle activities. Each names the PROP an agent uses,
+ * not just a coordinate: a pose with nowhere to stand (or nothing to interact
+ * with) reads as an agent staring at a wall.
+ */
+/**
+ * The green corner sits in the LOUNGE by the side glazing, not in the work bay:
+ * at z = -11.5 in the work bay the planter stood directly in front of the Kanban
+ * board and covered its lower edge.
+ */
+export const GARDEN = { x: 11.6, z: -11.6 }
+export const BOOK_NOOK = { x: 0, z: 1.7 }
+export const PANTRY = { x: 14.4, z: 1.0 }
+/** Stools at the pantry counter, where the coffee activity plays. */
+export const PANTRY_STOOLS = [12.5, 15.4] as const
 export const RECEPTION = { x: -8.4, z: 8.4 }
 
 /**
@@ -194,7 +213,7 @@ export const RECEPTION = { x: -8.4, z: 8.4 }
 export const WINDOW_Y = 2.7
 export const WINDOW_H = 1.9
 /** Half-width of the Kanban board plus clearance: no window inside this band. */
-export const BOARD_CLEAR_X = 7.4
+export const BOARD_CLEAR_X = 6.2
 
 const northGroup = (centres: number[], w: number) =>
   centres.map((x) => ({ x, y: WINDOW_Y, w, h: WINDOW_H }))
@@ -450,22 +469,31 @@ export const FOOTPRINTS: Footprint[] = [
   fp('plant-work-b', 5.7, -12.2, 0.4, 0.4, 1.0),
 
   // ---- lounge
-  fp('sofa', LOUNGE.x, LOUNGE.z - 1.45, 1.75, 0.55, 0.85),
+  fp('sofa', LOUNGE.x, LOUNGE.z - 1.45, 1.75, 0.55, 0.85, 'seat'),
   fp('tv-unit', LOUNGE.x, LOUNGE.z - 4.9, 1.3, 0.35, 0.55),
   fp('coffee-table', LOUNGE.x, LOUNGE.z - 2.9, 0.62, 0.62, 0.44, 'desk'),
-  fp('lounge-chair', LOUNGE.x - 2.3, LOUNGE.z - 0.6, 0.45, 0.45, 0.8),
+  fp('lounge-chair', LOUNGE.x - 2.3, LOUNGE.z - 0.6, 0.45, 0.45, 0.8, 'seat'),
   fp('floor-lamp', LOUNGE.x + 2.5, LOUNGE.z - 3.2, 0.3, 0.3, 1.8),
   fp('pantry', 14.4, 1.0, 1.25, 0.35, 0.95),
   fp('cooler', 15.6, -1.6, 0.32, 0.32, 1.5),
   fp('plant-lng-a', 6.9, -12.0, 0.4, 0.4, 1.0),
-  fp('plant-lng-b', 15.9, 2.4, 0.4, 0.4, 1.0),
+  fp('plant-lng-b', 16.5, 2.9, 0.4, 0.4, 1.0),
   fp('bins', 7.0, 3.0, 0.55, 0.25, 0.7),
+
+  // ---- green corner (garden activity) + book nook (read) + pantry stools ---
+  fp('garden-box', GARDEN.x, GARDEN.z, 1.45, 0.28, 0.55),
+  fp('garden-pot-a', GARDEN.x - 2.0, GARDEN.z, 0.3, 0.3, 0.5),
+  fp('garden-pot-b', GARDEN.x + 2.0, GARDEN.z, 0.3, 0.3, 0.5),
+  fp('book-shelf', BOOK_NOOK.x - 1.9, BOOK_NOOK.z, 0.22, 0.95, 2.0),
+  fp('book-chair', BOOK_NOOK.x + 0.55, BOOK_NOOK.z, 0.5, 0.5, 0.85, 'seat'),
+  fp('book-table', BOOK_NOOK.x + 1.35, BOOK_NOOK.z, 0.32, 0.32, 0.5, 'desk'),
+  ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z, 0.24, 0.24, 0.62, 'seat')),
 
   // ---- lobby
   fp('reception', RECEPTION.x, RECEPTION.z, 1.5, 0.45, 1.05, 'desk'),
   fp('reception-chair', RECEPTION.x, RECEPTION.z + 1.15, 0.32, 0.32, 0.5, 'seat'),
-  fp('wait-sofa-a', -6.4, 9.4, 0.9, 0.5, 0.8),
-  fp('wait-sofa-b', 6.4, 9.4, 0.9, 0.5, 0.8),
+  fp('wait-sofa-a', -6.4, 9.4, 0.9, 0.5, 0.8, 'seat'),
+  fp('wait-sofa-b', 6.4, 9.4, 0.9, 0.5, 0.8, 'seat'),
   fp('wait-table', -9.6, 9.6, 0.45, 0.45, 0.45, 'desk'),
   fp('plant-lobby-a', -16.0, 5.4, 0.4, 0.4, 1.0),
   fp('plant-lobby-b', 16.0, 5.4, 0.4, 0.4, 1.0),
