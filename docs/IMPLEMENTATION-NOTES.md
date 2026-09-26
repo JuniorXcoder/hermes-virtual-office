@@ -884,3 +884,27 @@ participant validation returns 400 `invalid_request` for fewer than two known
 participants.
 
 Self-test: 16 checks.
+
+---
+
+## 21. Every meeting is a card, including the running one
+
+A live meeting rendered its entire transcript directly into the list, so the newest
+meeting filled the panel and pushed the older ones out of view. The list is a list:
+one card per meeting, and the transcript appears only once a card is opened.
+
+Both kinds open the same way, which needed one state instead of two:
+
+```ts
+const [opened, setOpened] = useState<{ kind: 'live' | 'archive'; id: string } | null>(null)
+```
+
+- `kind: 'live'` reads from the in-memory meeting the store already holds, so the
+  transcript keeps updating while the meeting runs.
+- `kind: 'archive'` fetches the markdown by id.
+
+Previously the archived transcript used its own `archive` state and the live one was
+always expanded, so there was no single "which card is open" concept to build on.
+
+The create form now clears its fields after a successful start, so opening it again
+does not silently re-use the previous topic and participants.

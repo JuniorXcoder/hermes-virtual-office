@@ -6,11 +6,12 @@ import { useOffice } from '@/lib/store'
 /**
  * Meeting room.
  *
- * Two screens behind one panel: a LIST of meetings (live in this process, plus
- * the transcripts on disk from earlier runs) and the CREATE form. The list comes
- * first because starting a meeting is the rarer action — and because a meeting
- * cannot be started at all until you can see which agents exist, which is what
- * the create screen shows once you open it.
+ * Two screens: a LIST of meeting cards and the CREATE form.
+ *
+ * Every meeting is a CARD, including the one running right now. Nothing expands
+ * inline — a live meeting used to render its whole transcript straight into the
+ * list, so the list was dominated by the newest meeting and the older ones were
+ * pushed off screen. A card opens on click, live or archived.
  */
 export default function MeetingPanel({
   open,
@@ -32,6 +33,12 @@ export default function MeetingPanel({
   const [mode, setMode] = useState('auto')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  /**
+   * Which card is open. A live meeting reads from its in-memory record; an
+   * archived one is fetched by id. `kind` decides which.
+   */
+  const [opened, setOpened] = useState<{ kind: 'live' | 'archive'; id: string } | null>(null)
   const [archive, setArchive] = useState<{ id: string; body: string } | null>(null)
   const [archBusy, setArchBusy] = useState(false)
 
@@ -65,6 +72,9 @@ export default function MeetingPanel({
       const d = await r.json()
       if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
       await refresh()
+      setTopic('')
+      setPicked([])
+      setModerator('')
       setScreen('list')
     } catch (e) {
       setErr((e as Error).message)
@@ -76,6 +86,8 @@ export default function MeetingPanel({
   async function openArchive(id: string) {
     setArchBusy(true)
     setErr(null)
+    setOpened({ kind: 'archive', id })
+    setArchive(null)
     try {
       const r = await fetch(`/api/hermes/meeting?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
       const d = await r.json()
@@ -88,6 +100,11 @@ export default function MeetingPanel({
     }
   }
 
+  function closeCard() {
+    setOpened(null)
+    setArchive(null)
+  }
+
   function download(name: string, text: string) {
     const blob = new Blob([text], { type: 'text/markdown' })
     const url = URL.createObjectURL(blob)
@@ -96,6 +113,32 @@ export default function MeetingPanel({
     a.download = name
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  /** One card in the list. */
+  function Card({
+    title,
+    meta,
+    highlight,
+    onClick,
+    disabled,
+  }: {
+    title: string
+    meta: string
+    highlight?: boolean
+    onClick: () => void
+    disabled?: boolean
+  }) {
+    return (
+      <button
+        className={`vp-meeting-row ${highlight ? 'on' : ''}`}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        <b>{title}</b>
+        <i>{meta}</i>
+      </button>
+    )
   }
 
   return (
@@ -118,114 +161,139 @@ export default function MeetingPanel({
         {err && <div className="vp-err">{err}</div>}
 
         {screen === 'list' ? (
-          <>
-            {/* ---- the transcript the user just opened ---- */}
-            {archive ? (
-              <>
-                <button className="vp-chip-btn" onClick={() => setArchive(null)}>
-                  ← Daftar rapat
-                </button>
-                <div className="vp-sub">TRANSKRIP · {archive.id}</div>
-                <pre className="vp-pre">{archive.body}</pre>
-                <button
-                  className="vp-btn vp-btn-ghost"
-                  onClick={() => download(`rapat-${archive.id}.md`, archive.body)}
-                >
-                  Unduh
-                </button>
-              </>
-            ) : (
-              <>
-                <button className="vp-btn" onClick={() => setScreen('new')}>
-                  + Buat rapat baru
-                </button>
-                {!configured && (
-                  <div className="vp-note">
-                    LLM belum dikonfigurasi — rapat tidak bisa dimulai. Isi{' '}
-                    <code>AI_BASE_URL</code> dan <code>AI_API_KEY</code> di{' '}
-                    <code>.env.local</code>.
-                  </div>
-                )}
+          opened ? (
+            /* ------------------------------------------------ opened card ---- */
+            <>
+              <button className="vp-chip-btn" onClick={closeCard}>
+                ← Daftar rapat
+              </button>
 
-                {/* ---- live in this process ---- */}
-                {meeting && (
+              {opened.kind === 'archive' ? (
+                archBusy || !archive ? (
+                  <div className="vp-muted">memuat transkrip…</div>
+                ) : (
                   <>
-                    <div className="vp-sub">
-                      SEDANG BERJALAN {live && <span className="vp-live">●</span>}
-                    </div>
+                    <div className="vp-sub">TRANSKRIP · {archive.id}</div>
+                    <pre className="vp-pre">{archive.body}</pre>
                     <button
-                      className={`vp-meeting-row ${live ? 'on' : ''}`}
-                      onClick={() => setArchive(null)}
+                      className="vp-btn vp-btn-ghost"
+                      onClick={() => download(`rapat-${archive.id}.md`, archive.body)}
                     >
-                      <b>{meeting.topic || '(tanpa topik)'}</b>
-                      <i>
-                        {meeting.state} · {meeting.participants.length} peserta ·{' '}
-                        {meeting.turns.length} giliran
-                      </i>
+                      Unduh
                     </button>
-
-                    <div className="vp-sub">GILIRAN</div>
-                    <div className="flex flex-col gap-2">
-                      {meeting.turns.map((t, i) => (
-                        <div
-                          key={i}
-                          className={`vp-turn ${t.speaker === meeting.currentSpeaker && live ? 'talk' : ''}`}
-                        >
-                          <div className="vp-turn-who">
-                            {t.speaker}
-                            <i>
-                              {t.kind}
-                              {t.round ? ` · r${t.round}` : ''}
-                            </i>
-                          </div>
-                          <div className="vp-turn-body">{t.text}</div>
-                        </div>
-                      ))}
-                      {!meeting.turns.length && <span className="vp-muted">belum ada giliran</span>}
-                    </div>
-
-                    {meeting.minutes && (
-                      <>
-                        <div className="vp-sub">NOTULEN</div>
-                        <pre className="vp-pre">{meeting.minutes}</pre>
-                        <button
-                          className="vp-btn vp-btn-ghost"
-                          onClick={() => download(`notulen-${meeting.id}.md`, meeting.minutes)}
-                        >
-                          Unduh notulen
-                        </button>
-                      </>
-                    )}
                   </>
-                )}
+                )
+              ) : !meeting ? (
+                <div className="vp-muted">rapat ini sudah tidak ada di memori</div>
+              ) : (
+                <>
+                  <div className="vp-kv">
+                    <span>topik</span>
+                    <b>{meeting.topic || '(tanpa topik)'}</b>
+                  </div>
+                  <div className="vp-kv">
+                    <span>status</span>
+                    <b>
+                      {meeting.state} · {meeting.phase}
+                      {live && <span className="vp-live"> ●</span>}
+                    </b>
+                  </div>
+                  <div className="vp-kv">
+                    <span>peserta</span>
+                    <b>{meeting.participants.join(', ') || '—'}</b>
+                  </div>
+                  <div className="vp-kv">
+                    <span>giliran</span>
+                    <b>{meeting.currentSpeaker || '—'}</b>
+                  </div>
 
-                {/* ---- on disk, from this or an earlier run ---- */}
-                <div className="vp-sub">RAPAT TERDAHULU ({history.length})</div>
-                <div className="flex flex-col gap-2">
-                  {history.map((h) => (
-                    <button
-                      key={h.id}
-                      className="vp-meeting-row"
-                      disabled={archBusy}
-                      onClick={() => openArchive(h.id)}
-                    >
-                      <b>{h.topic}</b>
-                      <i>
-                        {h.startedAt} · {h.participants.length || '?'} peserta · {h.turnCount} giliran
-                      </i>
-                    </button>
-                  ))}
-                  {!history.length && (
-                    <span className="vp-muted">belum ada rapat tersimpan</span>
+                  <div className="vp-sub">TRANSKRIP ({meeting.turns.length})</div>
+                  <div className="flex flex-col gap-2">
+                    {meeting.turns.map((t, i) => (
+                      <div
+                        key={i}
+                        className={`vp-turn ${
+                          t.speaker === meeting.currentSpeaker && live ? 'talk' : ''
+                        }`}
+                      >
+                        <div className="vp-turn-who">
+                          {t.speaker}
+                          <i>
+                            {t.kind}
+                            {t.round ? ` · r${t.round}` : ''}
+                          </i>
+                        </div>
+                        <div className="vp-turn-body">{t.text}</div>
+                      </div>
+                    ))}
+                    {!meeting.turns.length && (
+                      <span className="vp-muted">belum ada giliran</span>
+                    )}
+                  </div>
+
+                  {meeting.minutes && (
+                    <>
+                      <div className="vp-sub">NOTULEN</div>
+                      <pre className="vp-pre">{meeting.minutes}</pre>
+                      <button
+                        className="vp-btn vp-btn-ghost"
+                        onClick={() => download(`notulen-${meeting.id}.md`, meeting.minutes)}
+                      >
+                        Unduh notulen
+                      </button>
+                    </>
                   )}
+                </>
+              )}
+            </>
+          ) : (
+            /* ------------------------------------------------ the list ------ */
+            <>
+              <button className="vp-btn" onClick={() => setScreen('new')}>
+                + Buat rapat baru
+              </button>
+              {!configured && (
+                <div className="vp-note">
+                  LLM belum dikonfigurasi — rapat tidak bisa dimulai. Isi{' '}
+                  <code>AI_BASE_URL</code> dan <code>AI_API_KEY</code> di{' '}
+                  <code>.env.local</code>.
                 </div>
-              </>
-            )}
-          </>
+              )}
+
+              {meeting && (
+                <>
+                  <div className="vp-sub">
+                    RAPAT AKTIF {live && <span className="vp-live">●</span>}
+                  </div>
+                  <Card
+                    title={meeting.topic || '(tanpa topik)'}
+                    meta={`${meeting.state} · ${meeting.participants.length} peserta · ${meeting.turns.length} giliran`}
+                    highlight={!!live}
+                    onClick={() => setOpened({ kind: 'live', id: meeting.id })}
+                  />
+                </>
+              )}
+
+              <div className="vp-sub">RAPAT TERDAHULU ({history.length})</div>
+              <div className="flex flex-col gap-2">
+                {history.map((h) => (
+                  <Card
+                    key={h.id}
+                    title={h.topic}
+                    meta={`${h.startedAt} · ${h.participants.length || '?'} peserta · ${h.turnCount} giliran`}
+                    disabled={archBusy}
+                    onClick={() => openArchive(h.id)}
+                  />
+                ))}
+                {!history.length && (
+                  <span className="vp-muted">belum ada rapat tersimpan</span>
+                )}
+              </div>
+            </>
+          )
         ) : (
+          /* ---------------------------------------------------- create form -- */
           <>
-            {/* ---- create form. Agents are listed HERE, so the user can see who
-                    is actually available before picking participants. ---- */}
             <label className="vp-sub">TOPIK</label>
             <textarea
               className="vp-input"
@@ -251,7 +319,11 @@ export default function MeetingPanel({
             </div>
 
             <label className="vp-sub">PEMBAWA ACARA</label>
-            <select className="vp-input" value={moderator} onChange={(e) => setModerator(e.target.value)}>
+            <select
+              className="vp-input"
+              value={moderator}
+              onChange={(e) => setModerator(e.target.value)}
+            >
               {picked.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -273,9 +345,7 @@ export default function MeetingPanel({
             >
               {busy ? 'Memulai…' : 'Mulai rapat'}
             </button>
-            {picked.length < 2 && (
-              <div className="vp-muted">pilih minimal 2 peserta</div>
-            )}
+            {picked.length < 2 && <div className="vp-muted">pilih minimal 2 peserta</div>}
           </>
         )}
       </div>
