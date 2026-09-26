@@ -856,3 +856,31 @@ compared against the nearest point on the target rather than its centre when the
 target is a long strip): 7/7 idle spots.
 
 Self-test: 15 checks.
+
+---
+
+## 20. A route handler deleted by a rewrite
+
+Starting a meeting failed with `Failed to execute 'json' on 'Response': Unexpected
+end of JSON input`. That message is the browser's, not the server's: the response
+had a 405 status and an **empty body**, and `res.json()` on nothing throws.
+
+Cause: `src/app/api/hermes/meeting/route.ts` was rewritten to add the history GET
+(`{configured, live, active, archived}`) and only the GET was written. The POST
+handler was not carried over. Nothing caught it:
+
+- TypeScript cannot see a missing HTTP method — a route file with one export is
+  perfectly valid.
+- The build succeeds; the route just answers 405.
+- The UI sends the request and only fails at `res.json()`.
+
+Restored, and there is now a self-test that lists the methods each route must
+export. It is a crude check — it reads the files and greps for the export — but a
+missing handler is invisible to every other tool in the chain, and this is the
+second class of bug in this codebase where a rewrite silently dropped behaviour.
+
+Verified after the fix: `POST` returns 200 with the meeting object, and the
+participant validation returns 400 `invalid_request` for fewer than two known
+participants.
+
+Self-test: 16 checks.

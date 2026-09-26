@@ -212,6 +212,32 @@ console.log('geometry')
   )
 }
 
+// Every route must keep the methods the UI calls.
+//
+// Rewriting a route file to add an endpoint is exactly how the meeting POST was
+// lost: the new GET was written and the existing POST was not carried over, so
+// starting a meeting answered 405 with an empty body — which the browser reports
+// as "Unexpected end of JSON input". A missing method is invisible to typecheck.
+{
+  const routes: Record<string, string[]> = {
+    'src/app/api/hermes/tasks/route.ts': ['GET'],
+    'src/app/api/hermes/tasks/create/route.ts': ['POST'],
+    'src/app/api/hermes/tasks/[id]/route.ts': ['GET', 'POST'],
+    'src/app/api/hermes/meeting/route.ts': ['GET', 'POST'],
+    'src/app/api/hermes/agents/route.ts': ['GET', 'POST'],
+  }
+  const missing: string[] = []
+  for (const [file, methods] of Object.entries(routes)) {
+    const src = readFileSync(new URL('../' + file, import.meta.url), 'utf8')
+    for (const m of methods) {
+      if (!new RegExp(`export\\s+(async\\s+)?function\\s+${m}\\b`).test(src)) {
+        missing.push(`${file} lacks ${m}`)
+      }
+    }
+  }
+  check('every API route keeps the methods the UI calls', missing.length === 0, missing.join(' | '))
+}
+
 /* ---------------------------------------------------------------- movement -- */
 console.log('\nmovement')
 
