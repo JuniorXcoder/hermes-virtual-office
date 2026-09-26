@@ -1,296 +1,248 @@
 # 📡 Hermes Virtual Office — API Specification
 
-This document defines the REST endpoints, Server-Sent Events (SSE) protocol, and data schemas exposed by the Next.js backend.
+Every endpoint below exists in the code and is described from its implementation.
+All routes live under `/api/hermes` and set `dynamic = 'force-dynamic'` — they are
+never statically cached, because the board changes underneath them.
+
+There is no SSE stream and no authentication layer. The browser talks to these
+routes on the same origin, and the server talks to the local `hermes` CLI.
 
 ---
 
-## 1. Authentication & Headers
+## 0. How the server reaches Hermes
 
-Requests between the browser client and Next.js backend are authenticated via standard session cookies or local bearer tokens.
-Outbound requests from Next.js to Hermes Agent use:
+There is no HTTP client to a Hermes API server. The server shells out to the
+official CLI and parses JSON from stdout:
 
-```http
-Authorization: Bearer <HERMES_API_KEY>
-Content-Type: application/json
 ```
+hermes kanban [--board <slug>] <args...> --json
+```
+
+- `HERMES_BIN` (default `hermes`) selects the executable. If it is missing the CLI
+  call fails with a message naming the path it tried.
+- `HERMES_KANBAN_BOARD` pins a board; omitted, the CLI's active board is used.
+- `KANBAN_TIMEOUT_MS` (default `20000`) aborts a call that hangs.
+
+This is deliberate: the CLI is Hermes' stable public surface, so board layout and
+`kanban.db` schema can change without breaking this app.
 
 ---
 
-## 2. Server-Sent Events (SSE) Stream
+## 1. Error shape
 
-### `GET /api/hermes/sync`
+Every failure returns the same envelope, with an HTTP status that matches `status`:
 
-Establishes a persistent realtime event stream for office telemetry.
-
-#### Connection
-```http
-GET /api/hermes/sync HTTP/1.1
-Accept: text/event-stream
-Cache-Control: no-cache
-```
-
-#### Event Payloads
-
-##### 1. `initial_state`
-Sent immediately upon connection with the current snapshot of all office entities.
 ```json
-event: initial_state
-data: {
+{ "error": { "code": "hermes_unavailable", "message": "…", "status": 503 } }
+```
+
+| `code` | Status | Meaning |
+|---|---|---|
+| `invalid_request` | 400 | A required field is missing or malformed |
+| `not_running` | 409 | Cancel was requested for a task that is not running |
+| `meeting_failed` | 409 | A meeting could not start (see `message`) |
+| `peek_failed` | 502 | Runs/logs could not be read from the CLI |
+| `action_failed` | 502 | The CLI rejected the action |
+| `dispatch_failed` | 502 | Task creation failed |
+| `hermes_unavailable` | 503 | The CLI could not be reached or returned an error |
+
+Success responses are never wrapped — they are the payload directly.
+
+---
+
+## 2. `GET /api/hermes/tasks`
+
+The office's single source of truth: every task and the derived agent list.
+
+```json
+{
+  "tasks": [
+    {
+      "id": "t_52abe1e8",
+      "title": "Uji regresi checkout",
+      "status": "running",
+      "assignee": "lulu",
+      "priority": 0,
+      "updatedAt": "2026-09-26T08:14:02.000Z",
+      "createdAt": "2026-09-26T08:02:11.000Z"
+    }
+  ],
   "agents": [
     {
-      "name": "default",
-      "displayName": "Orchestrator",
-      "role": "orchestrator",
-      "status": "running",
-      "deskIndex": 0,
-      "currentTaskId": "t_5ab8c0c8"
+      "name": "lulu",
+      "displayName": "lulu",
+      "role": "qa",
+      "deskIndex": 3,
+      "status": "working",
+      "currentTaskId": "t_52abe1e8"
     }
+  ]
+}
+```
+
+`agents` is **derived**, not stored: `listAgents()` folds the task list into one
+entry per assignee, so an agent exists in the office exactly when it has work.
+
+- `role` comes from `roleFor(name)` — a name heuristic, not a stored field.
+- `deskIndex` is a station slot 0-7, or `null` when the agent has no desk.
+- `status` is `idle | working | review | blocked | meeting | done`, derived from
+  the agent's active task (`running` → `working`, `review` → `review`).
+
+Statuses map to Kanban columns in `board.ts`:
+
+| Hermes status | Column |
+|---|---|
+| `todo`, `triage`, `ready`, `scheduled` | TODO |
+| `running` | JALAN |
+| `review` | REVIEW |
+| `done` | SELESAI |
+| anything else (`blocked`, `archived`) | TODO |
+
+Returns `503 hermes_unavailable` when the CLI fails.
+
+---
+
+## 3. `POST /api/hermes/tasks/create`
+
+Creates a task and (through the CLI) dispatches it.
+
+**Request**
+
+```json
+{ "title": "Ship the release checklist", "assignee": "lulu", "body": "…", "priority": 2 }
+```
+
+`title` and `assignee` are required and non-empty. `title` is truncated to 300
+characters. `priority` is optional and coerced with `Number.isFinite`.
+
+**Responses**
+
+- `201` → `{ "success": true, "task": { … } }`
+- `400 invalid_request` → missing `title` or `assignee`
+- `502 dispatch_failed` → the CLI refused the create
+
+---
+
+## 4. `GET /api/hermes/tasks/{id}`
+
+The **screen peeker**: what a clicked monitor shows.
+
+```json
+{
+  "taskId": "t_52abe1e8",
+  "runs": [
+    { "id": "r_1", "status": "completed", "startedAt": "…", "finishedAt": "…", "outcome": "ok" }
   ],
-  "tasks": [
-    {
-      "id": "t_5ab8c0c8",
-      "title": "Build user auth endpoint",
-      "status": "running",
-      "assignee": "default",
-      "priority": 1,
-      "updatedAt": "2026-09-26T02:30:00Z"
-    }
-  ],
-  "activeMeeting": null
+  "log": "…raw CLI log tail…"
 }
 ```
 
-##### 2. `task_updated`
-Emitted whenever a task status or metadata changes.
-```json
-event: task_updated
-data: {
-  "taskId": "t_5ab8c0c8",
-  "status": "review",
-  "assignee": "risko",
-  "reviewer": "lulu",
-  "updatedAt": "2026-09-26T02:45:12Z"
-}
-```
-
-##### 3. `agent_steer`
-Emitted when a live tool call or console activity starts.
-```json
-event: agent_activity
-data: {
-  "agent": "default",
-  "action": "executing_command",
-  "detail": "npm test -- --coverage",
-  "timestamp": 1790365022000
-}
-```
-
-##### 4. `meeting_turn`
-Emitted during an active meeting when an agent speaks.
-```json
-event: meeting_turn
-data: {
-  "meetingId": "m_17903604",
-  "speaker": "risko",
-  "role": "moderator",
-  "round": 1,
-  "text": "Mari kita bahas skema idempotency pada payment callback.",
-  "timestamp": 1790365035000
-}
-```
+`runs` and `log` are fetched in parallel and individually tolerated: a missing run
+history or an unreadable log yields an empty value rather than failing the request.
+Returns `502 peek_failed` only when both fail at the transport level.
 
 ---
 
-## 3. Kanban Task Management
+## 5. `POST /api/hermes/tasks/{id}`
 
-### `GET /api/hermes/tasks`
-Lists tasks from the Hermes board with optional filtering.
+Desk intervention — the "tegur meja" controls. Two actions, discriminated by
+`action`.
 
-#### Query Parameters
-- `status` *(optional)*: `todo` | `ready` | `running` | `review` | `done` | `blocked`
-- `assignee` *(optional)*: Agent profile name (e.g. `risko`)
-- `limit` *(optional)*: Default `50`, max `200`
+### `action: "steer"`
 
-#### Response (`200 OK`)
+Appends a comment to the task; on a running task Hermes delivers it to the worker.
+
 ```json
-{
-  "tasks": [
-    {
-      "id": "t_c108f582",
-      "title": "Implement QRIS webhook handler",
-      "status": "running",
-      "assignee": "risko",
-      "priority": 2,
-      "body": "Ensure unique index on (invoice_id, callback_id).",
-      "createdAt": "2026-09-26T01:00:00Z",
-      "updatedAt": "2026-09-26T02:15:00Z"
-    }
-  ],
-  "total": 1
-}
+{ "action": "steer", "message": "Stop looping on the auth test and report the blocker." }
 ```
+
+- `200` → `{ "success": true, "steered": true }`
+- `400 invalid_request` → `message` empty
+- `502 action_failed` → the CLI rejected the comment
+
+### `action: "cancel"`
+
+Releases the worker's claim on the task.
+
+```json
+{ "action": "cancel" }
+```
+
+- `200` → `{ "success": true, "released": true }`
+- `409 not_running` → the task is not currently running. This is **correct**
+  behaviour being reported honestly, not a server fault: the CLI refuses to reclaim
+  a task that has nothing to reclaim. The matcher accepts `cannot reclaim`,
+  `not running`, or `unknown id` from stderr.
+- `502 action_failed` → any other CLI failure
 
 ---
 
-### `POST /api/hermes/tasks`
-Dispatches a new task into the Hermes Kanban queue.
+## 6. `GET /api/hermes/meeting`
 
-#### Request Body
 ```json
-{
-  "title": "Write unit tests for refund idempotency",
-  "assignee": "lulu",
-  "priority": 1,
-  "body": "Coverage threshold must be at least 90% across edge cases.",
-  "parents": []
-}
+{ "configured": true, "meetings": [ { "id": "m_1", "topic": "…", "state": "running" } ] }
 ```
 
-#### Response (`201 Created`)
-```json
-{
-  "success": true,
-  "task": {
-    "id": "t_78a1bc23",
-    "title": "Write unit tests for refund idempotency",
-    "status": "ready",
-    "assignee": "lulu"
-  }
-}
-```
+`configured` is `Boolean(AI_BASE_URL && AI_API_KEY)`. When `false`, the UI disables
+the meeting button instead of letting the user start something that cannot run.
+
+Meeting `state` is one of `queued`, `running`, `done`, `failed`.
 
 ---
 
-### `POST /api/hermes/tasks/[id]/steer`
-Injects mid-flight guidance into a running agent task.
+## 7. `POST /api/hermes/meeting`
 
-#### Request Body
+Starts a meeting. Participants are **validated against the live agent list**, so a
+stale name from an old page cannot start a meeting with a non-existent agent.
+
+**Request**
+
 ```json
 {
-  "message": "Focus only on postgres schema tests, skip integration tests for now."
+  "topic": "Should we split the auth service?",
+  "participants": ["lulu", "risko"],
+  "moderator": "lulu",
+  "mode": "roundtable"
 }
 ```
 
-#### Response (`200 OK`)
-```json
-{
-  "success": true,
-  "steered": true,
-  "taskId": "t_78a1bc23"
-}
-```
+**Validation performed**
+
+1. `participants` must be an array; every entry is stringified.
+2. Names not in the current agent list are dropped.
+3. Fewer than 2 survivors → `400 invalid_request`
+   (`"pilih minimal 2 peserta yang dikenal"`).
+
+**Responses**
+
+- `200` → `{ "meeting": { … } }`
+- `400 invalid_request` → too few known participants
+- `409 meeting_failed` → the engine refused (already running, provider
+  unconfigured, or a start error)
+
+Only one meeting runs per server; a second start queues behind the first.
 
 ---
 
-## 4. Multi-Agent Meeting Protocol
+## 8. Polling
 
-### `POST /api/hermes/meeting/start`
-Initiates a structured round-table discussion between agents.
+There is no push channel. The client polls `GET /api/hermes/tasks` on an interval
+set by `NEXT_PUBLIC_POLL_MS` (default `4000`). This is a build-time constant, so
+changing it requires a rebuild.
 
-#### Request Body
-```json
-{
-  "topic": "Migrate database from MySQL to PostgreSQL without downtime",
-  "participants": ["default", "risko", "lulu"],
-  "moderator": "default",
-  "mode": "auto",
-  "maxRounds": 2
-}
-```
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `topic` | `string` | Yes | Subject of discussion (10-300 characters) |
-| `participants` | `string[]` | Yes | Array of 2 to 4 agent profile names |
-| `moderator` | `string` | No | Opening speaker. Defaults to first participant |
-| `mode` | `string` | No | `auto` (round-robin), `directed`, or `manual` |
-| `maxRounds` | `number` | No | Default `2`, maximum `3` |
-
-#### Response (`200 OK`)
-```json
-{
-  "meetingId": "meet_179036100",
-  "status": "started",
-  "participants": ["default", "risko", "lulu"],
-  "moderator": "default",
-  "mode": "auto"
-}
-```
+Polling was chosen over SSE because the CLI has no event stream to subscribe to;
+adding SSE would mean inventing a second source of truth.
 
 ---
 
-### `GET /api/hermes/meeting/[id]`
-Retrieves live transcript, speaker turn, and final synthesized minutes.
+## 9. Server-side limits worth knowing
 
-#### Response (`200 OK`)
-```json
-{
-  "id": "meet_179036100",
-  "state": "done",
-  "phase": "minutes",
-  "topic": "Migrate database from MySQL to PostgreSQL without downtime",
-  "currentSpeaker": null,
-  "turns": [
-    {
-      "round": 1,
-      "speaker": "default",
-      "text": "We need zero-downtime replication before switching connection strings."
-    },
-    {
-      "round": 1,
-      "speaker": "risko",
-      "text": "Dual-write middleware is safer than logical replication across heterogenous engines."
-    }
-  ],
-  "minutes": "## 🎯 Decisions\n- Use dual-write adapter pattern.\n\n## 📋 Action Items\n- Risko: Build migration adapter by Monday.\n\n## ⚠️ Risks\n- Partial rollback if target DB connection drops."
-}
-```
-
----
-
-## 5. Direct & Group Chat
-
-### `POST /api/hermes/chat`
-Sends a direct message to one agent or broadcasts to the office group channel.
-
-#### Request Body
-```json
-{
-  "recipient": "risko",
-  "channel": "dm",
-  "message": "Can you check why the RouterOS NAT rule was deleted?"
-}
-```
-
-#### Response (`200 OK`)
-```json
-{
-  "messageId": "msg_8912739",
-  "status": "sent",
-  "timestamp": 1790365200000
-}
-```
-
----
-
-## 6. Error Response Convention
-
-All endpoints return uniform error envelopes:
-
-```json
-{
-  "error": {
-    "code": "agent_busy",
-    "message": "Agent 'risko' is currently participating in an active meeting.",
-    "status": 409
-  }
-}
-```
-
-| HTTP Code | Error Code | Meaning |
-|---|---|---|
-| `400` | `invalid_request` | Missing or malformed parameters |
-| `401` | `unauthorized` | Missing or invalid API key |
-| `404` | `not_found` | Task, meeting, or agent profile not found |
-| `409` | `conflict` | Resource locked or agent already engaged |
-| `503` | `upstream_unavailable` | LLM provider upstream error / timeout |
+- **One meeting at a time per server process.** State lives in memory, so a
+  multi-instance deployment would run one meeting per instance and they would not
+  see each other.
+- **Meeting state is in-memory** and lost on restart. Transcripts and minutes are
+  written to `DATA_DIR` as markdown and survive.
+- **CLI calls are serialised per request**, not globally. Many simultaneous
+  requests mean many child processes.
+- **`taskLog`** reads only a tail (bounded by the CLI's `--tail`) so a chatty task
+  cannot stream unbounded output into the browser.

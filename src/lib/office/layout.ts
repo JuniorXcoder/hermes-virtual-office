@@ -194,7 +194,11 @@ export const GARDEN = { x: 11.6, z: -11.6 }
 export const BOOK_NOOK = { x: 0, z: 1.7 }
 export const PANTRY = { x: 14.4, z: 1.0 }
 /** Stools at the pantry counter, where the coffee activity plays. */
-export const PANTRY_STOOLS = [12.5, 15.4] as const
+// Both stools sit between the counter's ends (13.15 .. 15.65) so an agent has
+// counter in front of it, not a wall.
+export const PANTRY_STOOLS = [13.6, 15.2] as const
+/** Distance from the counter centre out to the stool centre. */
+export const PANTRY_STOOL_GAP = 0.72
 export const RECEPTION = { x: -8.4, z: 8.4 }
 
 /**
@@ -487,7 +491,9 @@ export const FOOTPRINTS: Footprint[] = [
   fp('book-shelf', BOOK_NOOK.x - 1.9, BOOK_NOOK.z, 0.22, 0.95, 2.0),
   fp('book-chair', BOOK_NOOK.x + 0.55, BOOK_NOOK.z, 0.5, 0.5, 0.85, 'seat'),
   fp('book-table', BOOK_NOOK.x + 1.35, BOOK_NOOK.z, 0.32, 0.32, 0.5, 'desk'),
-  ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z, 0.24, 0.24, 0.62, 'seat')),
+  // In FRONT of the counter, not inside it: the counter occupies z +-0.35 around
+  // PANTRY.z, so a stool at the same z was embedded in the cabinet.
+  ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z + PANTRY_STOOL_GAP, 0.24, 0.24, 0.62, 'seat')),
 
   // ---- lobby
   fp('reception', RECEPTION.x, RECEPTION.z, 1.5, 0.45, 1.05, 'desk'),

@@ -23,8 +23,7 @@ const TURN_TIMEOUT_MS = Number(process.env.MEETING_TURN_TIMEOUT_MS || 120_000)
 const RETRIES = Number(process.env.MEETING_TURN_RETRIES || 3)
 const BACKOFF_MS = Number(process.env.MEETING_TURN_BACKOFF_MS || 4000)
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
-const AI_KEY =
-  process.env.AI_API_KEY || process.env.AI_API_KEY || ''
+const AI_KEY = process.env.AI_API_KEY || ''
 const AI_URL = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
 

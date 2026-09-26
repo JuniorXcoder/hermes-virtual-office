@@ -21,6 +21,7 @@ import {
   GARDEN,
   BOOK_NOOK,
   PANTRY_STOOLS,
+  PANTRY_STOOL_GAP,
   PANTRY,
   DART,
   LOUNGE,
@@ -334,8 +335,8 @@ export function createScene(
     // book nook: sit in the armchair, facing the shelf
     { x: BOOK_NOOK.x + 0.55, z: BOOK_NOOK.z, act: 'read' as Activity, seated: true },
     // pantry stools at the counter
-    { x: PANTRY_STOOLS[0], z: PANTRY.z + 0.72, act: 'coffee' as Activity, seated: true },
-    { x: PANTRY_STOOLS[1], z: PANTRY.z + 0.72, act: 'coffee' as Activity, seated: true },
+    { x: PANTRY_STOOLS[0], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true },
+    { x: PANTRY_STOOLS[1], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true },
     { x: 15.0, z: -3.4, act: 'idle' as Activity }, // by the water cooler
     { x: -8.6, z: 1.0, act: 'idle' as Activity }, // meeting room doorway
     { x: -4.0, z: 4.6, act: 'idle' as Activity }, // lobby, west side

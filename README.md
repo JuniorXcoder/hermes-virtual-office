@@ -26,7 +26,7 @@
 - ☕ **Idle agents grab coffee**, relax on lounge sofas, or play darts when waiting for new tasks.
 - 📋 **Integrated Kanban Board**: 100% synchronized with Hermes tasks, supporting instant dispatch and live task inspection.
 
-Built API-first with **Next.js**, **Three.js**, and **TypeScript**, it connects to any remote or local Hermes instance with just an API key and URL.
+Built with **Next.js**, **Three.js**, and **TypeScript**. It reads and drives your board through the official `hermes kanban` CLI, so it works against any local or remote Hermes install without a bespoke API layer.
 
 ---
 
@@ -54,9 +54,14 @@ Built API-first with **Next.js**, **Three.js**, and **TypeScript**, it connects 
 - **3D Isometric Mode**: Full 3D camera controls, orbit, zoom, ambient day/night lighting.
 - **2D Kanban Mode**: High-efficiency, accessible, mobile-friendly Kanban board for rapid management.
 
-### 5. API-First & Zero Lock-in
-- Connects via standard HTTP/SSE to Hermes Agent (`HERMES_API_URL` & `HERMES_API_KEY`).
-- Includes a built-in **Mock Development Mode** allowing developers to preview and contribute without hosting a live Hermes server.
+### 5. Talks to the Hermes CLI, not a private schema
+- Drives the board through `hermes kanban ... --json`, the CLI's documented
+  surface, rather than reading `kanban.db` directly. Board layout and database
+  format can change without breaking this app.
+- No database access, no vendored copy of Hermes internals.
+- Ships a mock LLM provider (`scripts/mock-provider.py`) for testing meetings
+  without spending tokens. It deliberately reproduces a misbehaving gateway's
+  response shape, so tests fail loudly instead of passing on a well-behaved mock.
 
 ---
 
@@ -68,7 +73,7 @@ Built API-first with **Next.js**, **Three.js**, and **TypeScript**, it connects 
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/your-username/hermes-virtual-office.git
+git clone <this-repo-url>
 cd hermes-virtual-office
 ```
 
@@ -79,16 +84,22 @@ cp .env.example .env.local
 
 Edit `.env.local` to configure your Hermes instance:
 ```env
-# Connection mode: 'api' (standard) or 'mock' (for preview)
-HERMES_DRIVER=api
-HERMES_API_URL=http://localhost:8642
-HERMES_API_KEY=your_hermes_api_key_here
+# REQUIRED: path to the hermes executable (the board is driven through its CLI)
+HERMES_BIN=/usr/local/bin/hermes
 
-# LLM Provider for Meeting & Chat features
+# Optional: pin a board, or set a CLI timeout
+# HERMES_KANBAN_BOARD=default
+# KANBAN_TIMEOUT_MS=20000
+
+# LLM provider — only needed for meetings. The 3D office runs without it;
+# starting a meeting returns a clear "not configured" error instead.
 AI_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=your_llm_key
 AI_MODEL=gpt-4o-mini
 ```
+
+Every variable in `.env.example` is read by the code — there are no decorative
+settings. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what each drives.
 
 ### 3. Install & Run
 ```bash
@@ -171,11 +182,32 @@ and pantry (east), and a corridor along the entrance that links them.
 
 ---
 
+## ✅ Verifying a change
+
+Two commands cover the invariants a screenshot cannot:
+
+```bash
+npm run typecheck   # types, including the layout and pose tables
+npm run selftest    # 10 measured invariants
+```
+
+`npm run selftest` asserts what actually broke while this was built: the Kanban
+board fits both its room and the ceiling, every window cut-out falls inside the
+wall as built, no artwork is buried inside a wall, no furniture overlaps another
+piece, and the building is not walkable from outside. Each of those was once a
+real bug that looked fine in a screenshot — which is why they are numbers now.
+
+CI runs typecheck, the self-test and a production build on every push, plus a
+publish-hygiene job that fails if a private identifier or an authoring-machine
+path reaches a published file.
+
+---
+
 ## 📚 Documentation
 
 - [Implementation Notes](docs/IMPLEMENTATION-NOTES.md) — real findings, gotchas, and the verification log.
-- [System Architecture](docs/ARCHITECTURE.md) — Detailed diagrams, 3D coordinate system, and component hierarchies.
-- [API Specification](docs/API-SPEC.md) — Comprehensive REST endpoints, payloads, and SSE event contracts.
+- [System Architecture](docs/ARCHITECTURE.md) — Component map, the 3D coordinate contract, and how the server reaches Hermes.
+- [API Specification](docs/API-SPEC.md) — REST endpoints, payloads, error codes, and server limits — described from the implementation.
 - [Meeting Protocol](docs/MEETING-PROTOCOL.md) — Turn management, prompt guardrails, and auto-notulen engine.
 - [Production Deployment](docs/DEPLOYMENT.md) — Docker, systemd, reverse proxy, and hardening guides.
 - [Contributing Guidelines](CONTRIBUTING.md) — Code style, pull request workflow, and issue templates.

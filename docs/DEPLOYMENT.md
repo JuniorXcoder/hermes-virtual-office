@@ -31,18 +31,19 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - HERMES_DRIVER=api
-      - HERMES_API_URL=http://host.docker.internal:8642
-      - HERMES_API_KEY=${HERMES_API_KEY}
+      # The board is driven through the hermes CLI, so the container needs the
+      # binary AND an accessible Hermes home. Mount both; there is no HTTP API
+      # layer to point at.
+      - HERMES_BIN=/usr/local/bin/hermes
       - AI_BASE_URL=${AI_BASE_URL}
       - AI_API_KEY=${AI_API_KEY}
       - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
     volumes:
       - office-data:/app/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Hermes home: the CLI resolves the board and profiles from here.
+      - ${HERMES_HOME:-~/.hermes}:/root/.hermes:ro
+      # The hermes binary itself (adjust the host path).
+      - ${HERMES_BIN:-/usr/local/bin/hermes}:/usr/local/bin/hermes:ro
 
 volumes:
   office-data:
@@ -145,21 +146,30 @@ server {
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | HTTP port the server binds to |
-| `HERMES_DRIVER` | `api` | Adapter mode: `api` (connects via HTTP) or `mock` (offline dev) |
-| `HERMES_API_URL` | `http://localhost:8642` | Base URL of the Hermes Agent API Server |
-| `HERMES_API_KEY` | *(None)* | Bearer authentication key for Hermes API |
-| `AI_BASE_URL` | *(None)* | OpenAI-compatible endpoint for meetings & chat |
-| `AI_API_KEY` | *(None)* | API key for LLM provider |
+| `HERMES_BIN` | `hermes` | **Required.** Path to the hermes executable; the board is driven through `hermes kanban ... --json` |
+| `HERMES_KANBAN_BOARD` | *(active board)* | Pin one board slug instead of using the CLI's active board |
+| `KANBAN_TIMEOUT_MS` | `20000` | Abort a CLI call after this many ms |
+| `AI_BASE_URL` | *(None)* | OpenAI-compatible endpoint for meetings |
+| `AI_API_KEY` | *(None)* | API key for the LLM provider |
 | `AI_MODEL` | `gpt-4o-mini` | Model identifier used for agent meetings |
 | `MAX_MEETING_TURNS` | `10` | Hard cap on total speaker turns per meeting |
+| `DEFAULT_MEETING_ROUNDS` | `2` | Rounds per meeting when the request does not specify |
+| `MEETING_TURN_TIMEOUT_MS` | `120000` | Per-turn timeout; upstream gateways answer 503 intermittently |
+| `MEETING_TURN_RETRIES` | `3` | Retries per meeting turn |
+| `MEETING_TURN_BACKOFF_MS` | `4000` | Delay between turn retries |
 | `DATA_DIR` | `./data` | Directory where meeting minutes & transcripts are stored |
+| `NEXT_PUBLIC_POLL_MS` | `4000` | How often the board re-polls Hermes (build-time) |
+
+`PORT` and `NODE_ENV` are read by Next.js itself, not by this application.
 
 ---
 
 ## 6. Security Hardening Checklist
 
-1. **Firewall Port 8642**: Ensure the Hermes API Server port (`8642`) is **not** exposed directly to the public internet. Only allow access from `localhost` or the Docker bridge network.
+1. **Do not expose the Hermes home**: this app shells out to `hermes` with full
+   access to your board and profiles. Treat the process account as a trusted
+   operator account and keep the host off the public internet.
 2. **Use HTTPS**: Always put a reverse proxy with TLS in front of the application when accessed remotely.
 3. **Keep Keys Masked**: Never commit `.env` or `.env.local` to version control.
-4. **Token Permissions**: The Hermes API Key should have permissions strictly limited to the workspace tasks and conversation endpoints.
+4. **Board scope**: the CLI sees every board its profile can. Run it under a
+   profile whose permissions match what you want surfaced in the office.

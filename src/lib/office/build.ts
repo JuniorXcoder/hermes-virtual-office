@@ -21,6 +21,7 @@ import {
   BOOK_NOOK,
   PANTRY,
   PANTRY_STOOLS,
+  PANTRY_STOOL_GAP,
   DART,
   FLOOR,
   CEILING_Y,
@@ -716,11 +717,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
 
   // interior partitions, each with a doorway to the lobby
-  const partition = (x: number, zLen: number, doorX: number, doorW: number, ry: number) => {
-    wallPanel(zLen, WALL_H, x, WALL_H / 2, 0, ry, [])
-  }
-  void partition
-
   // west/east room dividers run north-south, full length of the room band
   for (const px of [ROOMS.work.x1, ROOMS.work.x2]) {
     const z1 = -HALF_D + WALL_T
@@ -1249,7 +1245,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     /* ---- pantry stools ---- */
     for (const sx of PANTRY_STOOLS) {
       const st = new THREE.Group()
-      st.position.set(sx, 0, PANTRY.z)
+      st.position.set(sx, 0, PANTRY.z + PANTRY_STOOL_GAP)
       const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.07, 14), stdMat(0x7c4f34, { rough: 0.7 }))
       seat.position.y = 0.62
       st.add(seat)
@@ -1734,9 +1730,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // was a single slab that read as a wall panel; nothing was actually there.
   const doorGroup = new THREE.Group()
   doorGroup.position.set(DOOR.x, 0, HALF_D - WALL_T / 2)
-  const dFrameMat = track(
-    new THREE.MeshStandardMaterial({ color: 0x54636d, map: metalTex, metalness: 0.6, roughness: 0.3 }),
-  )
   const leafW = 1.65
   for (const side of [-1, 1]) {
     const leafH = 2.25
@@ -1776,7 +1769,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   jambR.position.x = 1.76
   doorGroup.add(jambR)
   group.add(doorGroup)
-  void dFrameMat
 
   // Surrounding frame in a darker metal so the doorway reads from outside, where
   // two glass leaves alone vanish against the lobby's white wall.

@@ -301,14 +301,8 @@ export function animate(a: AnimAgent, t: number, dt: number) {
   }
 }
 
-export const ACTIVITIES: Activity[] = [
-  'idle',
-  'typing',
-  'meeting',
-  'gaming',
-  'dart',
-  'sofa',
-  'garden',
-  'read',
-  'coffee',
-]
+/**
+ * Every activity the pose table implements. Kept alongside `TABLE` so adding a
+ * walk-in-the-park to the union without a pose (or vice versa) is a type error.
+ */
+export const ACTIVITIES: Activity[] = Object.keys(TABLE) as Activity[]

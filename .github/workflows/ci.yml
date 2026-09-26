@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Invariant self-test
+        run: npm run selftest
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_POLL_MS: '4000'
+
+  publish-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # This repo is published, so check the files that actually ship. Both rules
+      # below caught real leaks during development: a private provider name and
+      # key variable, and absolute paths from the machine it was written on.
+      - name: Published files carry no private identifiers or host paths
+        run: |
+          set -e
+          files=$(git ls-files '*.ts' '*.tsx' '*.md' '*.json' '*.example' '*.yml' '*.mjs')
+          fail=0
+
+          if echo "$files" | xargs grep -InE '(holla|my-provider|my-project|another-project|my-other-project)' ; then
+            echo "::error::private identifier found in a published file"
+            fail=1
+          fi
+
+          # Match paths from the authoring machine, not container-internal paths
+          # like /root/.hermes in a docker volume mount (that one is intentional).
+          if echo "$files" | xargs grep -InE '/root/(hermes-virtual-office|infra|panel|\.hermes/keys)|/home/[a-z]+/infra' ; then
+            echo "::error::authoring-machine path found in a published file"
+            fail=1
+          fi
+
+          [ "$fail" -eq 0 ] && echo "clean"
+          exit $fail

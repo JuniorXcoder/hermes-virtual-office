@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "selftest": "node --experimental-strip-types scripts/selftest.ts"
+    "selftest": "tsx scripts/selftest.ts"
   },
   "dependencies": {
     "next": "^15.1.0",
@@ -25,6 +25,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.171.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.0"
   }
 }

@@ -252,4 +252,3 @@ export function route(
 }
 
 /** Exposed for the self-check and for debugging the nav grid. */
-export const __nav = { COLS, ROWS, free, walkable, buildGrid }

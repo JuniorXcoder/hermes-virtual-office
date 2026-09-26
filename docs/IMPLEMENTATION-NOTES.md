@@ -457,3 +457,67 @@ shadow-casting meshes, a populated `map`, and a 2048 shadow map. After the fixes
 it confirmed grain, contact shadows and grid alignment in the same scene. Use
 runtime values and pixel statistics as ground truth; treat the vision pass as a
 hint, and where it and the runtime disagree, believe the runtime.
+
+---
+
+## 13. Release pass: what actually blocked publication
+
+### The README described an application that does not exist
+
+Three claims were false and would have been the first thing a visitor hit:
+
+- **"Connects via HTTP/SSE to Hermes Agent (`HERMES_API_URL` & `HERMES_API_KEY`)"**
+  — `HERMES_DRIVER`, `HERMES_API_URL` and `HERMES_API_KEY` were never read by any
+  file. The app drives the `hermes kanban` CLI. `.env.example` shipped all three
+  anyway, so a new user would set variables that did nothing and then wonder why
+  the board was empty.
+- **"Built-in Mock Development Mode"** — there was no mock mode. `types/hermes.ts`
+  declared `kind: 'api' | 'mock'`, but nothing implemented the second case.
+- **`docs/API-SPEC.md` documented `GET /api/hermes/sync`, an SSE stream** — that
+  route has never existed. The file described `initial_state` payloads for an
+  endpoint with no file behind it.
+
+The fix is structural, not editorial: `.env.example` now lists only variables the
+code reads, and CI fails the build if a documented variable is never referenced.
+API-SPEC.md was rewritten from the four real route files, including the actual
+error codes (`not_found` was invented in my first draft and removed after
+grepping the codebase for it).
+
+### Private identifiers in a repo about to be published
+
+`meeting-engine.ts` fell back to a provider-specific key variable named after the
+operator's own infrastructure, and defaulted the model to that provider's private
+alias. Both are gone: `AI_API_KEY` only, and the default model is a public one.
+`docs/DEPLOYMENT.md` carried the same private model name in two places.
+
+CI now greps every tracked file for those identifiers and for absolute paths from
+the authoring machine. The path rule matches `/root/<project>|infra|panel|keys`
+rather than all of `/root`, because `/root/.hermes` appears in a legitimate Docker
+volume mount.
+
+### `npm run selftest` was a promise with no file behind it
+
+`package.json` advertised it; `scripts/selftest.ts` did not exist. It exists now and
+asserts the ten invariants that caught real bugs here — board-versus-room,
+board-versus-ceiling, window cut-outs inside the wall, artwork not buried, no
+furniture overlap, inside/outside reachability. It failed on first run:
+`pantry<->stool-1`, because the pantry stools were declared at the counter's own z
+and were embedded inside the cabinet. They now sit at `PANTRY.z + PANTRY_STOOL_GAP`.
+
+A self-test is only worth its runtime if it fails when something is wrong; this one
+did, immediately.
+
+### 18 of 21 screenshots were iteration debris
+
+5.6 MB of images from successive design passes, referenced nowhere. Curated to the
+three the README actually shows and quantised to 256 colours (UI renders are
+low-poly, so banding is invisible): **5.6 MB -> 236 KB**.
+
+### Verification
+
+```
+npm run typecheck   ok
+npm run selftest    10/10 checks passed
+npm run build       ok
+publish hygiene     no private identifiers, no authoring-machine paths
+```
