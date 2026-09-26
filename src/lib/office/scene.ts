@@ -16,6 +16,7 @@ import {
   CONFERENCE_CHAIRS,
   BOARD_COLUMNS as BOARD_COLS,
   DESKS,
+  deskByIndex,
   DOOR,
   KANBAN_BOARD,
   GARDEN,
@@ -352,7 +353,7 @@ export function createScene(
     { x: GARDEN.x, z: GARDEN.z + 0.95, act: 'garden' as Activity },
     { x: GARDEN.x - 1.6, z: GARDEN.z + 0.95, act: 'garden' as Activity },
     // book nook: sit in the armchair, facing the shelf
-    { x: BOOK_NOOK.x + 0.55, z: BOOK_NOOK.z, act: 'read' as Activity, seated: true },
+    { x: BOOK_NOOK.x, z: BOOK_NOOK.z + 0.75, act: 'read' as Activity, seated: true },
     // pantry stools at the counter
     { x: PANTRY_STOOLS[0], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true },
     { x: PANTRY_STOOLS[1], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true },
@@ -406,7 +407,7 @@ export function createScene(
 
     // 2. reviewer walk: a reviewing agent stands at the author's desk
     if (st === 'review') {
-      const desk = a.data.deskIndex != null ? DESKS[a.data.deskIndex] : null
+      const desk = a.data.deskIndex != null ? deskByIndex(a.data.deskIndex) : null
       if (desk) {
         const v = visitorSpot(desk)
         a.target = new THREE.Vector3(v.x, 0, v.z)
@@ -418,7 +419,7 @@ export function createScene(
 
     // 3. working: sit at the assigned desk and type
     if ((st === 'working' || st === 'review' || st === 'blocked') && a.data.deskIndex != null) {
-      const desk = DESKS[a.data.deskIndex]
+      const desk = deskByIndex(a.data.deskIndex)
       if (desk) {
         a.target = deskTarget(desk)
         // Record the seat's facing: the pose layer turns the avatar to this once

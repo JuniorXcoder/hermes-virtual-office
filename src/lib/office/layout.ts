@@ -78,6 +78,23 @@ export const DESKS: Desk[] = DESK_COLUMNS.flatMap((x, column) => [
  * back at +0.28, so the seated centre of mass is ~0.26 further back; placing the
  * avatar at the chair's anchor left it perched 8 cm forward of the cushion.
  */
+/**
+ * Look up a desk by its LABEL, not by its position in the array.
+ *
+ * `DESKS` is built by flat-mapping the columns, so the array order is
+ * far,near,far,near… and `DESKS[n]` is NOT the desk labelled `n`:
+ *
+ *   DESKS[0] = desk 4    DESKS[1] = desk 0
+ *   DESKS[2] = desk 5    DESKS[3] = desk 1   …
+ *
+ * Every caller that wants "desk number n" must come through here. Using
+ * `DESKS[deskIndex]` put an agent whose UI card said "Meja 1" at the station
+ * labelled 5.
+ */
+export function deskByIndex(index: number): Desk | undefined {
+  return DESKS.find((d) => d.index === index)
+}
+
 export const DESK_CHAIR = { x: 0, z: 1.0 }
 /**
  * The task chair's backrest sits at local +0.28 from the chair anchor, so a
@@ -191,7 +208,13 @@ export const DOOR = { x: 0, z: HALF_D - WALL_T }
  * board and covered its lower edge.
  */
 export const GARDEN = { x: 11.6, z: -11.6 }
-export const BOOK_NOOK = { x: 0, z: 1.7 }
+/**
+ * The book nook used to sit at x=0, z=1.7 — directly in front of the work bay's
+ * doorway (the door is at x=0, 3.4 m wide, opening inward from z=3.4). Three of
+ * its four footprints blocked the entrance, so the reading chair read as a sofa
+ * parked in the walkway. It lives in the lounge's west corner now.
+ */
+export const BOOK_NOOK = { x: 8.6, z: -8.4 }
 export const PANTRY = { x: 14.4, z: 1.0 }
 /** Stools at the pantry counter, where the coffee activity plays. */
 // Both stools sit between the counter's ends (13.15 .. 15.65) so an agent has
@@ -599,9 +622,9 @@ export const FOOTPRINTS: Footprint[] = [
   fp('garden-box', GARDEN.x, GARDEN.z, 1.45, 0.28, 0.55),
   fp('garden-pot-a', GARDEN.x - 2.0, GARDEN.z, 0.3, 0.3, 0.5),
   fp('garden-pot-b', GARDEN.x + 2.0, GARDEN.z, 0.3, 0.3, 0.5),
-  fp('book-shelf', BOOK_NOOK.x - 1.9, BOOK_NOOK.z, 0.22, 0.95, 2.0),
-  fp('book-chair', BOOK_NOOK.x + 0.55, BOOK_NOOK.z, 0.5, 0.5, 0.85, 'seat'),
-  fp('book-table', BOOK_NOOK.x + 1.35, BOOK_NOOK.z, 0.32, 0.32, 0.5, 'desk'),
+  fp('book-shelf', BOOK_NOOK.x, BOOK_NOOK.z - 1.3, 1.3, 0.22, 2.0),
+  fp('book-chair', BOOK_NOOK.x, BOOK_NOOK.z + 0.75, 0.5, 0.5, 0.85, 'seat'),
+  fp('book-table', BOOK_NOOK.x - 1.15, BOOK_NOOK.z + 0.75, 0.32, 0.32, 0.5, 'desk'),
   // In FRONT of the counter, not inside it: the counter occupies z +-0.35 around
   // PANTRY.z, so a stool at the same z was embedded in the cabinet.
   ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z + PANTRY_STOOL_GAP, 0.24, 0.24, 0.62, 'seat')),
@@ -635,7 +658,7 @@ export const FOOTPRINTS: Footprint[] = [
   fp('lng-console', LOUNGE.x, LOUNGE.z + 1.2, 0.9, 0.28, 0.78),
   fp('lng-planter', LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.42, 0.42, 2.4),
   fp('lng-pouf', LOUNGE.x - 2.1, LOUNGE.z - 3.9, 0.4, 0.4, 0.42, 'seat'),
-  fp('lng-shelf-2', 7.2, -6.5, 0.2, 1.0, 2.0),
+  fp('lng-shelf-2', 7.6, -10.6, 1.0, 0.2, 2.0),
 ]
 
 /** Doorway openings so the walkable graph knows where it may pass. */

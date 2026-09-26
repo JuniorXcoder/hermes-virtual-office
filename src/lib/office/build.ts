@@ -1198,31 +1198,36 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const nook = new THREE.Group()
     nook.position.set(BOOK_NOOK.x, 0, BOOK_NOOK.z)
     // shelf against the partition
-    const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.0, 1.9), woodMat)
-    shelf.position.set(-1.9, 1.0, 0)
+    // Shelf along the north edge, facing the chair.
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(1.9, 2.0, 0.4), woodMat)
+    shelf.position.set(0, 1.0, -1.3)
     nook.add(shelf)
     const bookCols = [0xd05f4a, 0x4a72d0, 0xd0a84a, 0x4ad08f, 0x9a4ad0, 0xcfd0cf]
     for (let sh = 0; sh < 3; sh++) {
       const y = 0.55 + sh * 0.6
-      const board = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.03, 1.8), stdMat(0xd9cdb8, { rough: 0.8 }))
-      board.position.set(-1.9, y - 0.26, 0)
+      const board = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.03, 0.36), stdMat(0xd9cdb8, { rough: 0.8 }))
+      board.position.set(0, y - 0.26, -1.3)
       nook.add(board)
-      let bz = -0.82
-      while (bz < 0.82) {
-        const w = 0.05 + (Math.abs(Math.sin(bz * 7)) * 0.05)
-        const h = 0.24 + Math.abs(Math.cos(bz * 5)) * 0.1
+      let bx = -0.82
+      while (bx < 0.82) {
+        const w = 0.05 + Math.abs(Math.sin(bx * 7)) * 0.05
+        const h = 0.24 + Math.abs(Math.cos(bx * 5)) * 0.1
         const book = new THREE.Mesh(
-          new THREE.BoxGeometry(0.26, h, w),
-          stdMat(bookCols[Math.floor(Math.abs(bz * 13)) % bookCols.length], { rough: 0.85 }),
+          new THREE.BoxGeometry(w, h, 0.26),
+          stdMat(bookCols[Math.floor(Math.abs(bx * 13)) % bookCols.length], { rough: 0.85 }),
         )
-        book.position.set(-1.72, y - 0.24 + h / 2, bz + w / 2)
+        book.position.set(bx + w / 2, y - 0.24 + h / 2, -1.14)
         nook.add(book)
-        bz += w + 0.012
+        bx += w + 0.012
       }
     }
     // armchair, facing the shelf
     const chair = new THREE.Group()
-    chair.position.set(0.55, 0, 0)
+    chair.position.set(0, 0, 0.75)
+    // No rotation: the backrest sits at local +Z, the shelf is to the north
+    // (-Z), so the sitter already faces it. Rotating by PI put the backrest
+    // against the shelf and the sitter's face to the wall.
+    chair.rotation.y = 0
     const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.8), nookFabric)
     cushion.position.y = 0.4
     chair.add(cushion)
@@ -1237,13 +1242,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     nook.add(chair)
     // side table with a mug
     const tbl = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.28, 0.05, 14), woodMat)
-    tbl.position.set(1.35, 0.5, 0)
+    tbl.position.set(-1.15, 0.5, 0.75)
     nook.add(tbl)
     const tleg = cyl(0.045, 0.05, 0.5, 0x6b6f73, 10, 0.4)
-    tleg.position.set(1.35, 0.25, 0)
+    tleg.position.set(-1.15, 0.25, 0.75)
     nook.add(tleg)
     const nookMug = cyl(0.05, 0.045, 0.1, 0xeae4d8, 10)
-    nookMug.position.set(1.35, 0.575, 0)
+    nookMug.position.set(-1.15, 0.575, 0.75)
     nook.add(nookMug)
     group.add(nook)
 
@@ -2392,7 +2397,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     {
       const g = new THREE.Group()
       g.position.set(LOUNGE.x + 2.6, 0, LOUNGE.z - 0.4)
-      g.rotation.y = Math.PI
+      // Faces the TV wall to the north. The backrest is at local +Z, so no
+      // rotation is needed; PI turned the chair's back to the television.
+      g.rotation.y = 0
       const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.8), sofaFabric)
       cushion.position.y = 0.42
       g.add(cushion)
@@ -2476,22 +2483,22 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // second shelf unit on the lounge's west partition
     {
       const g = new THREE.Group()
-      g.position.set(7.2, 0, -6.5)
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.38, 2.0, 2.0), woodMat2)
+      g.position.set(7.6, 0, -10.6)
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 0.38), woodMat2)
       frame.position.y = 1.0
       g.add(frame)
       for (let sh = 0; sh < 3; sh++) {
-        const board = box(0.34, 0.03, 1.9, 0xd9cdb8, { rough: 0.8 })
-        board.position.set(0.03, 0.55 + sh * 0.6, 0)
+        const board = box(1.9, 0.03, 0.34, 0xd9cdb8, { rough: 0.8 })
+        board.position.set(0, 0.55 + sh * 0.6, 0.03)
         g.add(board)
-        let bz = -0.85
-        while (bz < 0.85) {
-          const w = 0.05 + Math.abs(Math.sin(bz * 9)) * 0.05
-          const h = 0.22 + Math.abs(Math.cos(bz * 6)) * 0.11
-          const bk = box(0.24, h, w, [0xcfd0cf, 0xd05f4a, 0x4a72d0, 0x4ad08f][Math.floor(Math.abs(bz * 11)) % 4])
-          bk.position.set(0.09, 0.55 + sh * 0.6 + 0.015 + h / 2, bz + w / 2)
+        let bx = -0.85
+        while (bx < 0.85) {
+          const w = 0.05 + Math.abs(Math.sin(bx * 9)) * 0.05
+          const h = 0.22 + Math.abs(Math.cos(bx * 6)) * 0.11
+          const bk = box(w, h, 0.24, [0xcfd0cf, 0xd05f4a, 0x4a72d0, 0x4ad08f][Math.floor(Math.abs(bx * 11)) % 4])
+          bk.position.set(bx + w / 2, 0.55 + sh * 0.6 + 0.015 + h / 2, 0.09)
           g.add(bk)
-          bz += w + 0.012
+          bx += w + 0.012
         }
       }
       group.add(g)

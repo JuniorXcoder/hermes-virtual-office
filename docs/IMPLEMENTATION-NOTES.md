@@ -703,3 +703,48 @@ spawn budi              -> office: budi, default, lulu, risko
 
 The probe profiles were deleted afterwards; `~/.hermes/profiles` is back to the
 original two.
+
+---
+
+## 17. A desk addressed by array position, and two chairs I turned the wrong way
+
+### `DESKS[n]` is not the desk labelled n
+
+`DESKS` is built by flat-mapping the columns, so the array alternates far/near:
+
+```
+DESKS[0] = desk 4     DESKS[1] = desk 0
+DESKS[2] = desk 5     DESKS[3] = desk 1   …
+```
+
+`listAgents()` hands out `deskIndex`, and the scene did `DESKS[a.data.deskIndex]`.
+So an agent whose card read "Meja 1" sat at the station labelled 5 — exactly what
+was reported. Every lookup now goes through `deskByIndex(n)`, which searches by
+label, and the self-test asserts `deskByIndex(n).index === n` for all eight.
+
+This is the same failure shape as the other bugs in this file: two places agreeing
+on a number while disagreeing on what it means. An array position is not an id.
+
+### Two chairs rotated 180° by hand
+
+The task chair and the conference chairs are built with the backrest at local +Z,
+which is correct: the monitor is at local −Z, so a sitter faces it. When I added the
+book-nook armchair and the lounge's second armchair I wrote `rotation.y = Math.PI`
+"to face the TV" and "to face the shelf" — but with the backrest already at +Z,
+no rotation was needed. The PI put the backrest against the target and the sitter's
+face to the wall.
+
+Checked now by direction, not by eye: the backrest normal is `(sin ry, cos ry)` and
+the facing is its negation. Book chair → faces the shelf to the north. Lounge
+chair → faces the TV wall. Desk and conference chairs unchanged and correct.
+
+### The book nook was sitting in the work bay's doorway
+
+It was placed at `x=0, z=1.7`. The work bay's door is at `x=0`, 3.4 m wide, opening
+inward from `z=3.4`. Three of the nook's four footprints — shelf, chair, side table —
+sat across that opening, which is what read as a sofa parked in the walkway. Moved
+to the lounge's west corner; the second shelf unit moved to the north wall to make
+room. A `no furniture blocks a doorway` assertion now covers all three room doors,
+so this cannot come back silently.
+
+Self-test: 14 checks.

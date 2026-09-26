@@ -11,8 +11,11 @@
  */
 import {
   CEILING_Y,
+  DESKS,
+  deskByIndex,
   FOOTPRINTS,
   HALF_D,
+  ROOM_DOORS,
   HALF_W,
   KANBAN_BOARD,
   PAINTINGS,
@@ -153,6 +156,34 @@ console.log('geometry')
     }
   }
   check('no furniture overlaps furniture', bad.length === 0, bad.slice(0, 4).join(', '))
+}
+
+// A desk is addressed by its LABEL. `DESKS` is flat-mapped column by column, so
+// `DESKS[n]` is not desk n — an agent whose card said "Meja 1" sat at station 5.
+{
+  const wrong: string[] = []
+  for (let n = 0; n < DESKS.length; n++) {
+    const d = deskByIndex(n)
+    if (!d || d.index !== n) wrong.push(`${n}->${d?.index ?? 'none'}`)
+  }
+  check('deskByIndex(n) returns the desk labelled n', wrong.length === 0, wrong.join(', '))
+}
+
+// Doorways must stay clear. Three pieces of the old book nook sat in front of the
+// work bay's door, which is what read as "a sofa parked in the walkway".
+{
+  const blocked: string[] = []
+  for (const [room, door] of Object.entries(ROOM_DOORS)) {
+    const z = room === 'lobby' ? 0 : (ROOMS as Record<string, { z2: number }>)[room].z2
+    const half = door.width / 2
+    for (const f of FOOTPRINTS) {
+      if (f.kind === 'wall' || f.h <= 0.4) continue
+      const overlapsX = f.x + f.hw > door.x - half && f.x - f.hw < door.x + half
+      const nearDoor = Math.abs(f.z - z) < 1.6
+      if (overlapsX && nearDoor) blocked.push(`${f.id} @ ${f.x},${f.z}`)
+    }
+  }
+  check('no furniture blocks a doorway', blocked.length === 0, blocked.join(' | '))
 }
 
 /* ---------------------------------------------------------------- movement -- */
