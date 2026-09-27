@@ -171,17 +171,11 @@ Detailed architectural specifications are documented in [docs/ARCHITECTURE.md](d
 
 ---
 
-## 📸 Preview
-
-![3D office](docs/img/office-3d.png)
+## 📐 Layout
 
 The floor is laid out as a real office: an enclosed glass meeting room (west), an
 open-plan workstation bay under ceiling strips (centre), a lounge with sofa, TV
 and pantry (east), and a corridor along the entrance that links them.
-
-![Rooms and partitions](docs/img/rooms.png)
-
-![Kanban wall board](docs/img/kanban-board.png)
 
 ---
 
