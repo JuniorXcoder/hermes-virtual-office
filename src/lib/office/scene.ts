@@ -26,6 +26,7 @@ import {
   LOUNGE,
   deskSeatWorld,
   visitorSpot,
+  IDLE_SPOTS as OFFICE_IDLE_SPOTS,
   type Desk,
 } from './layout'
 import type { Agent, Meeting, Task } from '@/types/hermes'
@@ -359,27 +360,10 @@ export function createScene(
   // needs one, and so does every standing spot — without it the agent keeps the
   // direction it walked in with, which is how a sitter ended up facing the sofa's
   // backrest and the gardener ended up facing a wall.
-  const IDLE_SPOTS: { x: number; z: number; act: Activity; seated?: boolean; face: number }[] = [
-    // sofa: sit on the seat, look at the TV wall to the north
-    { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa' as Activity, seated: true, face: Math.PI },
-    // dartboard: stand at the throw line, facing the board on the east wall
-    { x: DART.x - 2.6, z: DART.z + 0.4, act: 'dart' as Activity, face: Math.PI / 2 },
-    // green corner: face the planter on the east wall
-    { x: GARDEN.x - 0.95, z: GARDEN.z, act: 'garden' as Activity, face: Math.PI / 2 },
-    { x: GARDEN.x - 0.95, z: GARDEN.z - 1.2, act: 'garden' as Activity, face: Math.PI / 2 },
-    // book nook: sit in the armchair, facing the shelf to the north
-    { x: BOOK_NOOK.x, z: BOOK_NOOK.z + 0.75, act: 'read' as Activity, seated: true, face: Math.PI },
-    // pantry stools at the counter, facing the counter to the north
-    { x: PANTRY_STOOLS[0], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true, face: Math.PI },
-    { x: PANTRY_STOOLS[1], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee' as Activity, seated: true, face: Math.PI },
-    // standing spots: face something specific rather than nothing
-    { x: 15.0, z: -3.4, act: 'idle' as Activity, face: Math.PI / 2 }, // by the water cooler
-    { x: -8.6, z: 1.0, act: 'idle' as Activity, face: Math.PI }, // meeting room doorway
-    { x: -4.0, z: 4.6, act: 'idle' as Activity, face: 0 }, // lobby, west side (toward the door)
-    { x: 4.0, z: 4.6, act: 'idle' as Activity, face: 0 }, // lobby, east side
-    { x: -8.4, z: 6.6, act: 'idle' as Activity, face: 0 }, // reception
-    { x: 9.4, z: 0.6, act: 'idle' as Activity, face: Math.PI / 2 }, // lounge entry
-  ].filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
+  // Idle spots come from layout.ts as DATA, so the self-test can assert every one of
+  // them is actually reachable — two were silently dead here. The filter stays: an
+  // unreachable spot is dropped rather than parking an agent inside furniture.
+  const IDLE_SPOTS = OFFICE_IDLE_SPOTS.filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
 
   /** Decide activity + destination for the coming frames. */
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {

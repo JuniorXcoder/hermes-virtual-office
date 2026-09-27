@@ -1850,13 +1850,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   reception.add(monitorR)
   group.add(reception)
 
+  // The receptionist's chair sits BEHIND the counter, and its backrest faces away
+  // from the visitor side so the sitter looks at the counter (and the badge on it),
+  // not at the wall. It used to be at `z + 1.15` — the visitor side — with the
+  // backrest at +z, so the receptionist sat in the walk-up facing backwards.
   const rChair = new THREE.Group()
-  rChair.position.set(RECEPTION.x, 0, RECEPTION.z + 1.15)
+  rChair.position.set(RECEPTION.x, 0, RECEPTION.z - 1.15)
   const rcSeat = box(0.54, 0.07, 0.52, 0x6f8fa8, { rough: 0.7 })
-  rcSeat.position.y = 0.47
+  rcSeat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
   rChair.add(rcSeat)
   const rcBack = box(0.54, 0.6, 0.06, 0x6f8fa8, { rough: 0.7 })
-  rcBack.position.set(0, 0.76, 0.26)
+  // Backrest on the far side from the counter: the counter is at +z from here.
+  rcBack.position.set(0, 0.76, -0.26)
   rChair.add(rcBack)
   const rcPost = cyl(0.045, 0.06, 0.44, 0x5b666e, 10, 0.4)
   rcPost.position.y = 0.22
@@ -1864,22 +1869,40 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   group.add(rChair)
 
   // waiting area
-  for (const wx of [-6.4, 6.4]) {
+  //
+  // The west sofa used to be at x -6.4, overlapping the reception counter and
+  // blocking the walk-up; it moved west of the reception group. Both sofas also
+  // floated: a seat slab at y 0.4 with no legs puts its underside 0.24 m in the air,
+  // which is what the detached shadow in the screenshot was. They now stand on
+  // legs, with the seat top at 0.40 and the underside at 0.16.
+  for (const wx of [-11.0, 6.4]) {
     const wsofa = new THREE.Group()
-    wsofa.position.set(wx, 0, 9.4)
-    const wsSeat = box(1.8, 0.32, 0.9, 0x93a8ba, { rough: 0.9 })
-    wsSeat.position.y = 0.4
+    wsofa.position.set(wx, 0, 9.8)
+    const wsSeat = box(1.8, 0.24, 0.9, 0x93a8ba, { rough: 0.9 })
+    wsSeat.position.y = 0.28
     wsofa.add(wsSeat)
     const wsBack = box(1.8, 0.6, 0.22, 0x93a8ba, { rough: 0.9 })
-    wsBack.position.set(0, 0.76, 0.34)
+    wsBack.position.set(0, 0.64, 0.34)
     wsofa.add(wsBack)
+    // four short legs, so the sofa reads as standing on the floor
+    for (const [lx, lz] of [
+      [-0.78, -0.36],
+      [0.78, -0.36],
+      [-0.78, 0.36],
+      [0.78, 0.36],
+    ]) {
+      const leg = cyl(0.03, 0.035, 0.16, 0x5b666e, 8, 0.5)
+      leg.position.set(lx, 0.08, lz)
+      wsofa.add(leg)
+    }
     group.add(wsofa)
   }
+  // side table between the sofas, on its own base
   const wTable = cyl(0.42, 0.46, 0.05, pal.wood, 20)
-  wTable.position.set(-9.6, 0.44, 9.6)
+  wTable.position.set(-8.5, 0.44, 9.8)
   group.add(wTable)
   const wTableLeg = cyl(0.05, 0.07, 0.42, pal.wood, 10)
-  wTableLeg.position.set(-9.6, 0.21, 9.6)
+  wTableLeg.position.set(-8.5, 0.21, 9.8)
   group.add(wTableLeg)
 
   const coatRack = new THREE.Group()
@@ -2591,6 +2614,26 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       const lamp = cyl(0.09, 0.11, 0.02, 0x2b3236, 12, 0.4)
       lamp.position.set(0.55, 0.99, -0.15)
       g.add(lamp)
+      group.add(g)
+    }
+
+    // chair for the second lobby desk: without one it read as a table with a lamp
+    {
+      const g = new THREE.Group()
+      g.position.set(-13.5, 0, 10.7)
+      const seat = box(0.54, 0.07, 0.52, 0x6f8fa8, { rough: 0.7 })
+      seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
+      g.add(seat)
+      const back = box(0.54, 0.6, 0.06, 0x6f8fa8, { rough: 0.7 })
+      // Desk is to the north (-z), so the backrest goes south.
+      back.position.set(0, 0.76, 0.26)
+      g.add(back)
+      const post = cyl(0.04, 0.055, 0.44, 0x5b666e, 8, 0.4)
+      post.position.y = 0.22
+      g.add(post)
+      const star = cyl(0.26, 0.28, 0.04, 0x4d565d, 10, 0.3)
+      star.position.y = 0.02
+      g.add(star)
       group.add(g)
     }
 

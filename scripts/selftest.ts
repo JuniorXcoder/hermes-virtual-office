@@ -32,6 +32,7 @@ import {
   windowPlan,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked } from '../src/lib/office/nav'
+import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { originMarker, parseOrigin } from '../src/lib/hermes/kanban'
@@ -407,6 +408,49 @@ console.log('geometry')
   if (!/^\s*#{1,6}/.test('# TINDAK LANJUT')) problems.push('hash class is broken')
   check('minutes heading regex survives a text rewrite', problems.length === 0, problems.join(' | '))
 }
+
+// Every idle spot must be reachable. scene.ts filters out any that is not, which is
+// the right runtime behaviour but hides the mistake: two spots were dead — one inside
+// `floor-lamp`, one inside `lng-planter` — so only one agent could ever tend the
+// planter and the "by the water cooler" spot never existed. The filter is silent, so
+// the data is asserted here instead.
+{
+  const dead = IDLE_SPOTS.filter((p) => blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
+  check(
+    'every idle spot is reachable',
+    dead.length === 0,
+    dead.map((p) => `(${p.x},${p.z}) ${p.act}`).join(' | '),
+  )
+}
+
+// A seat's footprint and its mesh must agree, and a chair must be on the side of the
+// desk it serves. The reception chair was placed at `z + 1.15` — the VISITOR side of
+// the counter — so the receptionist sat facing away from it and blocked the walk-up.
+{
+  const problems: string[] = []
+  const rec = FOOTPRINTS.find((f) => f.id === 'reception')
+  const chair = FOOTPRINTS.find((f) => f.id === 'reception-chair')
+  if (!rec || !chair) {
+    problems.push('reception or reception-chair footprint missing')
+  } else {
+    // The counter's staff side is the lower z (its badge faces +z, the visitor side).
+    if (chair.z >= rec.z) {
+      problems.push(`reception chair at z=${chair.z} is not behind the counter (z=${rec.z})`)
+    }
+    // A chair that touches the counter leaves nowhere to sit.
+    const gap = rec.z - rec.hd - (chair.z + chair.hd)
+    if (gap < 0.2) problems.push(`only ${gap.toFixed(2)}m between chair and counter`)
+  }
+  // The waiting sofa must clear the counter it sits beside.
+  const sofa = FOOTPRINTS.find((f) => f.id === 'wait-sofa-a')
+  if (rec && sofa) {
+    const dx = Math.abs(sofa.x - rec.x) - (sofa.hw + rec.hw)
+    const dz = Math.abs(sofa.z - rec.z) - (sofa.hd + rec.hd)
+    if (dx < 0 && dz < 0) problems.push('waiting sofa overlaps the reception counter')
+  }
+  check('lobby seating is placed where it can be used', problems.length === 0, problems.join(' | '))
+}
+
 
 // The street must be layered, not overlapping: building, then sidewalk, then road.
 //

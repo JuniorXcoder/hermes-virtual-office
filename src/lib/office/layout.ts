@@ -667,11 +667,23 @@ export const FOOTPRINTS: Footprint[] = [
   ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z + PANTRY_STOOL_GAP, 0.24, 0.24, 0.62, 'seat')),
 
   // ---- lobby
+  //
+  // The reception chair belongs BEHIND the counter (staff side). It was placed at
+  // `z + 1.15`, which is the visitor side — the receptionist sat facing away from
+  // the counter and the badge, and the seat blocked the walk-up. The counter's back
+  // face is at z - 0.45, so a chair at z - 1.15 leaves a 0.38 m gap to sit down in.
   fp('reception', RECEPTION.x, RECEPTION.z, 1.5, 0.45, 1.05, 'desk'),
-  fp('reception-chair', RECEPTION.x, RECEPTION.z + 1.15, 0.32, 0.32, 0.5, 'seat'),
-  fp('wait-sofa-a', -6.4, 9.4, 0.9, 0.5, 0.8, 'seat'),
-  fp('wait-sofa-b', 6.4, 9.4, 0.9, 0.5, 0.8, 'seat'),
-  fp('wait-table', -9.6, 9.6, 0.45, 0.45, 0.45, 'desk'),
+  fp('reception-chair', RECEPTION.x, RECEPTION.z - 1.15, 0.32, 0.32, 0.5, 'seat'),
+  //
+  // The west waiting sofa used to sit at x -6.4, which overlaps the counter
+  // (counter spans x -9.9..-6.9) by 0.4 m and left a 0.05 m gap in z — it was
+  // jammed against the end of the counter and blocked the walk-up. Moved west of
+  // the whole reception group. Its twin on the east side was already clear.
+  fp('wait-sofa-a', -11.0, 9.8, 0.9, 0.5, 0.8, 'seat'),
+  fp('wait-sofa-b', 6.4, 9.8, 0.9, 0.5, 0.8, 'seat'),
+  // The side table moves with its sofa: it was floating in the walk-up lane at
+  // x -9.6, between the counter and the entrance path.
+  fp('wait-table', -8.5, 9.8, 0.45, 0.45, 0.45, 'desk'),
   fp('plant-lobby-a', -16.0, 5.4, 0.4, 0.4, 1.0),
   fp('plant-lobby-b', 16.0, 5.4, 0.4, 0.4, 1.0),
   fp('coat-rack', -11.0, 11.4, 0.35, 0.35, 1.75),
@@ -685,6 +697,8 @@ export const FOOTPRINTS: Footprint[] = [
   fp('lobby-bench-w', -13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
   fp('lobby-bench-e', 13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
   fp('lobby-desk-2', -13.5, 9.6, 0.85, 0.45, 0.95, 'desk'),
+  // The second lobby desk had no chair: it read as a table with a lamp on it.
+  fp('lobby-desk-2-chair', -13.5, 10.7, 0.32, 0.32, 0.5, 'seat'),
   fp('lobby-art-plinth', 8.5, 11.2, 0.4, 0.4, 1.35),
   fp('lobby-plant-mid-w', -6.5, 5.8, 0.42, 0.42, 1.05),
   fp('lobby-plant-mid-e', 6.5, 5.8, 0.42, 0.42, 1.05),
@@ -695,6 +709,55 @@ export const FOOTPRINTS: Footprint[] = [
   fp('lng-console', LOUNGE.x, LOUNGE.z + 1.2, 0.9, 0.28, 0.78),
   fp('lng-planter', LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.42, 0.42, 2.4),
   fp('lng-pouf', LOUNGE.x - 2.1, LOUNGE.z - 3.9, 0.4, 0.4, 0.42, 'seat'),
+]
+
+/* ------------------------------------------------------------------ spots -- */
+
+/**
+ * Where an idle agent goes, and which way it faces on arrival.
+ *
+ * Each entry names a POSITION and the POSE that belongs there, and the prop at that
+ * position exists in build.ts. `face` is the heading held once the agent arrives
+ * (the avatar's forward is local +Z, so `atan2(dx, dz)` aims it at (dx, dz)).
+ *
+ * These live here rather than inside scene.ts because they are DATA that must agree
+ * with the furniture, and the self-test needs to check that agreement. Two of them
+ * were silently dead: one sat inside `floor-lamp`, another inside `lng-planter`, and
+ * the filter that drops unreachable spots hid it — so only one agent could ever tend
+ * the planter and the "by the water cooler" spot never existed at all.
+ *
+ * `seated: true` marks a spot ON a seat, which the collision check must allow.
+ */
+export type IdleSpot = {
+  x: number
+  z: number
+  act: 'idle' | 'sofa' | 'dart' | 'garden' | 'read' | 'coffee'
+  seated?: boolean
+  face: number
+}
+
+export const IDLE_SPOTS: IdleSpot[] = [
+  // sofa: sit on the seat, look at the TV wall to the north
+  { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa', seated: true, face: Math.PI },
+  // dartboard: stand at the throw line, facing the board on the east wall
+  { x: DART.x - 2.6, z: DART.z + 0.4, act: 'dart', face: Math.PI / 2 },
+  // green corner: face the planter on the east wall
+  { x: GARDEN.x - 0.95, z: GARDEN.z, act: 'garden', face: Math.PI / 2 },
+  // second garden spot, clear of the floor lamp at z - 1.2
+  { x: GARDEN.x - 0.95, z: GARDEN.z + 0.5, act: 'garden', face: Math.PI / 2 },
+  // book nook: sit in the armchair, facing the shelf to the north
+  { x: BOOK_NOOK.x, z: BOOK_NOOK.z + 0.75, act: 'read', seated: true, face: Math.PI },
+  // pantry stools at the counter, facing the counter to the north
+  { x: PANTRY_STOOLS[0], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee', seated: true, face: Math.PI },
+  { x: PANTRY_STOOLS[1], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee', seated: true, face: Math.PI },
+  // standing spots: face something specific rather than nothing
+  { x: 15.0, z: -2.6, act: 'idle', face: Math.PI / 2 }, // by the water cooler
+  { x: -8.6, z: 1.0, act: 'idle', face: Math.PI }, // meeting room doorway
+  { x: -4.0, z: 4.6, act: 'idle', face: 0 }, // lobby, west side (toward the door)
+  { x: 4.0, z: 4.6, act: 'idle', face: 0 }, // lobby, east side
+  // reception: the VISITOR side of the counter (the chair occupies the staff side)
+  { x: -8.4, z: 9.6, act: 'idle', face: Math.PI },
+  { x: 9.4, z: 0.6, act: 'idle', face: Math.PI / 2 }, // lounge entry
 ]
 
 /** Doorway openings so the walkable graph knows where it may pass. */
