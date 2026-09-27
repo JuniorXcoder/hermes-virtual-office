@@ -21,6 +21,8 @@ import {
   KANBAN_BOARD,
   PAINTINGS,
   ROOMS,
+  DOOR,
+  blockingFootprints,
   WALL_H,
   WALL_T,
   WINDOW_H,
@@ -467,6 +469,54 @@ console.log('geometry')
   if (!body.includes("'default'")) problems.push("listProfiles never pushes 'default'")
   check('listProfiles includes the default profile', problems.length === 0, problems.join(' | '))
 }
+
+// The lobby is laid out as zones, and two properties make it usable rather than just
+// non-overlapping: the centre axis from the entrance to the work door stays clear, and
+// every room door has an open approach. The layout was rebuilt after the furniture
+// accumulated one piece at a time into a stack of unrelated objects.
+{
+  const problems: string[] = []
+  const lobbyZ = ROOMS.lobby.z1
+
+  // 1. The centre axis must be walkable end to end.
+  const laneBlocked: string[] = []
+  for (let z = HALF_D - WALL_T - 0.4; z >= lobbyZ + 0.3; z -= 0.2) {
+    if (blocked(0, z, BODY_R)) laneBlocked.push(z.toFixed(1))
+  }
+  if (laneBlocked.length) {
+    problems.push(`centre axis blocked at z ${laneBlocked.join(', ')}`)
+  }
+
+  // 2. Each room door must have a clear approach inside the lobby.
+  for (const [room, d] of Object.entries(ROOM_DOORS)) {
+    for (const z of [3.9, 4.4, 4.9]) {
+      if (blocked(d.x, z, BODY_R)) {
+        problems.push(`${room} door approach blocked at z ${z}`)
+        break
+      }
+    }
+  }
+
+  // 3. The entrance itself.
+  if (blocked(DOOR.x, HALF_D - WALL_T - 0.8, BODY_R)) {
+    problems.push('entrance approach blocked')
+  }
+
+  // 4. No two solid lobby props may overlap.
+  const solid = blockingFootprints().filter((f) => f.z > lobbyZ - 0.5)
+  for (let i = 0; i < solid.length; i++) {
+    for (let j = i + 1; j < solid.length; j++) {
+      const a = solid[i]
+      const b = solid[j]
+      const dx = Math.abs(a.x - b.x) - (a.hw + b.hw)
+      const dz = Math.abs(a.z - b.z) - (a.hd + b.hd)
+      if (dx < 0 && dz < 0) problems.push(`${a.id} overlaps ${b.id}`)
+    }
+  }
+
+  check('lobby keeps a clear axis and open doorways', problems.length === 0, problems.join(' | '))
+}
+
 
 
 

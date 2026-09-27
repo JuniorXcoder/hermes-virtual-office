@@ -259,7 +259,8 @@ export const PANTRY = { x: 14.4, z: 1.0 }
 export const PANTRY_STOOLS = [13.6, 15.2] as const
 /** Distance from the counter centre out to the stool centre. */
 export const PANTRY_STOOL_GAP = 0.72
-export const RECEPTION = { x: -8.4, z: 8.4 }
+/** Reception counter: faces the entrance (+z), staff chair behind it (-z). */
+export const RECEPTION = { x: -5.5, z: 10.4 }
 
 /**
  * Window openings. `y` is measured from the FLOOR, matching how build.ts cuts the
@@ -666,42 +667,61 @@ export const FOOTPRINTS: Footprint[] = [
   // PANTRY.z, so a stool at the same z was embedded in the cabinet.
   ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z + PANTRY_STOOL_GAP, 0.24, 0.24, 0.62, 'seat')),
 
-  // ---- lobby
+  // ---- lobby ------------------------------------------------------------------
   //
-  // The reception chair belongs BEHIND the counter (staff side). It was placed at
-  // `z + 1.15`, which is the visitor side — the receptionist sat facing away from
-  // the counter and the badge, and the seat blocked the walk-up. The counter's back
-  // face is at z - 0.45, so a chair at z - 1.15 leaves a 0.38 m gap to sit down in.
-  fp('reception', RECEPTION.x, RECEPTION.z, 1.5, 0.45, 1.05, 'desk'),
-  fp('reception-chair', RECEPTION.x, RECEPTION.z - 1.15, 0.32, 0.32, 0.5, 'seat'),
+  // Rebuilt from scratch. The old set had accumulated a piece at a time — two
+  // benches, a second desk with its own chair, four planters, a sofa pair placed one
+  // behind the other, and a reception group overlapping the waiting area — and read
+  // as a stack of unrelated objects rather than a lobby.
   //
-  // The west waiting sofa used to sit at x -6.4, which overlaps the counter
-  // (counter spans x -9.9..-6.9) by 0.4 m and left a 0.05 m gap in z — it was
-  // jammed against the end of the counter and blocked the walk-up. Moved west of
-  // the whole reception group. Its twin on the east side was already clear.
-  fp('wait-sofa-a', -11.0, 9.8, 0.9, 0.5, 0.8, 'seat'),
-  fp('wait-sofa-b', 6.4, 9.8, 0.9, 0.5, 0.8, 'seat'),
-  // The side table moves with its sofa: it was floating in the walk-up lane at
-  // x -9.6, between the counter and the entrance path.
-  fp('wait-table', -8.5, 9.8, 0.45, 0.45, 0.45, 'desk'),
-  fp('plant-lobby-a', -16.0, 5.4, 0.4, 0.4, 1.0),
-  fp('plant-lobby-b', 16.0, 5.4, 0.4, 0.4, 1.0),
-  fp('coat-rack', -11.0, 11.4, 0.35, 0.35, 1.75),
-  fp('doormat', 0, HALF_D - WALL_T - 0.9, 1.5, 0.7, 0, 'prop'),
+  // The layout is now four zones plus planting, all off the centre axis. That axis
+  // (x 0, from the entrance at z 12.7 to the work door at z 3.4) is kept clear so
+  // walking in and through is a straight line, and each of the three room doors has
+  // an open approach. Every position is verified free of collision and inside the
+  // room by the self-test.
+  //
+  //   entrance        mat, flanking plants, coat rack, umbrella stand
+  //   reception       counter facing the entrance, chair behind it, credenza
+  //   waiting (west)  two sofas facing each other over a low table, side table
+  //   exhibition      plinths flanking the axis along the north wall, bench
+  //   coffee (east)   bar, two stools, back shelf, table with two chairs
+  //   planting        wall gaps and the north bays between the room doors
 
-  // ---- lobby, filled out: it was a 34 x 9 m corridor with four objects in it ----
-  fp('lobby-planter-w', -14.5, 11.6, 0.5, 0.5, 1.1),
-  fp('lobby-planter-e', 14.5, 11.6, 0.5, 0.5, 1.1),
-  fp('umbrella-stand', 3.2, 11.6, 0.28, 0.28, 0.75),
-  fp('magazine-rack', -3.2, 11.6, 0.45, 0.3, 1.15),
-  fp('lobby-bench-w', -13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
-  fp('lobby-bench-e', 13.0, 7.6, 0.95, 0.42, 0.62, 'seat'),
-  fp('lobby-desk-2', -13.5, 9.6, 0.85, 0.45, 0.95, 'desk'),
-  // The second lobby desk had no chair: it read as a table with a lamp on it.
-  fp('lobby-desk-2-chair', -13.5, 10.7, 0.32, 0.32, 0.5, 'seat'),
-  fp('lobby-art-plinth', 8.5, 11.2, 0.4, 0.4, 1.35),
-  fp('lobby-plant-mid-w', -6.5, 5.8, 0.42, 0.42, 1.05),
-  fp('lobby-plant-mid-e', 6.5, 5.8, 0.42, 0.42, 1.05),
+  fp('doormat', 0, 11.8, 1.5, 0.7, 0, 'prop'),
+  fp('lobby-plant-w', -2.8, 12.0, 0.4, 0.4, 1.1),
+  fp('lobby-plant-e', 2.8, 12.0, 0.4, 0.4, 1.1),
+  fp('coat-rack', -4.4, 12.0, 0.35, 0.35, 1.75),
+  fp('umbrella-stand', 4.4, 12.0, 0.28, 0.28, 0.75),
+
+  fp('reception', -5.5, 10.4, 1.6, 0.45, 1.05, 'desk'),
+  fp('reception-chair', -5.5, 9.25, 0.32, 0.32, 0.5, 'seat'),
+  fp('reception-credenza', -8.8, 11.9, 0.9, 0.35, 0.8, 'desk'),
+
+  fp('wait-sofa-n', -13.0, 8.2, 1.0, 0.45, 0.8, 'seat'),
+  fp('wait-sofa-s', -13.0, 10.4, 1.0, 0.45, 0.8, 'seat'),
+  fp('wait-table', -13.0, 9.3, 0.42, 0.42, 0.42, 'desk'),
+  fp('wait-side', -15.2, 9.3, 0.32, 0.32, 0.5, 'desk'),
+  fp('magazine-rack', -11.6, 11.9, 0.45, 0.3, 1.15),
+
+  fp('exh-plinth-1', -6.0, 5.6, 0.42, 0.42, 1.2),
+  fp('exh-plinth-2', -3.6, 5.6, 0.42, 0.42, 1.2),
+  fp('exh-plinth-3', 3.6, 5.6, 0.42, 0.42, 1.2),
+  fp('exh-plinth-4', 6.0, 5.6, 0.42, 0.42, 1.2),
+  fp('lobby-art-plinth', 8.8, 5.6, 0.4, 0.4, 1.35),
+  fp('exh-bench', -8.6, 7.6, 0.95, 0.4, 0.62, 'seat'),
+
+  fp('coffee-bar', 12.8, 10.3, 1.5, 0.45, 1.05, 'desk'),
+  fp('coffee-stool-1', 11.9, 11.3, 0.24, 0.24, 0.62, 'seat'),
+  fp('coffee-stool-2', 13.7, 11.3, 0.24, 0.24, 0.62, 'seat'),
+  fp('coffee-shelf', 12.8, 9.0, 1.2, 0.3, 1.6),
+  fp('coffee-table', 12.8, 6.6, 0.5, 0.5, 0.45, 'desk'),
+  fp('coffee-chair-1', 11.5, 6.6, 0.32, 0.32, 0.5, 'seat'),
+  fp('coffee-chair-2', 14.1, 6.6, 0.32, 0.32, 0.5, 'seat'),
+
+  fp('lobby-plant-mid-w', -9.0, 5.0, 0.42, 0.42, 1.05),
+  fp('lobby-plant-mid-e', 9.2, 4.4, 0.42, 0.42, 1.05),
+  fp('lobby-planter-w', -15.6, 6.0, 0.5, 0.5, 1.1),
+  fp('lobby-planter-e', 15.6, 6.0, 0.5, 0.5, 1.1),
 
   // ---- lounge, filled out ----
   fp('lng-armchair-2', LOUNGE.x + 2.6, LOUNGE.z - 0.4, 0.5, 0.5, 0.85, 'seat'),

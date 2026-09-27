@@ -1831,104 +1831,464 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   group.add(cooler)
 
   /* -------------------------------------------------------------- lobby --- */
-  const reception = new THREE.Group()
-  reception.position.set(RECEPTION.x, 0, RECEPTION.z)
-  const rCounter = box(3.2, 1.05, 0.62, 0xe0d3bc, { rough: 0.6 })
-  rCounter.position.y = 0.52
-  reception.add(rCounter)
-  const rTop = box(3.34, 0.06, 0.76, 0x8b6f52, { rough: 0.45 })
-  rTop.position.y = 1.08
-  reception.add(rTop)
-  const rBadge = box(0.5, 0.34, 0.03, 0xdfe6ea, { metal: 0.2 })
-  rBadge.position.set(0, 0.72, 0.33)
-  reception.add(rBadge)
-  const rLogo = box(0.44, 0.12, 0.02, 0x2f7f5f, { emissive: 0x2f7f5f, ei: 0.4 })
-  rLogo.position.set(0, 0.72, 0.35)
-  reception.add(rLogo)
-  const monitorR = box(0.5, 0.34, 0.03, 0x25292d, { metal: 0.3 })
-  monitorR.position.set(-1.2, 1.28, 0.06)
-  reception.add(monitorR)
-  group.add(reception)
-
-  // The receptionist's chair sits BEHIND the counter, and its backrest faces away
-  // from the visitor side so the sitter looks at the counter (and the badge on it),
-  // not at the wall. It used to be at `z + 1.15` — the visitor side — with the
-  // backrest at +z, so the receptionist sat in the walk-up facing backwards.
-  const rChair = new THREE.Group()
-  rChair.position.set(RECEPTION.x, 0, RECEPTION.z - 1.15)
-  const rcSeat = box(0.54, 0.07, 0.52, 0x6f8fa8, { rough: 0.7 })
-  rcSeat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
-  rChair.add(rcSeat)
-  const rcBack = box(0.54, 0.6, 0.06, 0x6f8fa8, { rough: 0.7 })
-  // Backrest on the far side from the counter: the counter is at +z from here.
-  rcBack.position.set(0, 0.76, -0.26)
-  rChair.add(rcBack)
-  const rcPost = cyl(0.045, 0.06, 0.44, 0x5b666e, 10, 0.4)
-  rcPost.position.y = 0.22
-  rChair.add(rcPost)
-  group.add(rChair)
-
-  // waiting area
   //
-  // The west sofa used to be at x -6.4, overlapping the reception counter and
-  // blocking the walk-up; it moved west of the reception group. Both sofas also
-  // floated: a seat slab at y 0.4 with no legs puts its underside 0.24 m in the air,
-  // which is what the detached shadow in the screenshot was. They now stand on
-  // legs, with the seat top at 0.40 and the underside at 0.16.
-  for (const wx of [-11.0, 6.4]) {
-    const wsofa = new THREE.Group()
-    wsofa.position.set(wx, 0, 9.8)
-    const wsSeat = box(1.8, 0.24, 0.9, 0x93a8ba, { rough: 0.9 })
-    wsSeat.position.y = 0.28
-    wsofa.add(wsSeat)
-    const wsBack = box(1.8, 0.6, 0.22, 0x93a8ba, { rough: 0.9 })
-    wsBack.position.set(0, 0.64, 0.34)
-    wsofa.add(wsBack)
-    // four short legs, so the sofa reads as standing on the floor
-    for (const [lx, lz] of [
-      [-0.78, -0.36],
-      [0.78, -0.36],
-      [-0.78, 0.36],
-      [0.78, 0.36],
-    ]) {
-      const leg = cyl(0.03, 0.035, 0.16, 0x5b666e, 8, 0.5)
-      leg.position.set(lx, 0.08, lz)
-      wsofa.add(leg)
+  // Rebuilt as four zones plus planting. Every coordinate matches a footprint in
+  // layout.ts, which the self-test checks for collision and doorway clearance. The
+  // previous set had accumulated a piece at a time — two benches, a second desk with
+  // its own chair, four planters, a sofa pair one behind the other, and a reception
+  // group overlapping the waiting area — and read as a stack of objects rather than
+  // a lobby.
+  //
+  //   entrance        mat, flanking plants, coat rack, umbrella stand
+  //   reception       counter facing the entrance, chair behind it, credenza
+  //   waiting (west)  two sofas facing each other over a low table, side table
+  //   exhibition      four plinths + a sculpture plinth along the north wall, bench
+  //   coffee (east)   bar, two stools, back shelf, table with two chairs
+  //   planting        wall gaps and the north bays between the room doors
+
+  /** A potted plant: tapered pot plus a layered bush. */
+  const potted = (
+    parent: THREE.Group,
+    x: number,
+    z: number,
+    r: number,
+    h: number,
+    leafMat: THREE.Material,
+    potMat: THREE.Material,
+  ) => {
+    const g = new THREE.Group()
+    g.position.set(x, 0, z)
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.82, r * 0.6, r * 1.1, 14), potMat)
+    p.position.y = r * 0.55
+    g.add(p)
+    const soil = new THREE.Mesh(
+      new THREE.CylinderGeometry(r * 0.74, r * 0.74, 0.05, 14),
+      stdMat(0x3b2f23),
+    )
+    soil.position.y = r * 1.1
+    g.add(soil)
+    const layers = h > 1.4 ? 3 : 2
+    for (let i = 0; i < layers; i++) {
+      const rr = r * (1.15 - i * 0.22)
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(rr, 1), leafMat)
+      bush.position.y = r * 1.2 + i * rr * 0.95
+      bush.scale.set(1, 0.78, 1)
+      g.add(bush)
     }
-    group.add(wsofa)
+    parent.add(g)
   }
-  // side table between the sofas, on its own base
-  const wTable = cyl(0.42, 0.46, 0.05, pal.wood, 20)
-  wTable.position.set(-8.5, 0.44, 9.8)
-  group.add(wTable)
-  const wTableLeg = cyl(0.05, 0.07, 0.42, pal.wood, 10)
-  wTableLeg.position.set(-8.5, 0.21, 9.8)
-  group.add(wTableLeg)
 
-  const coatRack = new THREE.Group()
-  coatRack.position.set(-11.0, 0, 11.4)
-  const crPole = cyl(0.045, 0.055, 1.72, 0x8b6f4f, 10)
-  crPole.position.y = 0.86
-  coatRack.add(crPole)
-  const crBase = cyl(0.28, 0.32, 0.05, 0x7a6244, 14)
-  crBase.position.y = 0.025
-  coatRack.add(crBase)
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2
-    const peg = box(0.05, 0.05, 0.22, 0x9c7d59)
-    peg.position.set(Math.cos(a) * 0.11, 1.6, Math.sin(a) * 0.11)
-    peg.rotation.y = -a
-    coatRack.add(peg)
+  /**
+   * A chair with the seat top every pose expects.
+   *
+   * `facing` is the direction the sitter looks, in the avatar convention (local +Z
+   * is forward), so the backrest goes on local -Z.
+   */
+  const lobbyChair = (
+    parent: THREE.Group,
+    x: number,
+    z: number,
+    facing: number,
+    fabric: number,
+  ) => {
+    const g = new THREE.Group()
+    g.position.set(x, 0, z)
+    g.rotation.y = facing
+    const seat = box(0.54, 0.07, 0.52, fabric, { rough: 0.7 })
+    seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
+    g.add(seat)
+    const back = box(0.54, 0.6, 0.06, fabric, { rough: 0.7 })
+    back.position.set(0, 0.76, -0.26)
+    g.add(back)
+    const post = cyl(0.04, 0.055, 0.44, 0x5b666e, 8, 0.4)
+    post.position.y = 0.22
+    g.add(post)
+    const star = cyl(0.26, 0.28, 0.04, 0x4d565d, 10, 0.3)
+    star.position.y = 0.02
+    g.add(star)
+    parent.add(g)
   }
-  group.add(coatRack)
 
-  const doormat = new THREE.Mesh(
-    new THREE.PlaneGeometry(3.0, 1.4),
-    stdMat(0x6b7a6e, { rough: 1 }),
-  )
-  doormat.rotation.x = -Math.PI / 2
-  doormat.position.set(0, 0.014, HALF_D - WALL_T - 0.9)
-  group.add(doormat)
+  {
+    // Materials local to the lobby: wood, foliage, terracotta, upholstery.
+    const woodMat = track(
+      new THREE.MeshStandardMaterial({ color: 0x8f6f4a, map: deskTex, roughness: 0.55 }),
+    )
+    const leafMat = track(new THREE.MeshStandardMaterial({ color: 0x4a8352, roughness: 0.9 }))
+    const potMat = track(new THREE.MeshStandardMaterial({ color: 0xa8674a, roughness: 0.8 }))
+    const counterMat = track(
+      new THREE.MeshStandardMaterial({ color: 0x8b6f52, map: deskTex, roughness: 0.45 }),
+    )
+    const stoneMat = track(
+      new THREE.MeshStandardMaterial({ color: 0xcfd6da, map: plasterTex, roughness: 0.7 }),
+    )
+
+    /* ---- entrance ---------------------------------------------------------- */
+    const mat = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.4), stdMat(0x6b7a6e, { rough: 1 }))
+    mat.rotation.x = -Math.PI / 2
+    mat.position.set(0, 0.014, 11.8)
+    group.add(mat)
+
+    potted(group, -2.8, 12.0, 0.4, 1.1, leafMat, potMat)
+    potted(group, 2.8, 12.0, 0.4, 1.1, leafMat, potMat)
+
+    {
+      const rack = new THREE.Group()
+      rack.position.set(-4.4, 0, 12.0)
+      const pole = cyl(0.045, 0.055, 1.72, 0x8b6f4f, 10)
+      pole.position.y = 0.86
+      rack.add(pole)
+      const base = cyl(0.28, 0.32, 0.05, 0x7a6244, 14)
+      base.position.y = 0.025
+      rack.add(base)
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2
+        const peg = box(0.05, 0.05, 0.22, 0x9c7d59)
+        peg.position.set(Math.cos(a) * 0.11, 1.6, Math.sin(a) * 0.11)
+        peg.rotation.y = -a
+        rack.add(peg)
+      }
+      group.add(rack)
+    }
+
+    {
+      const g = new THREE.Group()
+      g.position.set(4.4, 0, 12.0)
+      const drum = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.26, 0.22, 0.7, 14),
+        stdMat(0x5c666e, { metal: 0.5, rough: 0.4 }),
+      )
+      drum.position.y = 0.35
+      g.add(drum)
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + 0.4
+        const stick = cyl(0.025, 0.025, 0.95, i === 1 ? 0x2f6f8f : 0x8a3f3f, 8)
+        stick.position.set(Math.cos(a) * 0.1, 0.75, Math.sin(a) * 0.1)
+        stick.rotation.z = Math.cos(a) * 0.16
+        stick.rotation.x = -Math.sin(a) * 0.16
+        g.add(stick)
+      }
+      group.add(g)
+    }
+
+    /* ---- reception --------------------------------------------------------- */
+    {
+      const rec = new THREE.Group()
+      rec.position.set(RECEPTION.x, 0, RECEPTION.z)
+      // Visitor side is +z, so the badge, logo and monitor face that way.
+      const body = box(3.2, 1.05, 0.62, 0xe0d3bc, { rough: 0.6 })
+      body.position.y = 0.52
+      rec.add(body)
+      const top = new THREE.Mesh(new THREE.BoxGeometry(3.34, 0.06, 0.76), counterMat)
+      top.position.y = 1.08
+      rec.add(top)
+      const badge = box(0.5, 0.34, 0.03, 0xdfe6ea, { metal: 0.2 })
+      badge.position.set(0, 0.72, 0.33)
+      rec.add(badge)
+      const logo = box(0.44, 0.12, 0.02, 0x2f7f5f, { emissive: 0x2f7f5f, ei: 0.4 })
+      logo.position.set(0, 0.72, 0.35)
+      rec.add(logo)
+      const monitor = box(0.5, 0.34, 0.03, 0x25292d, { metal: 0.3 })
+      monitor.position.set(-1.2, 1.28, 0.06)
+      rec.add(monitor)
+      group.add(rec)
+    }
+    // Chair behind the counter, facing it: the counter is at +z from here.
+    lobbyChair(group, RECEPTION.x, RECEPTION.z - 1.15, 0, 0x6f8fa8)
+
+    {
+      // Credenza against the south wall, with a lamp and a tray.
+      const g = new THREE.Group()
+      g.position.set(-8.8, 0, 11.9)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 0.5), woodMat)
+      body.position.y = 0.35
+      g.add(body)
+      const top = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.05, 0.56), counterMat)
+      top.position.y = 0.72
+      g.add(top)
+      const lamp = cyl(0.1, 0.12, 0.24, 0xe8e2d2, 12)
+      lamp.position.set(-0.55, 0.86, 0)
+      g.add(lamp)
+      const tray = box(0.34, 0.03, 0.24, 0x6b5334)
+      tray.position.set(0.3, 0.76, 0)
+      g.add(tray)
+      group.add(g)
+    }
+
+    /* ---- waiting (west) ---------------------------------------------------- */
+    for (const [z, facing] of [
+      [8.2, 0], // north sofa faces south (+z), toward the table
+      [10.4, Math.PI], // south sofa faces north
+    ] as const) {
+      const g = new THREE.Group()
+      g.position.set(-13.0, 0, z)
+      g.rotation.y = facing
+      const seat = box(2.0, 0.24, 0.9, 0x93a8ba, { rough: 0.9 })
+      seat.position.y = 0.28
+      g.add(seat)
+      // Backrest away from the table, i.e. local -Z.
+      const back = box(2.0, 0.6, 0.22, 0x93a8ba, { rough: 0.9 })
+      back.position.set(0, 0.64, -0.34)
+      g.add(back)
+      for (const [lx, lz] of [
+        [-0.88, -0.36],
+        [0.88, -0.36],
+        [-0.88, 0.36],
+        [0.88, 0.36],
+      ]) {
+        const leg = cyl(0.03, 0.035, 0.16, 0x5b666e, 8, 0.5)
+        leg.position.set(lx, 0.08, lz)
+        g.add(leg)
+      }
+      group.add(g)
+    }
+
+    {
+      // Low table between the sofas, with a magazine on it.
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.05, 20), woodMat)
+      top.position.set(-13.0, 0.44, 9.3)
+      group.add(top)
+      const leg = cyl(0.05, 0.07, 0.42, 0x8f6f4a, 10)
+      leg.position.set(-13.0, 0.21, 9.3)
+      group.add(leg)
+      const mag = box(0.3, 0.02, 0.22, 0xd8cfc0)
+      mag.position.set(-13.0, 0.475, 9.3)
+      group.add(mag)
+    }
+
+    {
+      // Side table against the west wall, with a small plant.
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.34, 0.05, 16), woodMat)
+      top.position.set(-15.2, 0.5, 9.3)
+      group.add(top)
+      const leg = cyl(0.04, 0.05, 0.48, 0x8f6f4a, 10)
+      leg.position.set(-15.2, 0.25, 9.3)
+      group.add(leg)
+      potted(group, -15.2, 9.3, 0.16, 0.5, leafMat, potMat)
+    }
+
+    {
+      // Magazine rack: a low frame holding tilted papers.
+      const g = new THREE.Group()
+      g.position.set(-11.6, 0, 11.9)
+      for (const sxp of [-0.4, 0.4]) {
+        const side = box(0.06, 1.15, 0.3, 0x6b5334)
+        side.position.set(sxp, 0.58, 0)
+        g.add(side)
+      }
+      for (const y of [0.25, 0.6, 0.95]) {
+        const shelf = box(0.86, 0.04, 0.3, 0x7a6040)
+        shelf.position.set(0, y, 0)
+        g.add(shelf)
+        for (let i = 0; i < 3; i++) {
+          const m = box(0.24, 0.3, 0.03, [0xd05f4a, 0x4a72d0, 0xd0a84a][i], {})
+          m.position.set(-0.25 + i * 0.25, y + 0.17, 0)
+          m.rotation.x = -0.22
+          g.add(m)
+        }
+      }
+      group.add(g)
+    }
+
+    /* ---- exhibition (centre, north wall) ----------------------------------- */
+    // Four plinths flank the axis, each carrying a small object, plus a taller one
+    // with a sculpture. They are deliberately off-centre so the entrance-to-work
+    // sightline stays open.
+    const plinthObjects: ((g: THREE.Group, y: number) => void)[] = [
+      (g, y) => {
+        // a framed panel, leaning
+        const panel = box(0.34, 0.44, 0.03, 0xd9e2e8)
+        panel.position.y = y + 0.22
+        panel.rotation.x = -0.12
+        g.add(panel)
+      },
+      (g, y) => {
+        // two books, stacked
+        for (let i = 0; i < 2; i++) {
+          const b = box(0.3 - i * 0.04, 0.05, 0.22, i ? 0x8a5f3f : 0x3f5f8a)
+          b.position.set(i * 0.02, y + 0.03 + i * 0.055, 0)
+          g.add(b)
+        }
+      },
+      (g, y) => {
+        // a tall vase
+        const v = cyl(0.09, 0.13, 0.34, 0xc9a86a, 14)
+        v.position.y = y + 0.17
+        g.add(v)
+      },
+      (g, y) => {
+        // a model on a thin stand
+        const stem = cyl(0.015, 0.015, 0.14, 0x8a949c, 8)
+        stem.position.y = y + 0.07
+        g.add(stem)
+        const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 1), stoneMat)
+        orb.position.y = y + 0.19
+        g.add(orb)
+      },
+    ]
+    const plinthSpots: [number, number][] = [
+      [-6.0, 5.6],
+      [-3.6, 5.6],
+      [3.6, 5.6],
+      [6.0, 5.6],
+    ]
+    plinthSpots.forEach(([x, z], i) => {
+      const g = new THREE.Group()
+      g.position.set(x, 0, z)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.76, 1.1, 0.76), stoneMat)
+      body.position.y = 0.55
+      g.add(body)
+      const cap = box(0.84, 0.06, 0.84, 0xe6ebee)
+      cap.position.y = 1.13
+      g.add(cap)
+      plinthObjects[i]?.(g, 1.16)
+      group.add(g)
+    })
+
+    {
+      // The tall plinth: a sculpture with a small spot on the cap.
+      const g = new THREE.Group()
+      g.position.set(8.8, 0, 5.6)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.24, 0.72), stoneMat)
+      body.position.y = 0.62
+      g.add(body)
+      const cap = box(0.8, 0.06, 0.8, 0xe6ebee)
+      cap.position.y = 1.27
+      g.add(cap)
+      const art = new THREE.Mesh(
+        new THREE.TorusKnotGeometry(0.15, 0.05, 48, 8),
+        stdMat(0x2f7f5f, { metal: 0.5, rough: 0.3 }),
+      )
+      art.position.y = 1.52
+      g.add(art)
+      const spot = cyl(0.05, 0.06, 0.05, 0x2b3236, 10, 0.4)
+      spot.position.set(0.26, 1.31, 0)
+      g.add(spot)
+      group.add(g)
+    }
+
+    {
+      // Bench on the exhibition side, facing the plinths across the aisle.
+      const g = new THREE.Group()
+      g.position.set(-8.6, 0, 7.6)
+      g.rotation.y = Math.PI / 2 // faces east
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.1, 0.8), woodMat)
+      seat.position.y = 0.46
+      g.add(seat)
+      const back = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.46, 0.08), woodMat)
+      back.position.set(0, 0.72, -0.36)
+      g.add(back)
+      for (const lx of [-0.8, 0.8]) {
+        for (const lz of [-0.3, 0.3]) {
+          const leg = cyl(0.035, 0.04, 0.44, 0x5b666e, 10, 0.5)
+          leg.position.set(lx, 0.22, lz)
+          g.add(leg)
+        }
+      }
+      group.add(g)
+    }
+
+    /* ---- coffee bar (east) -------------------------------------------------- */
+    {
+      const g = new THREE.Group()
+      g.position.set(12.8, 0, 10.3)
+      // The bar faces the entrance (+z), so the stools sit on that side.
+      const body = box(3.0, 1.0, 0.6, 0x6b5334, { rough: 0.6 })
+      body.position.y = 0.5
+      g.add(body)
+      const top = new THREE.Mesh(new THREE.BoxGeometry(3.16, 0.07, 0.76), counterMat)
+      top.position.y = 1.03
+      g.add(top)
+      const machine = box(0.5, 0.4, 0.34, 0x3a4046, { metal: 0.5 })
+      machine.position.set(-0.7, 1.26, 0)
+      g.add(machine)
+      const head = cyl(0.05, 0.05, 0.1, 0x8a949c, 10, 0.4)
+      head.position.set(-0.7, 1.06, 0.14)
+      g.add(head)
+      for (let i = 0; i < 3; i++) {
+        const cup = cyl(0.05, 0.04, 0.07, 0xeae4d8, 10)
+        cup.position.set(0.25 + i * 0.13, 1.1, 0)
+        g.add(cup)
+      }
+      const menu = box(1.2, 0.5, 0.03, 0x25292d)
+      menu.position.set(0, 2.0, -0.2)
+      g.add(menu)
+      group.add(g)
+    }
+
+    for (const sx of [11.9, 13.7]) {
+      const g = new THREE.Group()
+      g.position.set(sx, 0, 11.3)
+      const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.07, 14), woodMat)
+      seat.position.y = 0.62
+      g.add(seat)
+      for (const [dx, dz] of [
+        [-0.14, -0.14],
+        [0.14, -0.14],
+        [-0.14, 0.14],
+        [0.14, 0.14],
+      ]) {
+        const lg = cyl(0.022, 0.025, 0.6, 0x5b666e, 8, 0.5)
+        lg.position.set(dx, 0.3, dz)
+        lg.rotation.z = -dx * 0.5
+        lg.rotation.x = dz * 0.5
+        g.add(lg)
+      }
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.19, 0.014, 6, 16),
+        stdMat(0x5b666e, { metal: 0.5 }),
+      )
+      ring.rotation.x = Math.PI / 2
+      ring.position.y = 0.24
+      g.add(ring)
+      group.add(g)
+    }
+
+    {
+      // Back shelf with jars, against the east partition.
+      const g = new THREE.Group()
+      g.position.set(12.8, 0, 9.0)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.5, 0.34), woodMat)
+      body.position.y = 0.75
+      g.add(body)
+      for (const y of [0.35, 0.75, 1.15]) {
+        const shelf = box(2.2, 0.04, 0.3, 0x7a6040)
+        shelf.position.set(0, y, 0.02)
+        g.add(shelf)
+        for (let i = 0; i < 5; i++) {
+          const jar = cyl(0.06, 0.06, 0.2, [0xc9a86a, 0x6b8f5a, 0x9a5f4a][i % 3], 10)
+          jar.position.set(-0.8 + i * 0.4, y + 0.12, 0.02)
+          g.add(jar)
+        }
+      }
+      group.add(g)
+    }
+
+    {
+      // Table with two chairs, in the coffee corner.
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.52, 0.05, 20), woodMat)
+      top.position.set(12.8, 0.44, 6.6)
+      group.add(top)
+      const leg = cyl(0.06, 0.08, 0.42, 0x5b666e, 10)
+      leg.position.set(12.8, 0.21, 6.6)
+      group.add(leg)
+      const base = cyl(0.28, 0.3, 0.03, 0x4d565d, 12, 0.3)
+      base.position.set(12.8, 0.015, 6.6)
+      group.add(base)
+      const mug = cyl(0.05, 0.045, 0.1, 0xeae4d8, 10)
+      mug.position.set(13.0, 0.5, 6.5)
+      group.add(mug)
+    }
+    // Chairs face the table: local +Z is forward, so the west chair turns -90°.
+    lobbyChair(group, 11.5, 6.6, -Math.PI / 2, 0x6f8fa8)
+    lobbyChair(group, 14.1, 6.6, Math.PI / 2, 0x6f8fa8)
+
+    /* ---- planting ----------------------------------------------------------- */
+    potted(group, -9.0, 5.0, 0.42, 1.05, leafMat, potMat)
+    potted(group, 9.2, 4.4, 0.42, 1.05, leafMat, potMat)
+    potted(group, -15.6, 6.0, 0.5, 1.1, leafMat, potMat)
+    potted(group, 15.6, 6.0, 0.5, 1.1, leafMat, potMat)
+  }
 
   /* ---------------------------------------------------------- entrance ---- */
   // A proper double door with glass leaves, transom and frame. The old version
@@ -2525,131 +2885,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
         bush.scale.set(1, 0.78, 1)
         g.add(bush)
       }
-      group.add(g)
-    }
-
-    /* ---------------- lobby ---------------- */
-    potted(-14.5, 11.6, 0.42, 1.1)
-    potted(14.5, 11.6, 0.42, 1.1)
-    potted(-6.5, 5.8, 0.36, 1.05)
-    potted(6.5, 5.8, 0.36, 1.05)
-
-    // umbrella stand: cylinder with a few leaning umbrellas
-    {
-      const g = new THREE.Group()
-      g.position.set(3.2, 0, 11.6)
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.7, 14), stdMat(0x5c666e, { metal: 0.5, rough: 0.4 }))
-      drum.position.y = 0.35
-      g.add(drum)
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * Math.PI * 2 + 0.4
-        const stick = cyl(0.025, 0.025, 0.95, i === 1 ? 0x2f6f8f : 0x8a3f3f, 8)
-        stick.position.set(Math.cos(a) * 0.1, 0.75, Math.sin(a) * 0.1)
-        stick.rotation.z = Math.cos(a) * 0.16
-        stick.rotation.x = -Math.sin(a) * 0.16
-        g.add(stick)
-      }
-      group.add(g)
-    }
-
-    // magazine rack: low frame holding tilted papers
-    {
-      const g = new THREE.Group()
-      g.position.set(-3.2, 0, 11.6)
-      for (const sxp of [-0.4, 0.4]) {
-        const side = box(0.06, 1.15, 0.3, 0x6b5334)
-        side.position.set(sxp, 0.58, 0)
-        g.add(side)
-      }
-      for (const y of [0.25, 0.6, 0.95]) {
-        const shelf = box(0.86, 0.04, 0.3, 0x7a6040)
-        shelf.position.set(0, y, 0)
-        g.add(shelf)
-        for (let i = 0; i < 3; i++) {
-          const mag = box(0.24, 0.3, 0.03, [0xd05f4a, 0x4a72d0, 0xd0a84a][i], {})
-          mag.position.set(-0.25 + i * 0.25, y + 0.17, 0)
-          mag.rotation.x = -0.22
-          g.add(mag)
-        }
-      }
-      group.add(g)
-    }
-
-    // benches with legs and a back
-    for (const bxs of [-13.0, 13.0]) {
-      const g = new THREE.Group()
-      g.position.set(bxs, 0, 7.6)
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.1, 0.84), woodMat2)
-      seat.position.y = 0.46
-      g.add(seat)
-      const back = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.46, 0.08), woodMat2)
-      back.position.set(0, 0.72, 0.36)
-      g.add(back)
-      for (const lx of [-0.8, 0.8]) {
-        const leg = cyl(0.035, 0.04, 0.44, 0x5b666e, 10, 0.5)
-        leg.position.set(lx, 0.22, 0)
-        g.add(leg)
-        const leg2 = leg.clone()
-        leg2.position.set(lx, 0.22, 0.28)
-        g.add(leg2)
-      }
-      group.add(g)
-    }
-
-    // second lobby desk (the reception had one; the west side had none)
-    {
-      const g = new THREE.Group()
-      g.position.set(-13.5, 0, 9.6)
-      const top = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.9), woodMat2)
-      top.position.y = 0.95
-      g.add(top)
-      const panel = box(1.5, 0.6, 0.07, 0xd7dee2, { rough: 0.7 })
-      panel.position.set(0, 0.6, -0.3)
-      g.add(panel)
-      for (const [lx, lz] of [[-0.75, -0.35], [0.75, -0.35], [-0.75, 0.35], [0.75, 0.35]]) {
-        const leg = box(0.055, 0.95, 0.055, pal.deskLeg, { metal: 0.4 })
-        leg.position.set(lx, 0.475, lz)
-        g.add(leg)
-      }
-      const lamp = cyl(0.09, 0.11, 0.02, 0x2b3236, 12, 0.4)
-      lamp.position.set(0.55, 0.99, -0.15)
-      g.add(lamp)
-      group.add(g)
-    }
-
-    // chair for the second lobby desk: without one it read as a table with a lamp
-    {
-      const g = new THREE.Group()
-      g.position.set(-13.5, 0, 10.7)
-      const seat = box(0.54, 0.07, 0.52, 0x6f8fa8, { rough: 0.7 })
-      seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
-      g.add(seat)
-      const back = box(0.54, 0.6, 0.06, 0x6f8fa8, { rough: 0.7 })
-      // Desk is to the north (-z), so the backrest goes south.
-      back.position.set(0, 0.76, 0.26)
-      g.add(back)
-      const post = cyl(0.04, 0.055, 0.44, 0x5b666e, 8, 0.4)
-      post.position.y = 0.22
-      g.add(post)
-      const star = cyl(0.26, 0.28, 0.04, 0x4d565d, 10, 0.3)
-      star.position.y = 0.02
-      g.add(star)
-      group.add(g)
-    }
-
-    // plinth for a sculpture, with the sculpture on it
-    {
-      const g = new THREE.Group()
-      g.position.set(8.5, 0, 11.2)
-      const base = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.3, 0.72), stoneMat)
-      base.position.y = 0.65
-      g.add(base)
-      const art = new THREE.Mesh(new THREE.TorusKnotGeometry(0.19, 0.062, 64, 10), stdMat(0xb08a5c, { metal: 0.7, rough: 0.3 }))
-      art.position.y = 1.5
-      g.add(art)
-      const spot = new THREE.PointLight(0xffe9c8, hour >= 18 || hour < 6 ? 0.5 : 0.12, 4)
-      spot.position.set(0, 2.3, 0.3)
-      g.add(spot)
       group.add(g)
     }
 
