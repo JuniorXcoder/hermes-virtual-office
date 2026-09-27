@@ -56,13 +56,17 @@ Talk to any agent from the office, with real memory: each agent has one thread, 
 in Hermes' own session store, so the conversation survives a restart of this app.
 `hermes chat -q` answers and returns a session id; `--resume` continues it.
 
-Chat runs as a **purpose-made profile** (`office-chat` by default) rather than
-`default`, because the `default` profile in a typical install carries a very large
-`system_prompt` that would be sent on every message. Create one with:
+An agent and a profile are the same thing: talking to `jun` runs the `jun` profile
+and stores the thread in its memory. The panel has a **+ Agent** button, which creates
+a profile the same way the CLI does:
 
 ```bash
-hermes profile create office-chat --no-skills
+hermes profile create <name> --no-skills
 ```
+
+Creating an agent this way gives it a 2 KB config. The install's own `default`
+profile may carry a very large `system_prompt` sent on every message, so chatting
+with a purpose-made agent is faster and cheaper.
 
 ### 5. Dual View Modes
 - **3D Isometric Mode**: Full 3D camera controls, orbit, zoom, ambient day/night lighting.

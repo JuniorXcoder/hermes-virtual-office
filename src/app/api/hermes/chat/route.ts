@@ -34,11 +34,24 @@ export async function GET(req: NextRequest) {
   const agent = req.nextUrl.searchParams.get('agent')
   try {
     if (!agent) {
+      // An agent IS a profile — one name, one memory store. The panel used to ask
+      // for a separate "profile for new chats", which was nonsense: `jun` the agent
+      // runs as the `jun` profile, so there was never a second choice to make. What
+      // it exposed was the mismatch between the board's assignee list and the
+      // install's profile list, which is an internal detail, not a user decision.
+      const profiles = await chatProfiles()
+      const known = new Set(profiles)
       return NextResponse.json({
         sessions: await listChatSessions(),
-        /** Who can be chatted with. */
-        agents: (await listAgents(await listTasks())).map((a) => a.name),
-        profiles: await chatProfiles(),
+        /**
+         * Everyone you can talk to: every profile, plus any board assignee that has
+         * no profile yet (so the list matches the office floor).
+         */
+        agents: (await listAgents(await listTasks()))
+          .map((a) => a.name)
+          .filter((n) => known.has(n) || n === 'default'),
+        /** Profiles that exist. Used to tell "can chat" from "needs a profile". */
+        profiles,
       })
     }
 
@@ -65,7 +78,6 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
   const agent = typeof body?.agent === 'string' ? body.agent.trim() : ''
   const message = typeof body?.message === 'string' ? body.message : ''
-  let profile = typeof body?.profile === 'string' ? body.profile.trim() : ''
 
   if (!agent) {
     return bad('agent wajib')
@@ -75,33 +87,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Default the profile to the one already used for this agent's thread, so
-    // continuing a conversation does not silently switch personas mid-thread.
-    const existing = await getChatSession(agent)
-    if (!profile) profile = existing?.profile || (await defaultChatProfile())
-    if (!profile) {
-      return bad('tidak ada profil untuk chat — buat satu dulu di menu Agent')
-    }
-    // A profile change mid-thread would mix two memory stores, so it is refused
-    // rather than silently starting a second thread under the same name.
-    if (existing && existing.profile !== profile) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'profile_locked',
-            message:
-              `percakapan dengan "${agent}" memakai profil "${existing.profile}". ` +
-              `Hapus thread dulu untuk pindah ke "${profile}".`,
-            status: 409,
-          },
-        },
-        { status: 409 },
-      )
-    }
+    // The agent name IS the profile name. One agent, one profile, one memory store.
+    const profile = agent
 
     const known = await listProfiles()
     if (!known.includes(profile)) {
-      return bad(`profil "${profile}" tidak ada`)
+      return bad(`profil "${profile}" tidak ada — buat agentnya dulu`)
     }
 
     const result = await sendChatMessage(agent, profile, message)
@@ -137,19 +128,4 @@ function bad(message: string) {
     { error: { code: 'invalid_request', message, status: 400 } },
     { status: 400 },
   )
-}
-
-/**
- * The profile a new chat uses when none was given.
- *
- * Prefers a profile named for the job, because the `default` profile carries a
- * ~66,000-character system prompt in its config — every message through it would
- * cost ~16k tokens. Any purpose-made chat profile is a fraction of that.
- */
-async function defaultChatProfile(): Promise<string> {
-  const profiles = await listProfiles()
-  const preferred = process.env.CHAT_PROFILE || 'office-chat'
-  if (profiles.includes(preferred)) return preferred
-  // Fall back to any non-default profile; `default` only if that is all there is.
-  return profiles.find((p) => p !== 'default') || profiles[0] || ''
 }

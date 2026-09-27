@@ -138,7 +138,11 @@ export default function OfficeApp() {
         onChanged={() => void loadTasks()}
       />
       <CronPanel open={cronOpen} onClose={() => setCronOpen(false)} />
-      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
+      <ChatPanel
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        onAgentCreated={() => void loadTasks()}
+      />
       <NewTaskDialog />
 
       {error && (

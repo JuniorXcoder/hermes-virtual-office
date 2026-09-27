@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchJson } from '@/lib/api'
 
 /**
- * Chat with an agent.
+ * Chat with agents — a WhatsApp-style list of conversations.
  *
- * The conversation lives in Hermes' own session store, so memory is real and
- * survives a restart of this app: sending resumes the agent's existing session.
- * This panel is a view over that — it does not keep its own copy of the history,
- * because two copies of "what was said" would drift.
+ * An agent IS a profile: one name, one memory store. Sending a message to `jun`
+ * runs the `jun` profile and stores the thread in that profile's session store, so
+ * the conversation is remembered. There is no separate "profile" to choose — an
+ * earlier version asked for one, which was a design mistake: `jun` the agent has no
+ * second identity to pick from, and exposing the install's profile list as a choice
+ * only confused things.
  *
- * One thread per agent, which is what "one session per agent" means in practice:
- * `agent` is the key, and its session id is the memory handle.
+ * The conversation list is every agent you can talk to, whether or not you have
+ * messaged them yet, so a new chat is "pick a name and type".
  */
 
 type Message = {
@@ -37,27 +39,43 @@ function when(iso: string): string {
   const diff = Date.now() - t
   const mins = Math.round(diff / 60_000)
   if (mins < 1) return 'baru saja'
-  if (mins < 60) return `${mins} mnt lalu`
-  if (diff < 86_400_000) return `${Math.round(mins / 60)} jam lalu`
-  return `${Math.round(diff / 86_400_000)} hari lalu`
+  if (mins < 60) return `${mins} mnt`
+  if (diff < 86_400_000) return `${Math.round(mins / 60)} jam`
+  return `${Math.round(diff / 86_400_000)} hr`
 }
 
 function clock(ts: number): string {
   return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
 }
 
+/** Initials for the avatar bubble, like a chat app. */
+function initials(name: string): string {
+  const clean = name.replace(/[^a-zA-Z0-9]/g, '')
+  return (clean.slice(0, 2) || '?').toUpperCase()
+}
+
+/** A stable colour per name, so the same agent always looks the same. */
+function hue(name: string): number {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
+  return h
+}
+
 export default function ChatPanel({
   open,
   onClose,
+  onAgentCreated,
 }: {
   open: boolean
   onClose: () => void
+  /** Called after creating an agent, so the office can refresh its roster. */
+  onAgentCreated?: () => void
 }) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [agents, setAgents] = useState<string[]>([])
   const [profiles, setProfiles] = useState<string[]>([])
 
-  /** null = the thread list; a name = that agent's conversation. */
+  /** null = the conversation list; a name = that chat. */
   const [openAgent, setOpenAgent] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [session, setSession] = useState<Session | null>(null)
@@ -66,7 +84,11 @@ export default function ChatPanel({
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const [profile, setProfile] = useState('')
+
+  /** The new-agent form. */
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
 
   const scroller = useRef<HTMLDivElement | null>(null)
 
@@ -93,8 +115,8 @@ export default function ChatPanel({
     if (open) void loadList()
   }, [open])
 
-  // Load a thread when one is opened. This is the only place history enters the
-  // panel: it comes from the CLI, not from local state.
+  // Load a thread when one is opened. History comes from Hermes' store, never from
+  // local state — two copies of "what was said" would drift.
   useEffect(() => {
     if (!openAgent) {
       setMessages([])
@@ -116,7 +138,6 @@ export default function ChatPanel({
         }
         setSession(res.data?.session ?? null)
         setMessages(res.data?.messages || [])
-        setProfile(res.data?.session?.profile || '')
       })
       .finally(() => alive && setLoading(false))
     return () => {
@@ -124,7 +145,6 @@ export default function ChatPanel({
     }
   }, [openAgent])
 
-  // Keep the newest message in view.
   useEffect(() => {
     const el = scroller.current
     if (el) el.scrollTop = el.scrollHeight
@@ -135,19 +155,19 @@ export default function ChatPanel({
     if (!text || !openAgent || busy) return
     setBusy(true)
     setErr(null)
-    // Show the message immediately: the reply can take many seconds because the
-    // agent may run tools, and an input that looks frozen reads as broken.
+    // Show it immediately: a reply can take many seconds because the agent may run
+    // tools, and an input that looks frozen reads as broken.
     setMessages((m) => [...m, { role: 'user', content: text, ts: Date.now() }])
     setDraft('')
     try {
       const res = await fetchJson<{ session: Session; reply: string }>('/api/hermes/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: openAgent, message: text, profile: profile || undefined }),
+        body: JSON.stringify({ agent: openAgent, message: text }),
       })
       if (!res.ok || !res.data) {
         setErr(res.error || 'agent tidak menjawab')
-        // Roll the optimistic bubble back, so the transcript matches what the agent
+        // Roll the optimistic bubble back so the transcript matches what the agent
         // actually received.
         setMessages((m) => m.slice(0, -1))
         setDraft(text)
@@ -158,7 +178,6 @@ export default function ChatPanel({
         ...m,
         { role: 'assistant', content: res.data!.reply || '(kosong)', ts: Date.now() },
       ])
-      setProfile(res.data.session.profile)
       void loadList()
     } finally {
       setBusy(false)
@@ -179,20 +198,68 @@ export default function ChatPanel({
     void loadList()
   }
 
+  /** Create an agent (a profile) and open its chat straight away. */
+  async function createAgent() {
+    const name = newName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    if (!name) {
+      setErr('nama agent hanya huruf kecil, angka, - dan _')
+      return
+    }
+    setCreateBusy(true)
+    setErr(null)
+    try {
+      const res = await fetchJson<{ name: string }>('/api/hermes/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create', name }),
+      })
+      if (!res.ok) {
+        setErr(res.error || 'gagal membuat agent')
+        return
+      }
+      setNewName('')
+      setCreating(false)
+      onAgentCreated?.()
+      await loadList()
+      setOpenAgent(name)
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   if (!open) return null
 
-  /** Agents with a thread, plus the ones that could start one. */
-  const started = new Set(sessions.map((s) => s.agent))
-  const notStarted = agents.filter((a) => !started.has(a))
+  const byAgent = new Map(sessions.map((s) => [s.agent, s]))
+  /** Everyone, chatted-with first (newest on top), then the rest alphabetically. */
+  const rows = [
+    ...sessions.map((s) => s.agent),
+    ...agents.filter((a) => !byAgent.has(a)).sort(),
+  ]
+  const chattable = new Set(profiles)
 
   return (
     <aside className="vp-panel right-0 vp-chat">
       <header className="vp-panel-head">
-        <h2>{openAgent ? `Chat · ${openAgent}` : 'Chat'}</h2>
+        {openAgent ? (
+          <div className="vp-chat-head">
+            <button className="vp-chat-back" onClick={() => setOpenAgent(null)} aria-label="Kembali">
+              ←
+            </button>
+            <span className="vp-chat-av" style={{ background: `hsl(${hue(openAgent)} 42% 32%)` }}>
+              {initials(openAgent)}
+            </span>
+            <div className="vp-chat-head-name">
+              <b>{openAgent}</b>
+              <i>{session ? `${session.messageCount} pesan` : 'percakapan baru'}</i>
+            </div>
+          </div>
+        ) : (
+          <h2>Chat</h2>
+        )}
         <div className="flex items-center gap-2">
-          {openAgent && (
-            <button className="vp-chip-btn" onClick={() => setOpenAgent(null)}>
-              ← Semua
+          {!openAgent && (
+            <button className="vp-chip-btn" onClick={() => setCreating((v) => !v)}>
+              + Agent
             </button>
           )}
           <button className="vp-x" onClick={onClose} aria-label="Tutup">
@@ -204,87 +271,82 @@ export default function ChatPanel({
       <div className="vp-pad flex flex-col gap-3 vp-chat-body">
         {err && <div className="vp-err">{err}</div>}
 
+        {creating && !openAgent && (
+          <div className="vp-chat-new">
+            <input
+              className="vp-input"
+              value={newName}
+              autoFocus
+              placeholder="nama agent (mis. riset, backend)"
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void createAgent()
+              }}
+            />
+            <button className="vp-btn" disabled={createBusy || !newName.trim()} onClick={createAgent}>
+              {createBusy ? '…' : 'Buat'}
+            </button>
+            <div className="vp-note">
+              Agent = profil Hermes. Tiap agent punya memory sendiri, dan muncul di kantor
+              setelah dibuat.
+            </div>
+          </div>
+        )}
+
         {!openAgent ? (
-          /* ------------------------------------------------- the thread list -- */
+          /* ------------------------------------------------- the chat list -- */
           <>
             {loading && <div className="vp-muted">memuat…</div>}
-
-            <div className="vp-sub">PERCAKAPAN ({sessions.length})</div>
-            <div className="flex flex-col gap-2">
-              {sessions.map((s) => (
-                <button key={s.agent} className="vp-chat-card" onClick={() => setOpenAgent(s.agent)}>
-                  <div className="vp-chat-card-top">
-                    <b>{s.agent}</b>
-                    <span className="vp-muted">{when(s.updatedAt)}</span>
-                  </div>
-                  <div className="vp-chat-card-title">{s.title}</div>
-                  <div className="vp-card-meta">
-                    <span className="vp-chip">{s.profile}</span>
-                    <span className="vp-muted">{s.messageCount} pesan</span>
-                  </div>
-                </button>
-              ))}
-              {!loading && !sessions.length && (
-                <div className="vp-muted">belum ada percakapan</div>
+            <div className="flex flex-col">
+              {rows.map((name) => {
+                const s = byAgent.get(name)
+                const canChat = chattable.has(name)
+                return (
+                  <button
+                    key={name}
+                    className="vp-chat-row"
+                    onClick={() => setOpenAgent(name)}
+                    disabled={!canChat}
+                    title={canChat ? '' : 'belum punya profil'}
+                  >
+                    <span
+                      className="vp-chat-av"
+                      style={{ background: `hsl(${hue(name)} 42% 32%)` }}
+                    >
+                      {initials(name)}
+                    </span>
+                    <span className="vp-chat-row-main">
+                      <span className="vp-chat-row-top">
+                        <b>{name}</b>
+                        <i>{s ? when(s.updatedAt) : ''}</i>
+                      </span>
+                      <span className="vp-chat-row-sub">
+                        {s ? s.title : canChat ? 'mulai percakapan' : 'belum punya profil'}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+              {!loading && !rows.length && (
+                <div className="vp-muted">
+                  belum ada agent — klik <b>+ Agent</b> untuk membuat satu
+                </div>
               )}
             </div>
-
-            {notStarted.length > 0 && (
-              <>
-                <div className="vp-sub">MULAI DENGAN</div>
-                <div className="flex flex-wrap gap-2">
-                  {notStarted.map((a) => (
-                    <button key={a} className="vp-chip-btn" onClick={() => setOpenAgent(a)}>
-                      {a}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {profiles.length > 0 && (
-              <>
-                <div className="vp-sub">PROFIL UNTUK CHAT BARU</div>
-                <select
-                  className="vp-input"
-                  value={profile}
-                  onChange={(e) => setProfile(e.target.value)}
-                >
-                  {profiles.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                      {p === 'office-chat' ? ' (ringkas)' : ''}
-                    </option>
-                  ))}
-                </select>
-                <div className="vp-note">
-                  Percakapan disimpan di session store Hermes — memory-nya nyata dan
-                  bertahan setelah aplikasi ini restart. Satu thread per agent.
-                </div>
-              </>
-            )}
           </>
         ) : (
-          /* ------------------------------------------------- the conversation -- */
+          /* -------------------------------------------------- the conversation -- */
           <>
-            <div className="vp-chat-meta">
-              {session ? (
-                <>
-                  <span className="vp-chip">{session.profile}</span>
-                  <code>{session.id}</code>
-                  <button className="vp-chip-btn" disabled={busy} onClick={resetThread}>
-                    Hapus thread
-                  </button>
-                </>
-              ) : (
-                <span className="vp-muted">percakapan baru — pesan pertama akan membuatnya</span>
-              )}
-            </div>
-
             <div className="vp-chat-scroll" ref={scroller}>
               {loading && <div className="vp-muted">memuat riwayat…</div>}
               {!loading && !messages.length && (
-                <div className="vp-muted">belum ada pesan</div>
+                <div className="vp-chat-empty">
+                  Mulai percakapan dengan <b>{openAgent}</b>.
+                  <br />
+                  <span className="vp-muted">
+                    Pesan disimpan di memory agent ini dan tetap ada setelah aplikasi restart.
+                  </span>
+                </div>
               )}
               {messages.map((m, i) => (
                 <div key={i} className={`vp-msg ${m.role}`}>
@@ -294,7 +356,11 @@ export default function ChatPanel({
               ))}
               {busy && (
                 <div className="vp-msg assistant">
-                  <div className="vp-msg-body vp-muted">sedang bekerja…</div>
+                  <div className="vp-msg-body vp-typing">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
                 </div>
               )}
             </div>
@@ -302,9 +368,9 @@ export default function ChatPanel({
             <div className="vp-chat-input">
               <textarea
                 className="vp-input"
-                rows={2}
+                rows={1}
                 value={draft}
-                placeholder="Tulis pesan… (Enter kirim, Shift+Enter baris baru)"
+                placeholder="Tulis pesan…"
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -313,10 +379,21 @@ export default function ChatPanel({
                   }
                 }}
               />
-              <button className="vp-btn" disabled={busy || !draft.trim()} onClick={send}>
-                {busy ? '…' : 'Kirim'}
+              <button
+                className="vp-chat-send"
+                disabled={busy || !draft.trim()}
+                onClick={send}
+                aria-label="Kirim"
+              >
+                ➤
               </button>
             </div>
+
+            {session && (
+              <button className="vp-chat-reset" disabled={busy} onClick={resetThread}>
+                Hapus riwayat percakapan ini
+              </button>
+            )}
           </>
         )}
       </div>

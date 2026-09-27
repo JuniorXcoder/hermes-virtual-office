@@ -288,10 +288,23 @@ function hermesHome(): string {
  * thing `hermes profile list` counts.
  */
 export async function listProfiles(): Promise<string[]> {
+  const out: string[] = []
+
+  // `default` is the install's own profile and lives at the Hermes root
+  // (~/.hermes/config.yaml), NOT under profiles/. Reading only the profiles/
+  // directory left it out, so it appeared as an agent on the floor (assignees include
+  // it) while `listProfiles().includes('default')` was false — which made the chat
+  // panel list it and then refuse to send to it.
+  try {
+    await access(path.join(hermesHome(), 'config.yaml'))
+    out.push('default')
+  } catch {
+    // no root config: a profiles-only install
+  }
+
   const dir = path.join(hermesHome(), 'profiles')
   try {
     const entries = await readdir(dir, { withFileTypes: true })
-    const out: string[] = []
     for (const e of entries) {
       if (!e.isDirectory()) continue
       try {
@@ -301,10 +314,10 @@ export async function listProfiles(): Promise<string[]> {
         // a directory without config.yaml is not a profile
       }
     }
-    return out.sort()
   } catch {
-    return []
+    // no profiles/ directory yet
   }
+  return out.sort()
 }
 
 const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/

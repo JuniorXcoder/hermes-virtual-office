@@ -574,92 +574,106 @@ kbd {
 .vp-check input { margin-top: 1px; }
 
 /* --------------------------------------------------------------------- chat -- */
-/* The panel is a column: fixed header, scrolling transcript, pinned composer. The
-   transcript must be the only thing that grows, or the input drifts off screen. */
-.vp-chat .vp-chat-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+/* WhatsApp-shaped: a list of conversations, then one thread. The transcript is the
+   only element that grows; header and composer stay put. */
+.vp-chat .vp-chat-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* header: avatar + name, with a back arrow when a thread is open */
+.vp-chat-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.vp-chat-back {
+  background: none; border: none; color: #9fd8bb; cursor: pointer;
+  font-size: 17px; line-height: 1; padding: 0 2px;
 }
-.vp-chat-card {
-  text-align: left;
-  border: 1px solid #23313c;
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: #131c23;
+.vp-chat-head-name { display: flex; flex-direction: column; min-width: 0; }
+.vp-chat-head-name b { font-size: 13px; }
+.vp-chat-head-name i { font-size: 10px; color: var(--muted); font-style: normal; }
+
+/* avatar bubble: initials on a per-name colour so the same agent always looks alike */
+.vp-chat-av {
+  flex: 0 0 auto;
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #eaf2f7;
+}
+
+/* the conversation list */
+.vp-chat-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 8px; width: 100%; text-align: left;
+  background: none; border: none; border-bottom: 1px solid #1b2731;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
-.vp-chat-card:hover { border-color: #35506a; background: #16222b; }
-.vp-chat-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
+.vp-chat-row:hover:not(:disabled) { background: #16222b; }
+.vp-chat-row:disabled { opacity: 0.45; cursor: default; }
+.vp-chat-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vp-chat-row-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.vp-chat-row-top b { font-size: 12.5px; color: #d6e8de; }
+.vp-chat-row-top i { font-size: 9.5px; color: #5f7a8a; font-style: normal; }
+.vp-chat-row-sub {
+  font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.vp-chat-card-title {
-  font-size: 11.5px;
-  color: #b9cbd6;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.vp-chat-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 10px;
-}
-.vp-chat-meta code { color: #5f7a8a; }
+
+/* new-agent form */
+.vp-chat-new { display: flex; flex-direction: column; gap: 6px; }
+.vp-chat-new input { font-size: 12px; }
+
+/* the thread */
 .vp-chat-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-right: 4px;
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 4px 2px;
+  /* faint dotted paper, so the thread reads as a separate surface */
+  background-image: radial-gradient(#1a242c 1px, transparent 1px);
+  background-size: 14px 14px;
+  border-radius: 8px;
+}
+.vp-chat-empty {
+  margin: auto; text-align: center; font-size: 12px;
+  color: #b9cbd6; line-height: 1.6; padding: 20px 12px;
 }
 .vp-msg {
-  max-width: 88%;
-  border-radius: 10px;
-  padding: 7px 10px;
+  max-width: 84%; border-radius: 12px; padding: 7px 10px;
   font: 400 12px/1.45 ui-sans-serif, system-ui, sans-serif;
-  /* Long tokens (paths, URLs, base64) must wrap rather than widen the panel. */
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  /* long tokens (paths, URLs) must wrap, not widen the panel */
+  overflow-wrap: anywhere; white-space: pre-wrap;
 }
-.vp-msg.user {
-  align-self: flex-end;
-  background: #1d3a2c;
-  border: 1px solid #2f5a45;
-  color: #d6e8de;
+.vp-msg.user { align-self: flex-end; background: #1f5c46; color: #eafaf1; border-bottom-right-radius: 3px; }
+.vp-msg.assistant { align-self: flex-start; background: #1d2b35; color: #d3e2ec; border-bottom-left-radius: 3px; }
+.vp-msg-time { font: 400 9px/1 ui-monospace, monospace; color: #7f97a6; margin-top: 4px; text-align: right; }
+.vp-msg.assistant .vp-msg-time { color: #5f7a8a; }
+
+/* three-dot typing indicator */
+.vp-typing { display: flex; gap: 4px; align-items: center; height: 12px; }
+.vp-typing span {
+  width: 5px; height: 5px; border-radius: 50%; background: #6d8ea3;
+  animation: vp-blink 1.2s infinite ease-in-out;
 }
-.vp-msg.assistant {
-  align-self: flex-start;
-  background: #16222b;
-  border: 1px solid #23313c;
-  color: #cfe0ea;
+.vp-typing span:nth-child(2) { animation-delay: 0.2s; }
+.vp-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes vp-blink {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
 }
-.vp-msg-time {
-  font: 400 9px/1 ui-monospace, monospace;
-  color: #5f7a8a;
-  margin-top: 4px;
-  text-align: right;
-}
+
+/* composer */
 .vp-chat-input {
-  display: flex;
-  gap: 6px;
-  align-items: flex-end;
-  border-top: 1px solid #23313c;
-  padding-top: 8px;
+  display: flex; gap: 6px; align-items: flex-end;
+  border-top: 1px solid #23313c; padding-top: 8px;
 }
-.vp-chat-input textarea { flex: 1; resize: vertical; }
+.vp-chat-input textarea { flex: 1; resize: none; max-height: 120px; }
+.vp-chat-send {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: #2f7f5f; color: #eafaf1; font-size: 14px;
+}
+.vp-chat-send:disabled { background: #26343d; color: #5f7a8a; cursor: default; }
+.vp-chat-reset {
+  background: none; border: none; color: #7f97a6; cursor: pointer;
+  font-size: 10px; text-decoration: underline; align-self: center; padding: 2px;
+}
+.vp-chat-reset:hover { color: #e8b978; }
 
 /* ------------------------------------------------- cross-menu action items -- */
 /* One row per proposed task. The row is a checkbox + the deliverable, with the

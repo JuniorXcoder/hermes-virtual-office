@@ -451,6 +451,24 @@ console.log('geometry')
   check('lobby seating is placed where it can be used', problems.length === 0, problems.join(' | '))
 }
 
+// `listProfiles()` must include `default`, which lives at the Hermes root
+// (~/.hermes/config.yaml) rather than under profiles/. Reading only profiles/ left it
+// out, and because the board's assignee list DOES include it, the chat panel listed
+// `default` as an agent and then refused to send to it — "profil default tidak ada".
+{
+  const problems: string[] = []
+  // The source must look at the root config, not only the profiles directory.
+  const src = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
+  const fn = src.slice(src.indexOf('export async function listProfiles'))
+  const body = fn.slice(0, fn.indexOf('\n}'))
+  if (!body.includes("hermesHome(), 'config.yaml'")) {
+    problems.push('listProfiles does not look at the root config.yaml (default profile)')
+  }
+  if (!body.includes("'default'")) problems.push("listProfiles never pushes 'default'")
+  check('listProfiles includes the default profile', problems.length === 0, problems.join(' | '))
+}
+
+
 
 // The street must be layered, not overlapping: building, then sidewalk, then road.
 //

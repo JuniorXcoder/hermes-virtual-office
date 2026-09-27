@@ -534,10 +534,18 @@ own: `hermes chat -q` answers and prints a `session_id`, and `--resume <id>` con
 that conversation with its history intact. The office only maps an agent to its
 session id. See `src/lib/hermes/chat.ts` for why a second store was not built.
 
+**An agent IS a profile.** Sending to `jun` runs the `jun` profile, and the thread
+lives in that profile's store. There is no separate profile parameter: an earlier
+version accepted one, which was a design mistake — `jun` the agent has no second
+identity to choose from, and exposing the install's profile list as a choice only
+confused things.
+
 ### `GET`
 
-Without `agent`: the thread list, plus who can be chatted with and which profiles
-exist.
+Without `agent`: the thread list, plus who can be chatted with. `agents` is every
+profile, plus any board assignee that has no profile yet, so the list matches the
+office floor. A name in `agents` but not in `profiles` cannot be chatted with — it is
+shown disabled with "belum punya profil".
 
 ```json
 {
@@ -545,8 +553,8 @@ exist.
     { "id": "20260927_114029_c50d6a", "agent": "jun", "profile": "office-chat",
       "title": "Ingat kode proyek AD-2026", "updatedAt": "…", "messageCount": 4 }
   ],
-  "agents": ["default", "office-chat"],
-  "profiles": ["office-chat"]
+  "agents": ["default", "jun", "riset"],
+  "profiles": ["default", "jun"]
 }
 ```
 
@@ -567,17 +575,14 @@ state — `session` is `null` and `messages` is empty, not a 404.
 ### `POST`
 
 ```json
-{ "agent": "jun", "message": "Kode proyek saya apa?", "profile": "office-chat" }
+{ "agent": "jun", "message": "Kode proyek saya apa?" }
 ```
 
-`profile` is optional; it defaults to the thread's existing profile, or
-`CHAT_PROFILE`. A reply can take minutes because the agent may run tools, so the
-server allows up to 300 s.
+A reply can take minutes because the agent may run tools, so the server allows up to
+300 s.
 
 - `201`-style success → `{ "success": true, "session": { … }, "reply": "AD-2026." }`
-- `400 invalid_request` → empty `agent` or `message`, or an unknown profile
-- `409 profile_locked` → the thread already uses another profile; mixing two memory
-  stores under one agent is refused rather than done silently
+- `400 invalid_request` → empty `agent` or `message`, or the agent has no profile
 - `502 chat_failed` → the CLI failed, or answered without a readable `session_id`
 
 ### `DELETE ?agent=<name>`
