@@ -123,23 +123,20 @@ function toTask(r: RawTask): Task {
 /**
  * Tasks on the office's board.
  *
- * `--archived` on `hermes kanban list` is a FILTER, not "include archived": passing
- * it returns only archived rows, so the old `includeArchived` flag silently
- * returned an EMPTY list for a normal board. Measured: `list --json` returned 16
- * rows and `list --archived --json` returned 0 on the same board.
+ * `--archived` is INCLUSIVE: it returns the live rows plus the archived ones.
+ * Measured on one board — `list` gave 11 rows, `list --archived` gave 17, and every
+ * live id was in the second set.
  *
- * There is no CLI flag for "everything including archived", so the two sets are
- * fetched separately and merged by id.
+ * (An earlier note here claimed the opposite, that `--archived` filtered to ONLY
+ * archived rows, and cited a 16-vs-0 measurement. That measurement does not
+ * reproduce and the conclusion was wrong. The lesson is the flag's semantics were
+ * asserted from one reading instead of being checked, which is exactly the mistake
+ * the rest of this file keeps paying for.)
  */
 export async function listTasks(opts: { includeArchived?: boolean } = {}): Promise<Task[]> {
-  const rows = await kanbanJson<RawTask[]>(['list'])
-  const live = rows.map(toTask)
-  if (!opts.includeArchived) return live
-  const archived = await kanbanJson<RawTask[]>(['list', '--archived'])
-    .then((r) => r.map(toTask))
-    .catch(() => [] as Task[])
-  const seen = new Set(live.map((t) => t.id))
-  return [...live, ...archived.filter((t) => !seen.has(t.id))]
+  const args = opts.includeArchived ? ['list', '--archived'] : ['list']
+  const rows = await kanbanJson<RawTask[]>(args)
+  return rows.map(toTask)
 }
 
 export async function getTask(id: string): Promise<Task | null> {

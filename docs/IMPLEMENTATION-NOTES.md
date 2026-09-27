@@ -1412,3 +1412,29 @@ board is back to its 13 tasks and `jobs.json` was restored from a backup taken b
 the test.
 
 Self-test: 21 checks (added origin round-trip and minutes parsing).
+
+---
+
+## 31. A measurement that did not reproduce
+
+While clearing the board I checked `list` against `list --archived` on the same board
+and got a result that contradicted a note in this codebase:
+
+```
+list             -> 11 rows
+list --archived  -> 17 rows, and every live id was in that set
+```
+
+So `--archived` is INCLUSIVE — it returns the live rows plus the archived ones. The
+earlier note in `kanban.ts` claimed the opposite, that it filtered to ONLY archived
+rows, and cited "16 vs 0". That measurement does not reproduce.
+
+The wrong conclusion had consequences beyond the comment: `listTasks({includeArchived})`
+was written to fetch the two sets separately and merge them by id, which was
+unnecessary work built on a false premise.
+
+The lesson is the one this file keeps recording: the flag's semantics were asserted
+from a single reading instead of being checked against a second measurement. `listTasks`
+is now the one-liner the real semantics allow.
+
+Fixed the comment and the function; the self-test suite still passes 21 checks.
