@@ -573,6 +573,94 @@ kbd {
 }
 .vp-check input { margin-top: 1px; }
 
+/* --------------------------------------------------------------------- chat -- */
+/* The panel is a column: fixed header, scrolling transcript, pinned composer. The
+   transcript must be the only thing that grows, or the input drifts off screen. */
+.vp-chat .vp-chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vp-chat-card {
+  text-align: left;
+  border: 1px solid #23313c;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #131c23;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vp-chat-card:hover { border-color: #35506a; background: #16222b; }
+.vp-chat-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.vp-chat-card-title {
+  font-size: 11.5px;
+  color: #b9cbd6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vp-chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10px;
+}
+.vp-chat-meta code { color: #5f7a8a; }
+.vp-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+.vp-msg {
+  max-width: 88%;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font: 400 12px/1.45 ui-sans-serif, system-ui, sans-serif;
+  /* Long tokens (paths, URLs, base64) must wrap rather than widen the panel. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.vp-msg.user {
+  align-self: flex-end;
+  background: #1d3a2c;
+  border: 1px solid #2f5a45;
+  color: #d6e8de;
+}
+.vp-msg.assistant {
+  align-self: flex-start;
+  background: #16222b;
+  border: 1px solid #23313c;
+  color: #cfe0ea;
+}
+.vp-msg-time {
+  font: 400 9px/1 ui-monospace, monospace;
+  color: #5f7a8a;
+  margin-top: 4px;
+  text-align: right;
+}
+.vp-chat-input {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  border-top: 1px solid #23313c;
+  padding-top: 8px;
+}
+.vp-chat-input textarea { flex: 1; resize: vertical; }
+
 /* ------------------------------------------------- cross-menu action items -- */
 /* One row per proposed task. The row is a checkbox + the deliverable, with the
    owner picker underneath, because the owner is the part that needs a decision:

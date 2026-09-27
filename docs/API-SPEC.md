@@ -525,7 +525,70 @@ returns an empty list rather than inventing work.
 
 ---
 
-## 15. Polling
+## 15. `/api/hermes/chat`
+
+Talk to an agent, with memory.
+
+The memory is Hermes' own per-profile session store (`state.db`), not a store of our
+own: `hermes chat -q` answers and prints a `session_id`, and `--resume <id>` continues
+that conversation with its history intact. The office only maps an agent to its
+session id. See `src/lib/hermes/chat.ts` for why a second store was not built.
+
+### `GET`
+
+Without `agent`: the thread list, plus who can be chatted with and which profiles
+exist.
+
+```json
+{
+  "sessions": [
+    { "id": "20260927_114029_c50d6a", "agent": "jun", "profile": "office-chat",
+      "title": "Ingat kode proyek AD-2026", "updatedAt": "…", "messageCount": 4 }
+  ],
+  "agents": ["default", "office-chat"],
+  "profiles": ["office-chat"]
+}
+```
+
+With `?agent=<name>`: that thread's messages, oldest first. No thread yet is a normal
+state — `session` is `null` and `messages` is empty, not a 404.
+
+```json
+{
+  "agent": "jun",
+  "session": { "id": "…", "profile": "office-chat", "messageCount": 4 },
+  "messages": [
+    { "role": "user", "content": "Ingat kode proyek AD-2026", "ts": 1790484022000 },
+    { "role": "assistant", "content": "Tersimpan.", "ts": 1790484030000 }
+  ]
+}
+```
+
+### `POST`
+
+```json
+{ "agent": "jun", "message": "Kode proyek saya apa?", "profile": "office-chat" }
+```
+
+`profile` is optional; it defaults to the thread's existing profile, or
+`CHAT_PROFILE`. A reply can take minutes because the agent may run tools, so the
+server allows up to 300 s.
+
+- `201`-style success → `{ "success": true, "session": { … }, "reply": "AD-2026." }`
+- `400 invalid_request` → empty `agent` or `message`, or an unknown profile
+- `409 profile_locked` → the thread already uses another profile; mixing two memory
+  stores under one agent is refused rather than done silently
+- `502 chat_failed` → the CLI failed, or answered without a readable `session_id`
+
+### `DELETE ?agent=<name>`
+
+Forgets the agent's thread pointer. **The history is not deleted** — it stays in
+Hermes' session store and is recoverable with `hermes sessions list`. Reset is a
+pointer operation, not a destructive one.
+
+---
+
+## 16. Polling
 
 There is no push channel. The client polls `GET /api/hermes/tasks` on an interval
 set by `NEXT_PUBLIC_POLL_MS` (default `4000`). This is a build-time constant, so
@@ -536,7 +599,7 @@ adding SSE would mean inventing a second source of truth.
 
 ---
 
-## 16. Server-side limits worth knowing
+## 17. Server-side limits worth knowing
 
 - **One meeting at a time per server process.** State lives in memory, so a
   multi-instance deployment would run one meeting per instance and they would not

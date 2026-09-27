@@ -50,11 +50,25 @@ Built with **Next.js**, **Three.js**, and **TypeScript**. It reads and drives yo
 - Click on any active agent's monitor to open a **Live Terminal Modal**, viewing real-time commands, tool calls, and progress.
 - Send course corrections or cancel stalled loops directly from the office interface.
 
-### 4. Dual View Modes
+### 4. Direct Chat with Memory
+
+Talk to any agent from the office, with real memory: each agent has one thread, stored
+in Hermes' own session store, so the conversation survives a restart of this app.
+`hermes chat -q` answers and returns a session id; `--resume` continues it.
+
+Chat runs as a **purpose-made profile** (`office-chat` by default) rather than
+`default`, because the `default` profile in a typical install carries a very large
+`system_prompt` that would be sent on every message. Create one with:
+
+```bash
+hermes profile create office-chat --no-skills
+```
+
+### 5. Dual View Modes
 - **3D Isometric Mode**: Full 3D camera controls, orbit, zoom, ambient day/night lighting.
 - **2D Kanban Mode**: High-efficiency, accessible, mobile-friendly Kanban board for rapid management.
 
-### 5. Talks to the Hermes CLI, not a private schema
+### 6. Talks to the Hermes CLI, not a private schema
 - Drives the board through `hermes kanban ... --json`, the CLI's documented
   surface, rather than reading `kanban.db` directly. Board layout and database
   format can change without breaking this app.

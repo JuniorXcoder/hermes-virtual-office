@@ -8,6 +8,7 @@ import TaskPanel from './TaskPanel'
 import MeetingPanel from './MeetingPanel'
 import AgentSpawnPanel from './AgentSpawnPanel'
 import CronPanel from './CronPanel'
+import ChatPanel from './ChatPanel'
 import NewTaskDialog from './NewTaskDialog'
 import { startPolling, useOffice } from '@/lib/store'
 import type { OfficeScene } from '@/lib/office/scene'
@@ -28,6 +29,7 @@ export default function OfficeApp() {
   const [meetOpen, setMeetOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
   const [cronOpen, setCronOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
 
   useEffect(() => startPolling(), [])
 
@@ -56,6 +58,7 @@ export default function OfficeApp() {
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return
       if (e.key === 'm' || e.key === 'M') setMeetOpen((v) => !v)
       if (e.key === 'n' || e.key === 'N') setNewTaskOpen(true)
+      if (e.key === 'c' || e.key === 'C') setChatOpen((v) => !v)
       if (e.key === '3') setView('3d')
       if (e.key === '2') setView('2d')
     }
@@ -97,6 +100,9 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setCronOpen(true)}>
             Cron
           </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setChatOpen(true)}>
+            Chat
+          </button>
           <div className="vp-seg">
             <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
             <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>2D</button>
@@ -132,6 +138,7 @@ export default function OfficeApp() {
         onChanged={() => void loadTasks()}
       />
       <CronPanel open={cronOpen} onClose={() => setCronOpen(false)} />
+      <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} />
       <NewTaskDialog />
 
       {error && (

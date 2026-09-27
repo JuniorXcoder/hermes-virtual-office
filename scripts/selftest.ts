@@ -508,6 +508,40 @@ void (async () => {
     }
   }
   check('API replies never throw while being read', problems.length === 0, problems.join(' | '))
+
+  // The chat bridge reads the CLI's session line from stderr, because that is where
+  // it is written — measured. An earlier version read stdout only and every send
+  // failed with "tidak bisa membaca session_id"; the probe that missed it had merged
+  // the streams with 2>&1. This asserts the reader looks at both, and that the
+  // session id is extracted from a realistic stderr block.
+  {
+    const problems: string[] = []
+    const SESSION_RE = /session_id:\s*([A-Za-z0-9_]+)/
+    const stderrSample = '\n⚠ tirith security scanner enabled but not available\n\nsession_id: 20260927_114029_c50d6a\n'
+    const stdoutSample = 'Tersimpan: kode AD-2026.\n'
+    const id = SESSION_RE.exec(stderrSample)?.[1] || SESSION_RE.exec(stdoutSample)?.[1]
+    if (id !== '20260927_114029_c50d6a') problems.push(`id from stderr = ${id}`)
+    // And the reply must come from stdout, not stderr: the session line is not an answer.
+    const reply = stdoutSample.split('\n').filter((l) => !/^session_id:/.test(l.trim())).join('\n').trim()
+    if (reply !== 'Tersimpan: kode AD-2026.') problems.push(`reply = ${reply}`)
+    // Environment notices must not be shown as the agent's words.
+    const noisy = '⚠ tirith security scanner enabled but not available\n↻ Resumed session x\nJawaban asli.\n'
+    const cleaned = noisy
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim()
+        if (!t) return true
+        if (/^session_id:/.test(t)) return false
+        if (/tirith security scanner/.test(t)) return false
+        if (/^⚠/.test(t)) return false
+        if (/^↻/.test(t)) return false
+        return true
+      })
+      .join('\n')
+      .trim()
+    if (cleaned !== 'Jawaban asli.') problems.push(`cleaned = ${JSON.stringify(cleaned)}`)
+    check('chat reads the session id from stderr and the reply from stdout', problems.length === 0, problems.join(' | '))
+  }
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {

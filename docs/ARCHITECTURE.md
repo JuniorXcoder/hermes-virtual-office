@@ -43,6 +43,9 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |  |  • GET  /api/hermes/cron          (scheduled jobs + recent runs)        |  |
 |  |  • POST /api/hermes/cron          (create / pause / resume / run / rm)  |  |
 |  |  • GET  /api/hermes/cron/actions  (a failing job as a candidate task)   |  |
+|  |  • GET  /api/hermes/chat          (thread list, or one thread's history) |  |
+|  |  • POST /api/hermes/chat          (send a message, get the reply)       |  |
+|  |  • DELETE /api/hermes/chat        (forget a thread pointer)             |  |
 |  +------------------------------------^------------------------------------+  |
 |                                       |                                       |
 |  +------------------------------------v------------------------------------+  |
