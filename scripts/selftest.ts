@@ -33,7 +33,7 @@ import {
 } from '../src/lib/office/layout'
 import { BODY_R, blocked } from '../src/lib/office/nav'
 import { buildAvatar } from '../src/lib/office/avatar'
-import { matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
+import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { originMarker, parseOrigin } from '../src/lib/hermes/kanban'
 import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
@@ -384,6 +384,28 @@ console.log('geometry')
   const none = parseActionItems('## TINDAK LANJUT\n- Belum ada kesepakatan final')
   if (none.length !== 0) problems.push(`empty minutes produced ${none.length} items`)
   check('minutes parse into action items', problems.length === 0, problems.join(' | '))
+}
+
+// The heading regex must survive a text rewrite. A history rewrite with a bad
+// replacement map once turned every '#' into a placeholder across the repo, which
+// silently broke this regex (`/^\s*#{1,6}\s*TINDAK/` became `***REMOVED***{1,6}`)
+// and the follow-up parser stopped matching anything. The unit tests above did not
+// catch it because they call parseActionItems, and that still returned [] — which is
+// also the correct answer for minutes with no follow-ups. So the regex is asserted
+// directly.
+{
+  const problems: string[] = []
+  const heading = (n: number) => '#'.repeat(n) + ' TINDAK LANJUT'
+  // 1-6 hashes must all be accepted; 7 is not a markdown heading.
+  for (let n = 1; n <= 6; n++) {
+    if (!followUpSection(`${heading(n)}\n- **a**: x`)) problems.push(`h${n} not recognised`)
+  }
+  if (followUpSection('####### TINDAK LANJUT\n- x')) problems.push('h7 wrongly accepted')
+  // Lowercase and trailing punctuation must still match.
+  if (!followUpSection('## tindak lanjut\n- x')) problems.push('lowercase not recognised')
+  // The literal must be a hash, not a placeholder that replaced one.
+  if (!/^\s*#{1,6}/.test('# TINDAK LANJUT')) problems.push('hash class is broken')
+  check('minutes heading regex survives a text rewrite', problems.length === 0, problems.join(' | '))
 }
 
 // The street must be layered, not overlapping: building, then sidewalk, then road.
