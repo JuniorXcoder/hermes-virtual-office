@@ -186,21 +186,39 @@ export default function AgentSpawnPanel({
                 </b>
                 <i>{r.total} tugas</i>
               </div>
-              <button
-                className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
-                disabled={busy === r.name}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (confirmKill !== r.name) {
-                    setConfirmKill(r.name)
-                    return
-                  }
-                  void act('kill', r.name)
-                }}
-                title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
-              >
-                {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
-              </button>
+              {/* Two different things, so two different buttons. A name with no
+                  profile on disk is an assignee left behind by a task whose
+                  profile was deleted — there is nothing to delete, and offering
+                  "Kill" for it just produced a confusing error. */}
+              {r.profile ? (
+                <button
+                  className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
+                  disabled={busy === r.name}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (confirmKill !== r.name) {
+                      setConfirmKill(r.name)
+                      return
+                    }
+                    void act('kill', r.name)
+                  }}
+                  title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
+                >
+                  {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
+                </button>
+              ) : (
+                <button
+                  className="vp-btn"
+                  disabled={busy === r.name}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void act('kill', r.name)
+                  }}
+                  title="Keluarkan nama ini dari kantor tanpa menghapus apa pun"
+                >
+                  {busy === r.name ? '…' : 'Sembunyikan'}
+                </button>
+              )}
             </div>
           ))}
           {confirmKill && (
@@ -223,7 +241,13 @@ export default function AgentSpawnPanel({
                       {r.name}
                       {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
                     </b>
-                    <i>{r.reason === 'killed' ? 'dimatikan' : 'tanpa tugas'}</i>
+                    <i>
+                      {r.reason === 'killed'
+                        ? 'disembunyikan'
+                        : r.reason === 'no_profile'
+                          ? 'tanpa profil di disk'
+                          : 'tanpa tugas'}
+                    </i>
                   </div>
                   <button
                     className="vp-btn"

@@ -239,6 +239,45 @@ console.log('geometry')
   check('every API route keeps the methods the UI calls', missing.length === 0, missing.join(' | '))
 }
 
+// The street must be layered, not overlapping: building, then sidewalk, then road.
+//
+// This shipped wrong twice in opposite directions — pedestrians at z 16.4/19.6
+// walked through the neighbouring blocks, and the "fix" put them at 11.6/10.2,
+// inside our own building. Both were a sign error in the same expression, and both
+// were invisible in a screenshot at normal zoom.
+{
+  const src = readFileSync(new URL('../src/lib/office/build.ts', import.meta.url), 'utf8')
+  const problems: string[] = []
+
+  // building: -HALF_D .. HALF_D   sidewalk: HALF_D .. HALF_D+9.5   road: +9.5 .. +18.5
+  const walkerZ = [...src.matchAll(/sidewalkZ = HALF_D \+ \(row === 0 \? ([\d.]+) : ([\d.]+)\)/g)]
+  if (!walkerZ.length) {
+    problems.push('pedestrian sidewalk offset not found (pattern changed?)')
+  } else {
+    const offs = walkerZ[0].slice(1).map(Number)
+    for (const off of offs) {
+      const z = HALF_D + off
+      if (z <= HALF_D) problems.push(`pedestrian row at z=${z} is inside the building`)
+      if (z >= HALF_D + 9.5) problems.push(`pedestrian row at z=${z} is in the road`)
+    }
+  }
+
+  const lanes = [...src.matchAll(/LANE_(?:NORTH|SOUTH) = HALF_D \+ ([\d.]+)/g)].map((m) => Number(m[1]))
+  if (lanes.length === 2) {
+    const gap = Math.abs(lanes[1] - lanes[0])
+    // The car body is 1.8 m wide, so two lanes closer than that overlap.
+    if (gap < 1.8 + 1.0) problems.push(`lane centres only ${gap} m apart (car is 1.8 m wide)`)
+    for (const l of lanes) {
+      if (l <= 9.5 || l >= 18.5) problems.push(`lane at HALF_D+${l} is outside the road`)
+    }
+  } else {
+    problems.push('lane constants not found (pattern changed?)')
+  }
+
+  check('street is layered: sidewalk outside the building, lanes inside the road',
+    problems.length === 0, problems.join(' | '))
+}
+
 /* ---------------------------------------------------------------- movement -- */
 console.log('\nmovement')
 

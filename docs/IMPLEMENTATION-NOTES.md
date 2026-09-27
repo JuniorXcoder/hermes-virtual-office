@@ -1096,3 +1096,66 @@ Collapsing a section should not change what the section is.
 
 The first attempt did exactly that: it rendered the live transcript twice, once as
 plain text and once as structured turns. Replaced with a single `children` usage.
+
+---
+
+## 26. A deleted profile, a lane too narrow, and a sign error shipped twice
+
+### "Can't delete risko" — there was nothing to delete
+
+The panel offered `Kill` for every name in the office, but the roster is the union
+of profiles **and task assignees**. `risko`'s profile directory was already gone;
+only the name survived on an old task. Killing it therefore answered `profil "risko"
+tidak ada di disk`, which reads as a failed delete rather than "there is nothing
+here".
+
+Two fixes:
+
+- The API returns `409 no_profile` with an explanation instead of a bare `400`, and
+  the roster now carries `reason: 'no_profile'` so the UI can tell the two apart.
+- A name without a profile gets a **Sembunyikan** button (membership only) instead
+  of `Kill`. `Kill` is shown only when there is a profile to destroy.
+
+The underlying confusion is that one list mixes two kinds of thing — a profile that
+exists, and a string that used to be one. The UI now says which it is (`tanpa
+profil`) and offers only the action that can succeed.
+
+### The lanes were exactly one car wide
+
+```
+lane centres   z = 26.6 and 28.4   -> 1.8 m apart
+car body width                     -> 1.8 m
+```
+
+The two directions touched, so the westbound lane sat on the eastbound one. Moved to
+24.5 and 28.5: 4.0 m apart with 2.2 m of clear road between them, both inside the
+road band (22.5..31.5).
+
+### Pedestrians walked through the neighbours — and then through our own building
+
+The sidewalk rows were at `HALF_D + 3.4` and `+ 6.6`, i.e. z 16.4 and 19.6. The
+neighbouring blocks occupy z 10..19.5, so both rows ran straight through them.
+
+The first fix moved the rows to `HALF_D - 1.4` and `- 2.8` — z 11.6 and 10.2, which
+is **inside our own building** (z −13..13). Same expression, opposite sign error.
+The sidewalk is on the street side: z > HALF_D.
+
+The real cause was underneath both attempts: the southern neighbours were placed at
+z 14 and 15, covering the entire sidewalk band, so no value of the offset could
+work. They now sit across the road at z 38 and 39, leaving the band from the facade
+at 13 to the kerb at 22 clear.
+
+Verified: 6/6 pedestrian rows clear of every block and of the road, 6/6 neighbouring
+blocks clear of the road, lanes 4.0 m apart. A `street is layered` self-test asserts
+all of it, because this is the second time a sign error here reached the user.
+
+### Textures
+
+Eleven procedural textures existed but **not one normal or bump map** — a
+`MeshStandardMaterial` with only a colour map has no relief, so lighting slid over
+every surface uniformly and everything read as flat paint. `bumpFrom()` derives a
+bump map from the luminance of each colour map (no new generators), tiled to match,
+and it is applied to floors, lobby tile, walls, desks, vinyl, fabric, carpet,
+asphalt and pavement. Resolutions raised where they were still 128 or 256 px.
+
+Self-test: 17 checks.

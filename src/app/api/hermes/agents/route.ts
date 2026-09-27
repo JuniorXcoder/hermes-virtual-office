@@ -39,7 +39,13 @@ export async function GET() {
         profile: profiles.includes(name),
         inOffice: inOffice.has(name),
         /** Why it is absent, when it is. */
-        reason: inOffice.has(name) ? null : isKilled(name) ? 'killed' : 'unknown',
+        reason: inOffice.has(name)
+          ? null
+          : isKilled(name)
+            ? 'killed'
+            : profiles.includes(name)
+              ? 'unknown'
+              : 'no_profile',
       })),
       killed: killedNames(),
     })
@@ -147,15 +153,21 @@ export async function POST(req: NextRequest) {
         )
       }
       if (!(await listProfiles()).includes(name)) {
+        // A name can appear in the office without a profile: it is an assignee on
+        // a task whose profile was deleted earlier. There is nothing to delete, so
+        // explain that rather than reporting a missing profile as a failed delete.
         return NextResponse.json(
           {
             error: {
-              code: 'invalid_request',
-              message: `profil "${name}" tidak ada di disk`,
-              status: 400,
+              code: 'no_profile',
+              message:
+                `"${name}" tidak punya profil di disk — hanya nama pada tugas lama, ` +
+                `jadi tidak ada yang bisa dihapus. Pakai "Sembunyikan" untuk ` +
+                `mengeluarkannya dari kantor.`,
+              status: 409,
             },
           },
-          { status: 400 },
+          { status: 409 },
         )
       }
       try {

@@ -97,6 +97,42 @@ function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) 
   return tex
 }
 
+/**
+ * Turn a colour texture into a bump map.
+ *
+ * There were no normal or bump maps anywhere, which is why every surface read as
+ * flat paint: a MeshStandardMaterial with only a colour map has no relief, so
+ * lighting slides over it uniformly. Deriving the bump from the luminance of the
+ * texture already generated costs one small canvas and no new generators, and
+ * gives planks, grout lines, plaster mottle and fabric weave an edge to catch.
+ *
+ * A real normal map would be better, but this is honest about what it is: a
+ * greyscale height field fed to `bumpMap`, which three.js differentiates per
+ * fragment.
+ */
+function bumpFrom(source: THREE.Texture, strength = 0.5): THREE.Texture {
+  const src = source.image as HTMLCanvasElement
+  const cv = document.createElement('canvas')
+  cv.width = src.width
+  cv.height = src.height
+  const g = cv.getContext('2d')!
+  g.drawImage(src, 0, 0)
+  const img = g.getImageData(0, 0, cv.width, cv.height)
+  const d = img.data
+  // luminance -> grey, with a contrast stretch so faint detail still registers
+  for (let i = 0; i < d.length; i += 4) {
+    const l = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255
+    const v = Math.max(0, Math.min(255, 128 + (l - 0.5) * 255 * strength * 2))
+    d[i] = d[i + 1] = d[i + 2] = v
+  }
+  g.putImageData(img, 0, 0)
+  const tex = new THREE.CanvasTexture(cv)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.generateMipmaps = true
+  tex.minFilter = THREE.LinearMipmapLinearFilter
+  return tex
+}
+
 /** Deterministic pseudo-random so a texture looks the same on every reload. */
 function rng(seed: number) {
   let s = seed >>> 0
@@ -212,7 +248,7 @@ function tileTexture(base: string, line: string, speck: string) {
 
 /** Plaster wall: near-white with a faint mottled roller finish. */
 function plasterTexture(base: string, tint: string) {
-  return canvasTex(256, (c, s) => {
+  return canvasTex(512, (c, s) => {
     const rand = rng(91)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -230,7 +266,7 @@ function plasterTexture(base: string, tint: string) {
 
 /** Brushed metal for door furniture and window mullions. */
 function brushedMetalTexture(base: string, dark: string) {
-  return canvasTex(128, (c, s) => {
+  return canvasTex(256, (c, s) => {
     const rand = rng(41)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -245,7 +281,7 @@ function brushedMetalTexture(base: string, dark: string) {
 
 /** Fabric weave for upholstery: sofa, chairs, cushions. */
 function fabricTexture(base: string, thread: string) {
-  return canvasTex(128, (c, s) => {
+  return canvasTex(256, (c, s) => {
     const rand = rng(57)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -274,7 +310,7 @@ function fabricTexture(base: string, thread: string) {
 
 /** Asphalt with aggregate and lane wear. */
 function asphaltTexture(base: string, grit: string) {
-  return canvasTex(256, (c, s) => {
+  return canvasTex(512, (c, s) => {
     const rand = rng(77)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -300,7 +336,7 @@ function asphaltTexture(base: string, grit: string) {
 
 /** Pavement slabs with expansion joints. */
 function pavementTexture(base: string, joint: string) {
-  return canvasTex(256, (c, s) => {
+  return canvasTex(512, (c, s) => {
     const rand = rng(13)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -393,7 +429,7 @@ function deskWoodTexture(base: string, grain: string, edge: string) {
 
 /** Upholstery vinyl: fine pebble grain, low sheen, for task chairs. */
 function vinylTexture(base: string, crease: string) {
-  return canvasTex(256, (c, s) => {
+  return canvasTex(512, (c, s) => {
     const rand = rng(151)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
@@ -541,7 +577,7 @@ function screenTexture() {
 /** Painted artwork for the wall frames — abstract, deterministic per seed. */
 function artTexture(seed: number) {
   const hues = [212, 24, 148, 340, 44, 268, 190, 8]
-  return canvasTex(256, (c, s) => {
+  return canvasTex(512, (c, s) => {
     const rand = rng(seed * 97 + 3)
     const h = hues[seed % hues.length]
     const g = c.createLinearGradient(0, 0, 0, s)
@@ -618,14 +654,43 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   carpetTex.repeat.set(3, 2.6)
   const screenTex = track(screenTexture())
   const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
+
   asphaltTex.repeat.set(24, 3)
   const pavementTex = track(pavementTexture('#a3a8ab', '#8d9296'))
+
+  // Bump maps derived from the colour maps above: no new generators, and every
+  // surface gains relief so lighting has something to catch.
+  const floorBump = track(bumpFrom(floorTex, 0.55))
+  const lobbyBump = track(bumpFrom(lobbyTex, 0.4))
+  const plasterBump = track(bumpFrom(plasterTex, 0.35))
+  const deskBump = track(bumpFrom(deskTex, 0.5))
+  const vinylBump = track(bumpFrom(vinylTex, 0.45))
+  const carpetBump = track(bumpFrom(carpetTex, 0.6))
+  const asphaltBump = track(bumpFrom(asphaltTex, 0.7))
+  const pavementBump = track(bumpFrom(pavementTex, 0.5))
+  const metalBump = track(bumpFrom(metalTex, 0.25))
+  const fabricBump = track(bumpFrom(fabricTex, 0.4))
+  // Same tiling as their colour maps, or the relief slides against the colour.
+  for (const [b, src] of [
+    [floorBump, floorTex],
+    [lobbyBump, lobbyTex],
+    [plasterBump, plasterTex],
+    [deskBump, deskTex],
+    [vinylBump, vinylTex],
+    [carpetBump, carpetTex],
+    [asphaltBump, asphaltTex],
+    [pavementBump, pavementTex],
+    [metalBump, metalTex],
+    [fabricBump, fabricTex],
+  ] as const) {
+    b.repeat.copy(src.repeat)
+  }
   pavementTex.repeat.set(14, 14)
 
   /* ------------------------------------------------------------- floors --- */
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth),
-    new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.72, metalness: 0.02 }),
+    new THREE.MeshStandardMaterial({ map: floorTex, bumpMap: floorBump, bumpScale: 0.35, roughness: 0.72, metalness: 0.02 }),
   )
   floor.rotation.x = -Math.PI / 2
   group.add(floor)
@@ -633,7 +698,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // the lobby is a different material so the transition reads as architecture
   const lobbyFloor = new THREE.Mesh(
     new THREE.PlaneGeometry(ROOMS.lobby.x2 - ROOMS.lobby.x1, ROOMS.lobby.z2 - ROOMS.lobby.z1),
-    new THREE.MeshStandardMaterial({ map: lobbyTex, roughness: 0.42, metalness: 0.04 }),
+    new THREE.MeshStandardMaterial({ map: lobbyTex, bumpMap: lobbyBump, bumpScale: 0.12, roughness: 0.42, metalness: 0.04 }),
   )
   lobbyFloor.rotation.x = -Math.PI / 2
   lobbyFloor.position.set(0, 0.006, (ROOMS.lobby.z1 + ROOMS.lobby.z2) / 2)
@@ -656,7 +721,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   /* -------------------------------------------------------------- walls --- */
   const wallMat = track(
-    new THREE.MeshStandardMaterial({ color: pal.wall, map: plasterTex, roughness: 0.9 }),
+    new THREE.MeshStandardMaterial({ color: pal.wall, map: plasterTex, bumpMap: plasterBump, bumpScale: 0.12, roughness: 0.9 }),
   )
   /** A wall slab with optional rectangular cut-outs (windows, doorways). */
   const wallPanel = (
@@ -1149,7 +1214,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // Local upholstery material: `sofaFabric` is declared in the lounge block
     // BELOW this one, and a `const` used above its declaration throws at runtime.
     const nookFabric = track(
-      new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, roughness: 0.95 }),
+      new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, bumpMap: fabricBump, bumpScale: 0.18, roughness: 0.95 }),
     )
 
     /* ---- green corner: a raised planter and two pots ---- */
@@ -1446,7 +1511,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const sofa = new THREE.Group()
   sofa.position.set(LOUNGE.x, 0, LOUNGE.z - 1.45)
   const sofaFabric = track(
-    new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, bumpMap: fabricBump, bumpScale: 0.18, roughness: 0.95 }),
   )
   const sofaSeat = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.34, 1.0), sofaFabric)
   sofaSeat.position.y = 0.42
@@ -1905,7 +1970,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   const pavement = new THREE.Mesh(
     new THREE.PlaneGeometry(FLOOR.width + 26, FLOOR.depth + 26),
-    new THREE.MeshStandardMaterial({ map: pavementTex, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ map: pavementTex, bumpMap: pavementBump, bumpScale: 0.25, roughness: 0.95 }),
   )
   pavement.rotation.x = -Math.PI / 2
   pavement.position.y = -0.06
@@ -1913,7 +1978,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   const road = new THREE.Mesh(
     new THREE.PlaneGeometry(120, 9),
-    new THREE.MeshStandardMaterial({ map: asphaltTex, roughness: 0.98 }),
+    new THREE.MeshStandardMaterial({ map: asphaltTex, bumpMap: asphaltBump, bumpScale: 0.4, roughness: 0.98 }),
   )
   road.rotation.x = -Math.PI / 2
   road.position.set(0, -0.05, HALF_D + 14)
@@ -2009,8 +2074,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   building(-26, -14, 12, 10, 13, 0x8e9aa6)
   building(27, -12, 14, 10, 9, 0x9aa39c)
-  building(-30, 14, 10, 8, 7, 0xa39d94)
-  building(30, 15, 12, 9, 11, 0x8f9aa0)
+  building(-30, 38, 10, 8, 7, 0xa39d94)
+  building(30, 39, 12, 9, 11, 0x8f9aa0)
   building(-6, -24, 16, 10, 16, 0x9299a8)
   building(14, -25, 12, 9, 12, 0x9d9a92)
 
@@ -2102,7 +2167,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // walked straight through a slower one; row A is the brisk lane, row B the
     // strolling lane, so a walker only ever catches someone in the OTHER row.
     const row = i % 2
-    const sidewalkZ = HALF_D + (row === 0 ? 3.4 : 6.6)
+    // The sidewalk is OUTSIDE the building, on the street side: z > HALF_D. Two
+    // earlier attempts put it at 16.4/19.6 (through the neighbouring blocks) and
+    // then at 11.6/10.2 (inside our own building) — the sign was wrong both times.
+    // The clear band runs from the facade at 13 to the kerb at 22.
+    const sidewalkZ = HALF_D + (row === 0 ? 2.5 : 5.5)
     const from = -34 + i * 11
     g.position.set(from, 0, sidewalkZ)
     streetGroup.add(g)
@@ -2149,8 +2218,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     return c
   }
 
-  const LANE_NORTH = HALF_D + 13.6
-  const LANE_SOUTH = HALF_D + 15.4
+  // Lanes were 1.8 m apart and the car body is 1.8 m wide, so the two directions
+  // touched exactly — the westbound lane overlapped the eastbound one. The road
+  // spans z 22.5..31.5, so each lane centre is now 2.6 m from the kerb side and
+  // they are 4.0 m apart, which leaves 2.2 m of clear road between them.
+  const LANE_NORTH = HALF_D + 11.5 // nearer the building, eastbound
+  const LANE_SOUTH = HALF_D + 15.5 // far side, westbound
   const CAR_COLORS = [0xb9563f, 0x3f6fb9, 0xd8d3c4, 0x4f7a5f, 0x8a8f95]
   // Per-lane speeds, and cars are spaced evenly along the lane. Giving each car
   // its own speed inside one lane made them drive through each other: a car at
