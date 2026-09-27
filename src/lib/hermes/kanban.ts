@@ -98,11 +98,26 @@ function toTask(r: RawTask): Task {
   }
 }
 
+/**
+ * Tasks on the office's board.
+ *
+ * `--archived` on `hermes kanban list` is a FILTER, not "include archived": passing
+ * it returns only archived rows, so the old `includeArchived` flag silently
+ * returned an EMPTY list for a normal board. Measured: `list --json` returned 16
+ * rows and `list --archived --json` returned 0 on the same board.
+ *
+ * There is no CLI flag for "everything including archived", so the two sets are
+ * fetched separately and merged by id.
+ */
 export async function listTasks(opts: { includeArchived?: boolean } = {}): Promise<Task[]> {
-  const args = ['list']
-  if (opts.includeArchived) args.push('--archived')
-  const rows = await kanbanJson<RawTask[]>(args)
-  return rows.map(toTask)
+  const rows = await kanbanJson<RawTask[]>(['list'])
+  const live = rows.map(toTask)
+  if (!opts.includeArchived) return live
+  const archived = await kanbanJson<RawTask[]>(['list', '--archived'])
+    .then((r) => r.map(toTask))
+    .catch(() => [] as Task[])
+  const seen = new Set(live.map((t) => t.id))
+  return [...live, ...archived.filter((t) => !seen.has(t.id))]
 }
 
 export async function getTask(id: string): Promise<Task | null> {
@@ -129,6 +144,48 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
 }
 
 /** Free-text guidance injected into the running worker's session. */
+/**
+ * Every task assigned to a profile.
+ *
+ * Reads the board the office is bound to (`HERMES_KANBAN_BOARD` or the CLI's
+ * active board), which is the same board `listTasks()` shows — so "the tasks this
+ * agent owns" means the tasks visible on the wall.
+ */
+export async function tasksForAssignee(name: string): Promise<Task[]> {
+  const all = await listTasks({ includeArchived: true })
+  return all.filter((t) => t.assignee === name)
+}
+
+/**
+ * Delete tasks permanently.
+ *
+ * `hermes kanban archive --rm` only purges ids that are ALREADY archived, so this
+ * is two passes: archive, then purge. Sending ids straight to `--rm` fails with a
+ * complaint that they are not archived.
+ *
+ * Running tasks are refused by the caller, not here — the CLI will archive a
+ * running task and that would abandon a live worker.
+ */
+export async function purgeTasks(ids: string[]): Promise<{ archived: number; purged: number }> {
+  if (!ids.length) return { archived: 0, purged: 0 }
+  // Chunked: a long argv on a big backlog can exceed the exec limit.
+  const CHUNK = 40
+  let purged = 0
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK)
+    // The archive pass is TOLERANT. The CLI answers "cannot archive <id>" for a
+    // task that is already terminal (done/archived) — measured: it exits 0, prints
+    // that line, and `--rm` still deletes the task. Treating it as fatal made a
+    // successful purge report failure, and the board showed the tasks gone while
+    // the UI showed an error.
+    await kanban(['archive', ...slice]).catch(() => '')
+    // The purge pass is NOT tolerant: if this fails the tasks are still there.
+    await kanban(['archive', '--rm', ...slice])
+    purged += slice.length
+  }
+  return { archived: purged, purged }
+}
+
 export async function commentOnTask(taskId: string, body: string): Promise<boolean> {
   await kanban(['comment', taskId, body])
   return true

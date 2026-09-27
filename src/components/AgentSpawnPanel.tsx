@@ -83,7 +83,14 @@ export default function AgentSpawnPanel({
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      if (action === 'kill') setNote(`profil "${name}" dihapus permanen`)
+      if (action === 'kill') {
+        const n = Number(d?.purged ?? 0)
+        setNote(
+          n > 0
+            ? `"${name}" dihapus permanen bersama ${n} tugasnya`
+            : `"${name}" dihapus permanen`,
+        )
+      }
       await load()
       onChanged()
     } catch (e) {
@@ -223,8 +230,9 @@ export default function AgentSpawnPanel({
           ))}
           {confirmKill && (
             <div className="vp-cron-err">
-              Menghapus profil <b>{confirmKill}</b> permanen — sesi, memori, dan kunci
-              ikut hilang. Klik di tempat lain untuk batal.
+              Menghapus <b>{confirmKill}</b> permanen — profil, sesi, memori, kunci,
+              <b> dan {inOffice.find((x) => x.name === confirmKill)?.total ?? 0} tugasnya</b>.
+              Klik di tempat lain untuk batal.
             </div>
           )}
           {!inOffice.length && <span className="vp-muted">kosong</span>}

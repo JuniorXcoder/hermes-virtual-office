@@ -6,6 +6,8 @@ import {
   listAssignees,
   listProfiles,
   listTasks,
+  purgeTasks,
+  tasksForAssignee,
 } from '@/lib/hermes/kanban'
 import { isKilled, killedNames, spawn } from '@/lib/hermes/office-membership'
 
@@ -117,21 +119,27 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Spawn only accepts a profile the install knows, otherwise a typo would
-    // create a kill-list entry that matches nothing. `kill` validates inside its
-    // own branch, because it requires a real on-disk profile.
-    const known = new Set([...(await listAssignees()).map((a) => a.name), ...(await listProfiles())])
-    if (!known.has(name)) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'invalid_request',
-            message: `profil "${name}" tidak dikenal`,
-            status: 400,
+    // `spawn` accepts anything the install knows, otherwise a typo would create a
+    // kill-list entry matching nothing. `kill` must NOT go through this check: a
+    // name with tasks but no profile is exactly the case it needs to handle (the
+    // tasks still have to be removed), and the guard rejected it as "tidak dikenal".
+    if (action === 'spawn') {
+      const known = new Set([
+        ...(await listAssignees()).map((a) => a.name),
+        ...(await listProfiles()),
+      ])
+      if (!known.has(name)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'invalid_request',
+              message: `profil "${name}" tidak dikenal`,
+              status: 400,
+            },
           },
-        },
-        { status: 400 },
-      )
+          { status: 400 },
+        )
+      }
     }
 
     /* -------------------------------------------------------------- kill --- */
@@ -152,26 +160,53 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         )
       }
-      if (!(await listProfiles()).includes(name)) {
-        // A name can appear in the office without a profile: it is an assignee on
-        // a task whose profile was deleted earlier. There is nothing to delete, so
-        // explain that rather than reporting a missing profile as a failed delete.
+
+      /* ---- 1. the tasks ---- */
+      // Killing an agent deletes its work too, which is what "kill" should mean —
+      // otherwise the board fills with tasks belonging to nobody.
+      const owned = await tasksForAssignee(name)
+      // Refuse while any of them is live. Archiving a running task abandons the
+      // worker mid-flight and the CLI will do it without complaint.
+      const active = owned.filter((t) => t.status === 'running' || t.status === 'review')
+      if (active.length) {
         return NextResponse.json(
           {
             error: {
-              code: 'no_profile',
+              code: 'invalid_request',
               message:
-                `"${name}" tidak punya profil di disk — hanya nama pada tugas lama, ` +
-                `jadi tidak ada yang bisa dihapus. Pakai "Sembunyikan" untuk ` +
-                `mengeluarkannya dari kantor.`,
+                `${name} punya ${active.length} tugas yang masih berjalan ` +
+                `(${active.map((t) => t.id).join(', ')}). Hentikan dulu sebelum dihapus.`,
               status: 409,
             },
           },
           { status: 409 },
         )
       }
+
+      /* ---- 2. the profile ---- */
+      const hasProfile = (await listProfiles()).includes(name)
+      if (!hasProfile && !owned.length) {
+        // Nothing at all: no profile, no tasks. Explain rather than report a
+        // failed delete.
+        return NextResponse.json(
+          {
+            error: {
+              code: 'no_profile',
+              message: `"${name}" tidak punya profil maupun tugas — tidak ada yang bisa dihapus.`,
+              status: 409,
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      let purged = 0
       try {
-        await deleteProfile(name)
+        if (owned.length) {
+          const r = await purgeTasks(owned.map((t) => t.id))
+          purged = r.purged
+        }
+        if (hasProfile) await deleteProfile(name)
       } catch (err) {
         const msg = (err as Error).message
         // Refusals (default, gateway running) are the caller's, not a server fault.
@@ -180,22 +215,28 @@ export async function POST(req: NextRequest) {
           {
             error: {
               code: refused ? 'invalid_request' : 'action_failed',
-              message: msg,
+              message:
+                purged > 0
+                  ? `${purged} tugas sudah dihapus, tapi profilnya gagal: ${msg}`
+                  : msg,
               status: refused ? 400 : 502,
             },
           },
           { status: refused ? 400 : 502 },
         )
       }
-      // Clear any membership entry: the profile is gone, so a stale kill-list
-      // entry would block a future profile that reuses the name.
+
+      // Clear any membership entry: a stale entry would block a future profile
+      // that reuses the name.
       spawn(name)
       return NextResponse.json({
         success: true,
         action,
         name,
-        /** The profile no longer exists. */
-        deleted: true,
+        /** The profile no longer exists (false when it was already gone). */
+        deleted: hasProfile,
+        /** How many of its tasks were removed from the board. */
+        purged,
         killed: killedNames(),
       })
     }

@@ -1206,3 +1206,81 @@ makes obvious.
   pressure variation and the fine stipple are drawn.
 
 Self-test: 18 checks.
+
+---
+
+## 28. Killing an agent now deletes its tasks, and three bugs found doing it
+
+`kill` removed the profile but left its tasks behind, so the board accumulated work
+belonging to nobody. It now removes both: the tasks first, then the profile.
+
+### `hermes kanban list --archived` is a FILTER, not "include archived"
+
+`listTasks({includeArchived: true})` passed `--archived` expecting the archived rows
+to be added. Measured on the same board:
+
+```
+hermes kanban list --json             -> 16 rows
+hermes kanban list --archived --json  ->  0 rows
+```
+
+It returns **only** archived rows, so the flag silently produced an EMPTY list. There
+is no CLI flag for "everything including archived", so the two sets are fetched
+separately and merged by id.
+
+This mattered because `tasksForAssignee()` used that flag to find an agent's work —
+it saw nothing, and the "N tasks are still running" guard then fired against the
+wrong set.
+
+### `archive` refuses an already-finished task, and says so without failing
+
+```
+hermes kanban --board default archive t_ca6865ff
+  -> "cannot archive t_ca6865ff"
+  -> exit code 0
+  -> the task is deleted anyway by the following `--rm`
+```
+
+The CLI answers with that line, exits **0**, and the purge still works. Treating it
+as fatal made a successful purge report `502 action_failed` while the board showed
+the tasks gone — the worst kind of error, one that is wrong about what happened. The
+archive pass is now tolerant; the purge pass is not, because if that fails the tasks
+really are still there.
+
+### The spawn guard rejected the case kill exists for
+
+`POST /api/hermes/agents` validated every action against "profiles the install
+knows", so `kill risko` — a name with tasks but no profile, which is exactly what
+needs cleaning up — was refused with `profil "risko" tidak dikenal`. The check now
+applies to `spawn` only; `kill` has its own validation because its requirements are
+different.
+
+### The board was not pinned, so reads were not stable
+
+The office used the CLI's *active board*, a global that other tools move. During this
+work the active board changed to an empty one and the office started reading it — 0
+tasks where there had been 13. `HERMES_KANBAN_BOARD=default` is now set in
+`.env.local`, and `.env.example` already documented the variable. An unpinned office
+can silently show the wrong board; pinning removes the class of bug.
+
+### Guard kept: a running task blocks the delete
+
+Archiving a running task abandons the worker mid-flight, and the CLI does it without
+complaint. The endpoint refuses while any task is `running` or `review`, naming the
+ids. Verified: the guard fired first, then allowed the delete once the tasks were
+terminal.
+
+### Verified
+
+```
+create zzz-uji3 + 2 tasks  -> kill -> deleted: true, purged: 2, board back to 13
+kill risko (no profile)    -> 409 no_profile when it has no tasks; purges its tasks when it has them
+kill default               -> 400 refused
+kill (task running)        -> 409 refused, ids listed
+```
+
+All probe profiles and tasks removed. `profiles/` is `jun, lulu`; the board holds 13
+tasks across `default`, `jun`, `lulu`. The `risko` task was removed during testing,
+which is the behaviour that was asked for.
+
+Self-test: 18 checks.
