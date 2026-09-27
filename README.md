@@ -172,11 +172,15 @@ Detailed architectural specifications are documented in [docs/ARCHITECTURE.md](d
 ---
 
 ## 📐 Layout
+![office room](docs/office%20room.png)
 
 The floor is laid out as a real office: an enclosed glass meeting room (west), an
 open-plan workstation bay under ceiling strips (centre), a lounge with sofa, TV
 and pantry (east), and a corridor along the entrance that links them.
 
+![standby room](docs/standby%20room.png)
+![new meeting](docs/new%20meeting.png)
+![meeting room](docs/meeting%20room.png)
 ---
 
 ## ⚠️ Prerequisites you should know
