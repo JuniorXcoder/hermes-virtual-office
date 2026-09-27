@@ -142,26 +142,88 @@ function rng(seed: number) {
   }
 }
 
+/**
+ * Earth: rough ground for everything beyond the paved plaza.
+ *
+ * Deliberately low-frequency. Fine noise at this scale turns into uniform mush
+ * once the mip chain averages it (measured elsewhere in this file: fine lines keep
+ * ~10% of their contrast after a 512->64 downsample, broad bands keep ~80%), so the
+ * signal is in patches, clumps and broad tonal drift.
+ */
+function earthTexture(base: string, dark: string, light: string) {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(211)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+
+    // broad tonal drift, so it does not read as one flat colour at distance
+    for (let i = 0; i < 26; i++) {
+      const g = c.createRadialGradient(
+        rand() * s, rand() * s, 8,
+        rand() * s, rand() * s, 60 + rand() * 120,
+      )
+      g.addColorStop(0, rand() > 0.5 ? light : dark)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      c.globalAlpha = 0.16 + rand() * 0.18
+      c.fillStyle = g
+      c.fillRect(0, 0, s, s)
+    }
+    c.globalAlpha = 1
+
+    // clumps of darker soil
+    for (let i = 0; i < 420; i++) {
+      c.globalAlpha = 0.06 + rand() * 0.14
+      c.fillStyle = rand() > 0.35 ? dark : light
+      c.beginPath()
+      c.ellipse(rand() * s, rand() * s, 3 + rand() * 14, 2 + rand() * 9, rand() * 3, 0, Math.PI * 2)
+      c.fill()
+    }
+    // scattered grit
+    for (let i = 0; i < 5200; i++) {
+      c.globalAlpha = 0.05 + rand() * 0.16
+      c.fillStyle = rand() > 0.5 ? light : dark
+      c.fillRect(rand() * s, rand() * s, 1 + rand() * 2, 1 + rand() * 2)
+    }
+    c.globalAlpha = 1
+  })
+}
+
 /** Wood plank flooring: plank seams, grain streaks, knots and bevelled edges. */
 function woodFloorTexture(light: string, mid: string, dark: string) {
   return canvasTex(512, (c, s) => {
     const rand = rng(7)
     c.fillStyle = mid
     c.fillRect(0, 0, s, s)
-    const plank = 64 // 512 / 8 planks -> repeat makes each ~30 cm
+    const plank = 42 // 512 / 12 planks -> repeat makes each ~22 cm, closer to real boards
     for (let row = 0; row * plank < s; row++) {
       const y = row * plank
-      // per-plank base tone
-      const shade = 0.9 + rand() * 0.2
-      c.fillStyle = light
-      c.globalAlpha = 0.35 * shade
+      // Per-plank tone. Wide variation, because a floor where every board is the
+      // same colour reads as vinyl. This is low-frequency and survives mipmapping.
+      const shade = 0.82 + rand() * 0.36
+      c.fillStyle = rand() > 0.5 ? light : dark
+      c.globalAlpha = 0.3 * shade
       c.fillRect(0, y, s, plank)
       c.globalAlpha = 1
-      // grain lines
-      for (let g = 0; g < 26; g++) {
+
+      // Broad grain bands first: fine lines alone lose ~90% of their contrast in
+      // the mip chain, so the visible figure has to be low-frequency.
+      for (let b = 0; b < 5; b++) {
+        c.strokeStyle = rand() > 0.4 ? dark : light
+        c.globalAlpha = 0.08 + rand() * 0.14
+        c.lineWidth = 3 + rand() * 7
+        const gy = y + 3 + rand() * (plank - 6)
+        c.beginPath()
+        c.moveTo(0, gy)
+        for (let x = 0; x <= s; x += 24) {
+          c.lineTo(x, gy + Math.sin((x + row * 31 + b * 17) * 0.02) * (1.2 + rand() * 2))
+        }
+        c.stroke()
+      }
+      // fine grain on top of the bands
+      for (let g = 0; g < 22; g++) {
         c.strokeStyle = dark
-        c.globalAlpha = 0.04 + rand() * 0.09
-        c.lineWidth = rand() > 0.85 ? 1.6 : 0.8
+        c.globalAlpha = 0.06 + rand() * 0.14
+        c.lineWidth = rand() > 0.85 ? 1.6 : 0.7
         const gy = y + 4 + rand() * (plank - 8)
         c.beginPath()
         c.moveTo(0, gy)
@@ -170,6 +232,14 @@ function woodFloorTexture(light: string, mid: string, dark: string) {
         }
         c.stroke()
       }
+      // Dark seam at the board edge: without it the boards merge into one surface.
+      c.fillStyle = dark
+      c.globalAlpha = 0.55
+      c.fillRect(0, y, s, 2)
+      // bevelled highlight just below the seam
+      c.fillStyle = light
+      c.globalAlpha = 0.22
+      c.fillRect(0, y + 2, s, 1)
       c.globalAlpha = 1
       // occasional knot
       if (rand() > 0.72) {
@@ -252,13 +322,36 @@ function plasterTexture(base: string, tint: string) {
     const rand = rng(91)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
-    for (let i = 0; i < 900; i++) {
-      c.globalAlpha = 0.02 + rand() * 0.03
-      c.fillStyle = rand() > 0.5 ? tint : '#000000'
-      const r = 3 + rand() * 14
+
+    // Roller texture. A wall read as a flat sheet because the only variation was
+    // 900 circles at 2-5% alpha, which is invisible once mipmapped. Painted plaster
+    // has broad, soft blotches where the roller pressure varied, plus a fine
+    // stipple — so both scales are drawn, broad first.
+    for (let i = 0; i < 60; i++) {
+      const r = 40 + rand() * 130
+      const g = c.createRadialGradient(rand() * s, rand() * s, r * 0.1, rand() * s, rand() * s, r)
+      g.addColorStop(0, rand() > 0.5 ? tint : '#ffffff')
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      c.globalAlpha = 0.07 + rand() * 0.1
+      c.fillStyle = g
+      c.fillRect(0, 0, s, s)
+    }
+    // roller streaks: long, soft, roughly vertical
+    for (let i = 0; i < 34; i++) {
+      c.strokeStyle = rand() > 0.5 ? tint : '#ffffff'
+      c.globalAlpha = 0.04 + rand() * 0.07
+      c.lineWidth = 6 + rand() * 22
+      const x = rand() * s
       c.beginPath()
-      c.arc(rand() * s, rand() * s, r, 0, Math.PI * 2)
-      c.fill()
+      c.moveTo(x, 0)
+      c.bezierCurveTo(x + 14, s * 0.33, x - 14, s * 0.66, x + 6, s)
+      c.stroke()
+    }
+    // fine stipple
+    for (let i = 0; i < 5200; i++) {
+      c.globalAlpha = 0.03 + rand() * 0.06
+      c.fillStyle = rand() > 0.5 ? tint : '#ffffff'
+      c.fillRect(rand() * s, rand() * s, 1 + rand() * 1.6, 1 + rand() * 1.6)
     }
     c.globalAlpha = 1
   })
@@ -656,7 +749,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
 
   asphaltTex.repeat.set(24, 3)
-  const pavementTex = track(pavementTexture('#a3a8ab', '#8d9296'))
+  const pavementTex = track(pavementTexture('#9aa0a4', '#7f868b'))
+  // Earth for everything beyond the plaza. Tiled coarsely: one tile per 12 m, so
+  // the patch detail reads at street scale instead of as noise.
+  const GROUND_EXTENT_HINT = 220
+  const earthTex = track(earthTexture('#6b7a56', '#4d5a3e', '#8a9a6c'))
+  earthTex.repeat.set(GROUND_EXTENT_HINT / 12, GROUND_EXTENT_HINT / 12)
 
   // Bump maps derived from the colour maps above: no new generators, and every
   // surface gains relief so lighting has something to catch.
@@ -666,6 +764,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const deskBump = track(bumpFrom(deskTex, 0.5))
   const vinylBump = track(bumpFrom(vinylTex, 0.45))
   const carpetBump = track(bumpFrom(carpetTex, 0.6))
+  const earthBump = track(bumpFrom(earthTex, 0.55))
+  earthBump.repeat.copy(earthTex.repeat)
   const asphaltBump = track(bumpFrom(asphaltTex, 0.7))
   const pavementBump = track(bumpFrom(pavementTex, 0.5))
   const metalBump = track(bumpFrom(metalTex, 0.25))
@@ -1968,12 +2068,50 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const streetGroup = new THREE.Group()
   scene.add(streetGroup)
 
+  /**
+   * Ground.
+   *
+   * Two layers, because one was wrong: a single 60x52 m slab of light grey
+   * (#a3a8ab) with nothing beyond it read as floating above cloud — the eye reads
+   * a pale plane that stops dead as sky, not as ground. The neighbouring blocks
+   * also stood OUTSIDE it (a block at x=30, 12 m wide spans x 24..36 against a
+   * slab edge at x=30), so they floated too.
+   *
+   * So: a wide, darker earth plane well beyond the furthest building, with the
+   * paved plaza laid on top of it.
+   */
+  const GROUND_EXTENT = 220
+  const earth = new THREE.Mesh(
+    new THREE.PlaneGeometry(GROUND_EXTENT, GROUND_EXTENT),
+    new THREE.MeshStandardMaterial({
+      color: 0x6f7a5e,
+      map: earthTex,
+      bumpMap: earthBump,
+      bumpScale: 0.5,
+      roughness: 1,
+    }),
+  )
+  earth.rotation.x = -Math.PI / 2
+  earth.position.y = -0.12
+  earth.receiveShadow = true
+  streetGroup.add(earth)
+
+  // The plaza: pavement around the office, sized to contain every neighbouring
+  // block, not just the office.
+  const plazaW = 120
+  const plazaD = 110
   const pavement = new THREE.Mesh(
-    new THREE.PlaneGeometry(FLOOR.width + 26, FLOOR.depth + 26),
-    new THREE.MeshStandardMaterial({ map: pavementTex, bumpMap: pavementBump, bumpScale: 0.25, roughness: 0.95 }),
+    new THREE.PlaneGeometry(plazaW, plazaD),
+    new THREE.MeshStandardMaterial({
+      map: pavementTex,
+      bumpMap: pavementBump,
+      bumpScale: 0.25,
+      roughness: 0.95,
+    }),
   )
   pavement.rotation.x = -Math.PI / 2
-  pavement.position.y = -0.06
+  pavement.position.set(0, -0.06, 6)
+  pavement.receiveShadow = true
   streetGroup.add(pavement)
 
   const road = new THREE.Mesh(

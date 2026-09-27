@@ -239,6 +239,35 @@ console.log('geometry')
   check('every API route keeps the methods the UI calls', missing.length === 0, missing.join(' | '))
 }
 
+// Every neighbouring block must stand ON the ground, not beyond it. The ground
+// used to be a single 60x52 m slab while a block at x=30 was 12 m wide (x 24..36)
+// and another sat at z 34.5..43.5 — both outside the slab, so they floated over
+// nothing, which is what "hovering above the clouds" described.
+{
+  const src = readFileSync(new URL('../src/lib/office/build.ts', import.meta.url), 'utf8')
+  const problems: string[] = []
+  const earth = Number(src.match(/const GROUND_EXTENT = (\d+)/)?.[1] ?? 0)
+  if (!earth) {
+    problems.push('GROUND_EXTENT not found')
+  } else {
+    const blocks = [...src.matchAll(/building\((-?[\d.]+),\s*(-?[\d.]+),\s*([\d.]+),\s*([\d.]+)/g)].map(
+      (m) => ({ x: Number(m[1]), z: Number(m[2]), w: Number(m[3]), d: Number(m[4]) }),
+    )
+    if (!blocks.length) problems.push('no buildings found (pattern changed?)')
+    for (const b of blocks) {
+      const x0 = b.x - b.w / 2
+      const x1 = b.x + b.w / 2
+      const z0 = b.z - b.d / 2
+      const z1 = b.z + b.d / 2
+      if (Math.abs(x0) > earth / 2 || Math.abs(x1) > earth / 2 ||
+          Math.abs(z0) > earth / 2 || Math.abs(z1) > earth / 2) {
+        problems.push(`block at (${b.x},${b.z}) extends past the ground plane`)
+      }
+    }
+  }
+  check('every building stands on the ground plane', problems.length === 0, problems.join(' | '))
+}
+
 // The street must be layered, not overlapping: building, then sidewalk, then road.
 //
 // This shipped wrong twice in opposite directions — pedestrians at z 16.4/19.6

@@ -1159,3 +1159,50 @@ and it is applied to floors, lobby tile, walls, desks, vinyl, fabric, carpet,
 asphalt and pavement. Resolutions raised where they were still 128 or 256 px.
 
 Self-test: 17 checks.
+
+---
+
+## 27. The ground, and two textures that had no relief
+
+### "Hovering above clouds" was literally true
+
+The ground was one plane: 60 x 52 m, colour `#a3a8ab`. Two consequences:
+
+- **A pale plane that stops dead reads as sky, not ground.** Nothing beyond its edge
+  but the background gradient, so the eye finishes the office with a horizon of
+  nothing.
+- **Buildings stood outside it.** A block at `x = 30` that is 12 m wide spans
+  x 24..36 against a slab edge at x 30, and a southern block spanned z 34.5..43.5
+  against an edge at z 26. Those blocks were floating over empty space — the report
+  was accurate, not a figure of speech.
+
+Two layers now:
+
+- **Earth**, 220 x 220 m, dark olive (`#6b7a56`), tiled one texture per 12 m. Far
+  beyond the furthest building in every direction, so there is no edge in view from
+  the camera's clamped range.
+- **Plaza**, 120 x 110 m, laid on top. Sized to contain every neighbouring block,
+  not just the office.
+
+The earth texture is deliberately low-frequency: broad tonal drift, clumps and
+grit. Fine noise at this scale becomes uniform mush once mipmapped — the same
+finding as the desk grain, where fine lines kept ~10% of their contrast through the
+mip chain and broad bands kept ~80%.
+
+A self-test now asserts every block lies inside the ground plane, because "the
+buildings are standing on nothing" is not something a screenshot at normal zoom
+makes obvious.
+
+### The floor and the walls
+
+- **Floor:** boards were 64 px (8 per texture) with grain lines at 4-13% alpha —
+  invisible. Now 12 narrower boards with per-board tone variation (0.82-1.18), five
+  broad grain bands at 8-22% alpha, fine grain on top, and a **dark seam plus a
+  light bevel** at each board edge. Without the seam the boards merge into one
+  surface, which is most of why it read as a flat sheet.
+- **Walls:** the only variation was 900 circles at 2-5% alpha, which mipmapping
+  erases. Now 60 broad radial blotches (7-17%), 34 long soft roller streaks, and
+  5,200 fine stipple points. Plaster is painted with a roller, so both the broad
+  pressure variation and the fine stipple are drawn.
+
+Self-test: 18 checks.
