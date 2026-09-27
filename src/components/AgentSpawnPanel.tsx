@@ -41,6 +41,16 @@ export default function AgentSpawnPanel({
   const [newDesc, setNewDesc] = useState('')
   const [creating, setCreating] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  /** id awaiting the second click before a destructive delete. */
+  const [confirmKill, setConfirmKill] = useState<string | null>(null)
+
+  // A click anywhere else cancels a pending delete.
+  useEffect(() => {
+    if (!confirmKill) return
+    const cancel = () => setConfirmKill(null)
+    window.addEventListener('click', cancel)
+    return () => window.removeEventListener('click', cancel)
+  }, [confirmKill])
 
   async function load() {
     setLoading(true)
@@ -73,6 +83,7 @@ export default function AgentSpawnPanel({
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (action === 'kill') setNote(`profil "${name}" dihapus permanen`)
       await load()
       onChanged()
     } catch (e) {
@@ -176,15 +187,28 @@ export default function AgentSpawnPanel({
                 <i>{r.total} tugas</i>
               </div>
               <button
-                className="vp-btn vp-btn-danger"
+                className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
                 disabled={busy === r.name}
-                onClick={() => act('kill', r.name)}
-                title="Agent berjalan keluar lewat pintu utama, lalu menghilang"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirmKill !== r.name) {
+                    setConfirmKill(r.name)
+                    return
+                  }
+                  void act('kill', r.name)
+                }}
+                title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
               >
-                {busy === r.name ? '…' : 'Kill'}
+                {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
               </button>
             </div>
           ))}
+          {confirmKill && (
+            <div className="vp-cron-err">
+              Menghapus profil <b>{confirmKill}</b> permanen — sesi, memori, dan kunci
+              ikut hilang. Klik di tempat lain untuk batal.
+            </div>
+          )}
           {!inOffice.length && <span className="vp-muted">kosong</span>}
         </div>
 

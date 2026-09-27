@@ -11,7 +11,7 @@
  * strips those markers so the office UI can drive the board from a web request.
  */
 import { execFile } from 'node:child_process'
-import { access, readdir } from 'node:fs/promises'
+import { access, readFile, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -185,6 +185,11 @@ export async function listAssignees(): Promise<{ name: string; onDisk: boolean; 
 
 /* ----------------------------------------------------------------- profiles -- */
 
+/** Where Hermes keeps its state. `HERMES_HOME` wins if the operator set it. */
+function hermesHome(): string {
+  return process.env.HERMES_HOME || path.join(os.homedir(), '.hermes')
+}
+
 /**
  * Profiles on disk.
  *
@@ -195,8 +200,7 @@ export async function listAssignees(): Promise<{ name: string; onDisk: boolean; 
  * thing `hermes profile list` counts.
  */
 export async function listProfiles(): Promise<string[]> {
-  const home = process.env.HERMES_HOME || path.join(os.homedir(), '.hermes')
-  const dir = path.join(home, 'profiles')
+  const dir = path.join(hermesHome(), 'profiles')
   try {
     const entries = await readdir(dir, { withFileTypes: true })
     const out: string[] = []
@@ -255,6 +259,92 @@ export async function createProfile(
     throw new Error(`hermes profile create ${clean} failed: ${(e.stderr || e.message || '').trim()}`)
   }
   return { name: clean, description: desc }
+}
+
+/**
+ * Is this profile's gateway currently running?
+ *
+ * Two signals, because a profile can be served either way:
+ *
+ *   1. Its own `gateway.pid` — a JSON blob, NOT a bare number, and the PID has to
+ *      be checked against the process table because a stale file outlives a crash.
+ *   2. The default gateway's `served_profiles` list. A multiplexed profile has no
+ *      `gateway.pid` of its own, so signal 1 alone reports it stopped.
+ *
+ * Read from files rather than `hermes gateway status`, which reports only the
+ * active profile.
+ */
+async function gatewayRunning(name: string): Promise<boolean> {
+  const home = hermesHome()
+  const dir = name === 'default' ? home : path.join(home, 'profiles', name)
+  try {
+    const raw = await readFile(path.join(dir, 'gateway.pid'), 'utf8')
+    const pid = Number(JSON.parse(raw)?.pid)
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, 0) // signal 0 = liveness probe, sends nothing
+        return true
+      } catch {
+        // stale file from a process that has exited
+      }
+    }
+  } catch {
+    // no pid file: either stopped, or served by the multiplexer (checked below)
+  }
+  try {
+    const state = JSON.parse(await readFile(path.join(home, 'gateway_state.json'), 'utf8'))
+    const served = Array.isArray(state?.served_profiles) ? state.served_profiles : []
+    if (served.includes(name)) return true
+  } catch {
+    // no state file
+  }
+  return false
+}
+
+/**
+ * Delete a profile for real.
+ *
+ * This is destructive: `hermes profile delete` removes the profile directory,
+ * its sessions, its memory store and its wrapper script. The only thing left is a
+ * one-line tombstone in `profiles/.deleted/<name>`, which is a marker for the
+ * gateway, NOT a backup — nothing can restore from it.
+ *
+ * Refused for a profile whose gateway is running. `hermes profile delete` stops
+ * that gateway itself, so deleting a served profile would take down whatever
+ * messaging it handles — a bot going silent is not an acceptable side effect of a
+ * button in a 3D office. The CLI already refuses `default`; this refuses more.
+ *
+ * `--yes` skips the CLI's interactive "type the name to confirm" prompt; the UI
+ * owns confirmation and the API is not a terminal.
+ */
+export async function deleteProfile(name: string): Promise<void> {
+  const clean = name.trim().toLowerCase()
+  if (!clean) throw new Error('nama profil wajib diisi')
+  if (clean === 'default') {
+    throw new Error('profil "default" tidak bisa dihapus')
+  }
+  const profiles = await listProfiles()
+  if (!profiles.includes(clean)) {
+    throw new Error(`profil "${clean}" tidak ada di disk`)
+  }
+  if (await gatewayRunning(clean)) {
+    throw new Error(
+      `gateway profil "${clean}" sedang berjalan — hentikan dulu sebelum dihapus`,
+    )
+  }
+  try {
+    await run(HERMES_BIN, ['profile', 'delete', clean, '--yes'], {
+      env: cleanEnv(),
+      timeout: 60_000,
+      maxBuffer: 8 * 1024 * 1024,
+    })
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string }
+    if (e.code === 'ENOENT') {
+      throw new Error(`Hermes CLI not found at "${HERMES_BIN}".`)
+    }
+    throw new Error(`hermes profile delete ${clean} failed: ${(e.stderr || e.message || '').trim()}`)
+  }
 }
 
 export async function listAgents(tasks: Task[]): Promise<Agent[]> {

@@ -572,3 +572,10 @@ kbd {
   cursor: pointer;
 }
 .vp-check input { margin-top: 1px; }
+
+/* Armed destructive button: one more click fires it. */
+.vp-btn-armed {
+  background: #6b2020 !important;
+  border-color: #b04a4a !important;
+  color: #ffe0e0 !important;
+}

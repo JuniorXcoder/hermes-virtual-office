@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createProfile, listAgents, listAssignees, listProfiles, listTasks } from '@/lib/hermes/kanban'
-import { isKilled, killedNames, kill, spawn } from '@/lib/hermes/office-membership'
+import {
+  createProfile,
+  deleteProfile,
+  listAgents,
+  listAssignees,
+  listProfiles,
+  listTasks,
+} from '@/lib/hermes/kanban'
+import { isKilled, killedNames, spawn } from '@/lib/hermes/office-membership'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,8 +111,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Only profiles the install actually knows may be toggled, otherwise a typo
-    // would silently create a kill-list entry that matches nothing.
+    // Spawn only accepts a profile the install knows, otherwise a typo would
+    // create a kill-list entry that matches nothing. `kill` validates inside its
+    // own branch, because it requires a real on-disk profile.
     const known = new Set([...(await listAssignees()).map((a) => a.name), ...(await listProfiles())])
     if (!known.has(name)) {
       return NextResponse.json(
@@ -120,12 +128,73 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const changed = action === 'spawn' ? spawn(name) : kill(name)
+    /* -------------------------------------------------------------- kill --- */
+    // `kill` DELETES the profile. It used to only hide it from the office; that
+    // is now `spawn`/membership, and this is the destructive one.
+    if (action === 'kill') {
+      // `default` lives at ~/.hermes itself, not under profiles/, so the disk
+      // check below would refuse it with a misleading "tidak ada di disk".
+      if (name === 'default') {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'invalid_request',
+              message: 'profil "default" tidak bisa dihapus',
+              status: 400,
+            },
+          },
+          { status: 400 },
+        )
+      }
+      if (!(await listProfiles()).includes(name)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'invalid_request',
+              message: `profil "${name}" tidak ada di disk`,
+              status: 400,
+            },
+          },
+          { status: 400 },
+        )
+      }
+      try {
+        await deleteProfile(name)
+      } catch (err) {
+        const msg = (err as Error).message
+        // Refusals (default, gateway running) are the caller's, not a server fault.
+        const refused = /tidak bisa dihapus|sedang berjalan|wajib diisi/.test(msg)
+        return NextResponse.json(
+          {
+            error: {
+              code: refused ? 'invalid_request' : 'action_failed',
+              message: msg,
+              status: refused ? 400 : 502,
+            },
+          },
+          { status: refused ? 400 : 502 },
+        )
+      }
+      // Clear any membership entry: the profile is gone, so a stale kill-list
+      // entry would block a future profile that reuses the name.
+      spawn(name)
+      return NextResponse.json({
+        success: true,
+        action,
+        name,
+        /** The profile no longer exists. */
+        deleted: true,
+        killed: killedNames(),
+      })
+    }
+
+    /* ------------------------------------------------------------- spawn --- */
+    const changed = spawn(name)
     return NextResponse.json({
       success: true,
       action,
       name,
-      /** false when the profile was already in the requested state. */
+      /** false when the profile was already visible. */
       changed,
       killed: killedNames(),
     })

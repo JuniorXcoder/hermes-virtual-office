@@ -996,3 +996,60 @@ never safe to remove.
 
 Everything reasoned above was also removed from the CSS (`.vp-hint`, `.vp-hint kbd`,
 and its media-query rule) so no dead rules remain.
+
+---
+
+## 24. `kill` deletes the profile, and the guard that almost did not exist
+
+`kill` used to hide a profile from the office. It now runs `hermes profile delete`:
+the directory, sessions, memory store and wrapper script are gone. The only residue
+is a one-line tombstone at `profiles/.deleted/<name>` containing the word
+`deleted` — a gateway marker, **not a backup**. Nothing restores from it.
+
+### Two guards, one of them supplied by the CLI
+
+`hermes profile delete` refuses `default` on its own (it lives at `~/.hermes` itself,
+not under `profiles/`). It does **not** refuse a profile whose gateway is running —
+it stops that gateway first. Deleting a served profile would therefore take down
+whatever messaging it handles, and a bot going quiet is not an acceptable side
+effect of a button in a 3D office.
+
+Detecting "gateway running" needs two signals, because a profile can be served two
+ways:
+
+1. Its own `gateway.pid` — **a JSON blob, not a bare number**, with the PID verified
+   against the process table so a stale file left by a crash does not count.
+2. The default gateway's `served_profiles` list. A multiplexed profile has no
+   `gateway.pid` of its own, so signal 1 alone reports it stopped.
+
+`hermes gateway status` was not used: it reports only the active profile.
+
+### The first guard test passed for the wrong reason
+
+The probe wrote a `gateway.pid` pointing at `$$` — the shell's own PID — then sent
+the kill request. The request was accepted and the profile deleted, which looked
+like the guard had failed. It had not: `$$` was the PID of the short-lived shell
+running the probe, which had already exited by the time the API read the file, so
+the liveness check correctly reported the gateway stopped.
+
+Re-run with PID 1 (permanently alive), the guard refused as designed:
+
+```
+kill zzz-gw2 (gateway.pid -> pid 1) -> 400 'gateway profil "zzz-gw2" sedang berjalan'
+profiles/ still contains zzz-gw2
+```
+
+A test that passes is not the same as a test that tested what you meant.
+
+### Verified
+
+```
+create zzz-hapus-uji -> profile directory appears
+kill   zzz-hapus-uji -> deleted: true, directory gone from disk
+kill   default       -> 400 'profil "default" tidak bisa dihapus'
+kill   tidakada      -> 400 'profil "tidakada" tidak ada di disk'
+kill   (gateway up)  -> 400 'gateway profil … sedang berjalan'
+```
+
+Probe profiles deleted afterwards; `profiles/` is back to `jun, lulu, risko`, and
+the default gateway (PID 131415) was never touched.

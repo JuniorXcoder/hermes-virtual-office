@@ -281,15 +281,34 @@ Responses:
 
 - `200` → `{ "success": true, "action", "name", "changed": true, "killed": [...] }`.
   `changed` is `false` when the profile was already in the requested state.
-- `400 invalid_request` → unknown action, missing name, or `profil "x" tidak dikenal`
-  (spawn/kill accept profiles on disk as well as task assignees)
-- `502 action_failed` → the CLI failed while listing profiles
+- `400 invalid_request` → unknown action, missing name, `profil "x" tidak dikenal`,
+  `profil "x" tidak ada di disk`, `profil "default" tidak bisa dihapus`, or
+  `gateway profil "x" sedang berjalan — hentikan dulu sebelum dihapus`
+- `502 action_failed` → the CLI failed while listing or deleting
 
-**This changes office membership only.** Killing a profile removes its avatar; its
-tasks stay on the board, and `GET /api/hermes/tasks` still reports them. The
-kill-list lives in memory for the life of the server process — a restart restores
-everyone. Persisting it would mean writing office state into the Hermes install,
-which this app never does.
+### What each action does to the profile
+
+| `action` | Effect on the Hermes install |
+|---|---|
+| `create` | creates a new, **empty** profile (no `--clone`) |
+| `spawn` | removes the name from the in-memory hide-list; profile untouched |
+| `kill` | **DELETES the profile** — directory, sessions, memory store, wrapper script |
+
+`kill` is destructive and permanent. `hermes profile delete` leaves a one-line
+tombstone at `profiles/.deleted/<name>`, but that is a marker for the gateway, **not
+a backup** — nothing can be restored from it. The response carries
+`"deleted": true` so the caller can tell it apart from the old hide-only behaviour.
+
+**Refused for a profile whose gateway is running.** `hermes profile delete` stops
+that gateway itself, so deleting a served profile would take down whatever messaging
+it handles. The CLI already refuses `default`; this refuses that plus a live
+gateway. The check reads the profile's own `gateway.pid` (a JSON blob, with the PID
+verified against the process table so a stale file does not count) and the default
+gateway's `served_profiles` list, because a multiplexed profile has no pid file of
+its own.
+
+Tasks are NOT deleted: they belong to the board, not the profile, so a killed
+profile's tasks remain and can be reassigned.
 
 ---
 
