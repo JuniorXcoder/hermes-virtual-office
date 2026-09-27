@@ -32,6 +32,9 @@ import {
   windowPlan,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked } from '../src/lib/office/nav'
+import { buildAvatar } from '../src/lib/office/avatar'
+import { SEATS } from '../src/lib/office/layout'
+import * as THREE from 'three'
 
 let failures = 0
 let checks = 0
@@ -266,6 +269,51 @@ console.log('geometry')
     }
   }
   check('every building stands on the ground plane', problems.length === 0, problems.join(' | '))
+}
+
+// Every seated pose must put the feet where they belong: on the floor, or on the
+// stool's foot ring. This is the check that was missing when the sofa was modelled
+// 9 cm higher than the avatar's legs could reach — every sitter hovered with their
+// feet dangling and nothing compared the pose against the furniture.
+//
+// It measures the REAL rig rather than a re-derived formula, so it stays honest if
+// the limb lengths in avatar.ts change.
+{
+  const av = buildAvatar('jun' as never)
+  const root = new THREE.Group()
+  root.add(av.group)
+  const D = Math.PI / 180
+  const problems: string[] = []
+  for (const [name, seat] of Object.entries(SEATS)) {
+    const s = seat as { hip: number; thigh: number; knee: number; footY?: number }
+    for (const [leg, sign] of [
+      [av.legs[0], -1],
+      [av.legs[1], 1],
+    ] as const) {
+      leg.shoulder.rotation.set(s.thigh * D, sign * 5 * D, 0)
+      leg.elbow.rotation.set(s.knee * D, 0, 0)
+    }
+    av.hips.position.y = s.hip
+    root.updateMatrixWorld(true)
+    let lowest = Infinity
+    for (const leg of av.legs) {
+      for (const child of leg.elbow.children) {
+        const p = new THREE.Vector3()
+        child.getWorldPosition(p)
+        const g = (child as THREE.Mesh).geometry as THREE.BoxGeometry
+        lowest = Math.min(lowest, p.y - g.parameters.height / 2)
+      }
+    }
+    const want = s.footY ?? 0
+    // 2 cm: the foot box is a slab, so the sole is flat and this is tight enough to
+    // catch the 9 cm and 13 cm errors that were there before.
+    if (Math.abs(lowest - want) > 0.02) {
+      problems.push(
+        `${name}: feet at ${lowest.toFixed(3)} but must be ${want.toFixed(3)} (${((lowest - want) * 100).toFixed(0)} cm off)`,
+      )
+    }
+  }
+  check('every seated pose plants the feet on its seat', problems.length === 0, problems.join(' | '))
 }
 
 // The street must be layered, not overlapping: building, then sidewalk, then road.

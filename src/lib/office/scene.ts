@@ -257,6 +257,19 @@ export function createScene(
   }
 
   function removeAgent(a: SceneAgent) {
+    // Detach the CSS2D label and bubble FIRST, explicitly.
+    //
+    // These are CSS2DObject children of the avatar group. `scene.remove(group)`
+    // fires three.js's 'removed' event on the GROUP only — the label and bubble are
+    // descendants, so their handler never runs and their DOM elements stay in the
+    // overlay forever, frozen at the last projected position. Every killed agent
+    // left a nameplate stacked at the doorway. Removing the element by hand is the
+    // only reliable way; relying on the 'removed' event does not reach children.
+    for (const c of [a.label, a.bubble]) {
+      c.removeFromParent()
+      const el = c.element as HTMLElement
+      el.remove()
+    }
     scene.remove(a.avatar.group)
     const i = agents.indexOf(a)
     if (i >= 0) agents.splice(i, 1)

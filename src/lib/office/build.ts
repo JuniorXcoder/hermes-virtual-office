@@ -52,6 +52,8 @@ import {
   WINDOW_H,
   BOARD_D,
   paletteFor,
+  SEATS,
+  seatTop,
   type Desk,
   type Palette,
 } from './layout'
@@ -1396,7 +1398,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // against the shelf and the sitter's face to the wall.
     chair.rotation.y = 0
     const cushion = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.3, 0.8), nookFabric)
-    cushion.position.y = 0.4
+    cushion.position.y = seatTop('nook') - SEATS.nook.thickness / 2
     chair.add(cushion)
     const backr = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.62, 0.2), nookFabric)
     backr.position.set(0, 0.72, 0.36)
@@ -1424,7 +1426,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       const st = new THREE.Group()
       st.position.set(sx, 0, PANTRY.z + PANTRY_STOOL_GAP)
       const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.07, 14), stdMat(0x7c4f34, { rough: 0.7 }))
-      seat.position.y = 0.62
+      seat.position.y = seatTop('stool') - SEATS.stool.thickness / 2
       st.add(seat)
       for (const [dx, dz] of [
         [-0.14, -0.14],
@@ -1532,7 +1534,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       roughness: 0.62,
     })
     const seat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.07, 0.54), chairFabric)
-    seat.position.y = 0.47
+    // Top surface comes from the pose that sits here (SEATS.chair), so the two can
+    // never drift apart again. Centring the slab puts its top at the derived value.
+    seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
     chair.add(seat)
     const back = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.6, 0.06), chairFabric)
     back.position.set(0, 0.76, 0.27)
@@ -1586,7 +1590,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // face the table centre
     c.rotation.y = Math.atan2(cx - CONFERENCE.x, cz - CONFERENCE.z)
     const seat = box(0.54, 0.07, 0.52, pal.chair, { rough: 0.7 })
-    seat.position.y = 0.47
+    seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
     c.add(seat)
     const back = box(0.54, 0.56, 0.06, pal.chair, { rough: 0.7 })
     back.position.set(0, 0.75, 0.26)
@@ -1614,7 +1618,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     new THREE.MeshStandardMaterial({ color: pal.sofa, map: fabricTex, bumpMap: fabricBump, bumpScale: 0.18, roughness: 0.95 }),
   )
   const sofaSeat = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.34, 1.0), sofaFabric)
-  sofaSeat.position.y = 0.42
+  // The sofa used to be modelled at 0.42 (top 0.59) while the avatar's legs reach
+  // only 0.46 below the hip — the feet could not touch the floor and every sitter
+  // hovered. Derived from SEATS.sofa now.
+  sofaSeat.position.y = seatTop('sofa') - SEATS.sofa.thickness / 2
   sofa.add(sofaSeat)
   const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.66, 0.24), sofaFabric)
   sofaBack.position.set(0, 0.82, 0.38)

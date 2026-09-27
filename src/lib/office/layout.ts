@@ -95,6 +95,38 @@ export function deskByIndex(index: number): Desk | undefined {
   return DESKS.find((d) => d.index === index)
 }
 
+/**
+ * Seats: the single source of truth for seat height.
+ *
+ * These numbers used to live in two places — the furniture in build.ts and the
+ * pose in anim.ts — and they drifted. The sofa was modelled with its surface at
+ * 0.59 while the avatar's legs reach only 0.46 below the hip, so the feet could
+ * not touch the floor and every sitter hovered. Nothing compared the two numbers.
+ *
+ * Each entry is one seat, and the two halves are derived from it:
+ *
+ *   surface Y (build.ts) = hip - HIP_LIFT - thickness / 2
+ *   pose (anim.ts)       = hip, thigh, knee
+ *
+ * `hip`/`thigh`/`knee` were solved against the actual rig — sampled, not guessed —
+ * so the feet land exactly on `footY` (0 = the floor). The self-test rebuilds the
+ * avatar and asserts it, which is the check that was missing.
+ */
+export const HIP_LIFT = 0.011
+export const SEATS = {
+  /** Desk chair and conference chair: surface 0.505. */
+  chair: { hip: 0.516, thigh: -86, knee: 90.75, thickness: 0.07 },
+  /** Lounge sofa: a low seat, surface 0.449. */
+  sofa: { hip: 0.46, thigh: -88, knee: 66, thickness: 0.34 },
+  /** Book-nook armchair: surface 0.505. */
+  nook: { hip: 0.516, thigh: -86, knee: 90.75, thickness: 0.3 },
+  /** Pantry bar stool: surface 0.644, feet rest on the foot ring at 0.24. */
+  stool: { hip: 0.655, thigh: -92, knee: 64, thickness: 0.07, footY: 0.24 },
+} as const
+export type SeatName = keyof typeof SEATS
+/** Top surface of a seat, from the pose that sits on it. */
+export const seatTop = (s: SeatName) => SEATS[s].hip - HIP_LIFT
+
 export const DESK_CHAIR = { x: 0, z: 1.0 }
 /**
  * The task chair's backrest sits at local +0.28 from the chair anchor, so a

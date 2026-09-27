@@ -1284,3 +1284,65 @@ tasks across `default`, `jun`, `lulu`. The `risko` task was removed during testi
 which is the behaviour that was asked for.
 
 Self-test: 18 checks.
+
+---
+
+## 29. Seats that nothing could sit on, and labels that never left
+
+### The sofa was 9 cm too high, and the crouch was 13 cm underground
+
+Two reports, one root cause: a seated pose was never compared against the furniture.
+
+The avatar's legs reach 0.46 m below the hip (thigh 0.48 + shin 0.46, with the foot
+slab). A desk chair's surface is 0.505 m, so the feet could not touch the floor —
+they dangled 4-5 cm. The sofa was modelled with its surface at 0.59, so its sitters
+dangled 12 cm. Nothing measured this.
+
+Worse was the gardener. Its pose used `hip 0.46`, which put the feet **13 cm through
+the floor** — and the floor hid them, so the visible result was a torso sitting in
+mid-air with no chair under it, exactly as reported.
+
+The fix is one source of truth. `SEATS` in layout.ts holds, per seat, the pose
+(hip/thigh/knee) and the surface thickness; `seatTop()` derives the surface height
+and build.ts uses it for the geometry while anim.ts uses the angles for the pose. The
+angles were **solved against the rig** — a script sampled the real avatar until the
+feet landed at 0.000 — not chosen by eye:
+
+```
+seat     hip     thigh  knee    feet land
+chair    0.516   -86    90.75   0.000   (surface 0.505)
+sofa     0.460   -88    66      0.000   (surface 0.449)
+nook     0.516   -86    90.75   0.000   (surface 0.505)
+stool    0.655   -92    64      0.239   (foot ring 0.24)
+```
+
+A self-test rebuilds the avatar and asserts every pose lands its feet where the seat
+says. That check did not exist, which is why both errors shipped.
+
+### The gardener was sitting, not crouching
+
+Even with the feet planted, the pose read as sitting: measured, its knee came 0.46 m
+forward and a desk sitter's comes 0.48 — indistinguishable. The rig has no waist
+joint, so `chest` pivots at the top of the torso and leaning forward moves the head
+~12 cm and the hands not at all; standing, the hands cannot reach below y=1.13 while
+the planter's leaves are at 0.82. A real crouch is the only pose that reaches the bed.
+
+Solved: `hip 0.634, thigh -50, knee 115, chest +35`. Feet at 0.000, knee 0.368
+forward (vs 0.479 seated), hands on the leaves at 0.820 — zero error. Head height
+drops from 1.64 to 1.29, so it reads as crouching from across the room.
+
+Note the sign: positive `chest.rotation.x` leans **forward**. The old pose used -26,
+which leaned the gardener *away* from the plant it was tending.
+
+### Killed agents left their nameplates at the door
+
+`scene.remove(group)` fires three.js's `'removed'` event on the **group**. The label
+and speech bubble are `CSS2DObject` **children**, so their own handler never ran and
+their DOM elements stayed in the overlay forever, frozen at the last projected
+position — the doorway. Every killed agent stacked another name there, which is what
+the screenshot showed.
+
+`removeAgent()` now detaches both explicitly (`removeFromParent()` plus `el.remove()`)
+before removing the group.
+
+Self-test: 19 checks.

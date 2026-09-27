@@ -23,3 +23,6 @@ data/
 npm-debug.log*
 .vercel
 *.tsbuildinfo
+
+# scratch scripts — type-checked by `next build` if left in the tree
+/tmp/

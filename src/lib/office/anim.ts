@@ -9,11 +9,23 @@ import * as THREE from 'three'
 import type { Avatar } from './avatar'
 
 import { HIP_STAND } from './avatar'
+import { SEATS } from './layout'
 
 const D = Math.PI / 180
 export { HIP_STAND }
-/** Seated hip height: the chair seat top sits at ~0.50, so the joint rides just above it. */
-export const HIP_SIT = 0.52
+/**
+ * Seated hip height for an office/meeting chair.
+ *
+ * NOT a guess: it is the hip Y that puts this rig's feet exactly on the floor for
+ * the seated pose below (thigh -86, knee 92), solved by sampling the rig. The
+ * chair's seat top is 0.505, so the hip rides 0.011 above it — a hair, which is
+ * what "sitting on the seat" means.
+ *
+ * The previous 0.52 was chosen to match the chair, not the legs, and the legs are
+ * what decide whether the feet touch: with the feet 4-5 cm off the floor every
+ * sitter looked like they were hovering.
+ */
+export const HIP_SIT = SEATS.chair.hip
 
 /** Smooth triangle-ish oscillation, deterministic in `t`. */
 export function wave(t: number, freq: number, phase = 0): number {
@@ -91,7 +103,7 @@ function walkLegs(a: AnimAgent, t: number, speed: number) {
 /** Seated at a desk, typing on the keyboard. */
 function typing(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, HIP_SIT, -90, 86)
+  sit(a, HIP_SIT, SEATS.chair.thigh, SEATS.chair.knee)
   av.chest.rotation.x = -7 * D
   av.chest.rotation.y = 0
   av.neck.rotation.x = 4 * D
@@ -112,7 +124,7 @@ function typing(a: AnimAgent, t: number) {
 /** Seated in the conference room; raises a hand on the speaking turn. */
 function meeting(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, HIP_SIT, -90, 84)
+  sit(a, HIP_SIT, SEATS.chair.thigh, SEATS.chair.knee)
   const talking = !!a.meetingTalking
   av.chest.rotation.x = (talking ? -5 : 9) * D
   av.chest.rotation.y = talking ? 0 : wave(t, 0.35, a.phase) * 9 * D
@@ -134,7 +146,7 @@ function meeting(a: AnimAgent, t: number) {
 /** Lounging on the sofa, controller in hand. */
 function gaming(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, 0.52, -90, 88)
+  sit(a, SEATS.sofa.hip, SEATS.sofa.thigh, SEATS.sofa.knee)
   av.chest.rotation.x = -12 * D
   av.chest.rotation.y = wave(t, 0.4, a.phase) * 6 * D
   av.head.rotation.x = 10 * D
@@ -165,40 +177,56 @@ function dart(a: AnimAgent, t: number) {
   L.elbow.rotation.x = -30 * D
 }
 
-/** Crouched over the planter, tending plants: snipping and repotting. */
+/**
+ * Crouched at the planter, tending plants.
+ *
+ * Every number here was solved against the rig, not chosen. The rig has no waist
+ * joint — `chest` pivots at the TOP of the torso, so leaning forward moves the
+ * head about 12 cm and the hands not at all. Standing up, the hands cannot reach
+ * below y=1.13, while the planter's leaves sit at 0.82. A crouch is therefore the
+ * only pose that reaches the bed, and the crouch has to be REAL: the previous one
+ * used hip 0.46 with thigh -74, which measured 13 cm of leg THROUGH the floor
+ * (the floor hid it) and a knee 0.46 m forward — the same as sitting. That is why
+ * it read as a person sitting in mid-air with no chair.
+ *
+ * Solved: hip 0.634, thigh -50, knee 115. Feet plant at 0.000, the knee comes
+ * 0.368 forward (vs 0.479 seated — clearly a crouch), and the hands land on the
+ * leaves at 0.820 with zero error.
+ */
 function garden(a: AnimAgent, t: number) {
   const av = a.avatar
-  // crouch: hips drop, knees fold forward, torso leans over the soil
   const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = -74 * D * k
-    leg.shoulder.rotation.z = sign * 16 * D * k
-    leg.elbow.rotation.x = 96 * D * k
+    leg.shoulder.rotation.x = m(-50 * D)
+    leg.shoulder.rotation.z = sign * m(9 * D)
+    leg.elbow.rotation.x = m(115 * D)
   }
-  av.hips.position.y = HIP_STAND - (HIP_STAND - 0.46) * k
-  av.chest.rotation.x = -26 * D
-  av.chest.rotation.y = wave(t, 0.5, a.phase) * 10 * D
-  av.neck.rotation.x = 10 * D
-  av.head.rotation.x = 14 * D
+  av.hips.position.y = HIP_STAND - (HIP_STAND - 0.634) * k
+  // Torso folds FORWARD over the bed (positive chest leans toward local +Z).
+  av.chest.rotation.x = m(35 * D)
+  av.chest.rotation.y = wave(t, 0.5, a.phase) * 8 * D
+  av.neck.rotation.x = m(12 * D)
+  av.head.rotation.x = m(16 * D)
   av.head.rotation.y = wave(t, 0.65, a.phase) * 14 * D
   const [L, R] = av.arms
-  // both arms reach down into the bed; one hand works in a small repeated motion
+  // Both hands reach down onto the leaves; one works in a small repeated motion.
   const work = wave(t, 2.1, a.phase)
-  L.shoulder.rotation.x = (-52 + work * 5) * D
-  L.shoulder.rotation.z = -14 * D
-  L.elbow.rotation.x = (-64 + work * 8) * D
-  R.shoulder.rotation.x = (-56 - work * 6) * D
-  R.shoulder.rotation.z = 16 * D
-  R.elbow.rotation.x = (-70 - work * 10) * D
+  L.shoulder.rotation.x = m(-30 * D) + work * 4 * D
+  L.shoulder.rotation.z = m(-12 * D)
+  L.elbow.rotation.x = m(-40 * D) + work * 6 * D
+  R.shoulder.rotation.x = m(-32 * D) - work * 5 * D
+  R.shoulder.rotation.z = m(12 * D)
+  R.elbow.rotation.x = m(-42 * D) - work * 7 * D
 }
 
 /** Seated in the armchair with a book: page turns every few seconds. */
 function read(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, 0.55, -88, 82)
+  sit(a, SEATS.nook.hip, SEATS.nook.thigh, SEATS.nook.knee)
   av.chest.rotation.x = -14 * D
   av.chest.rotation.y = wave(t, 0.28, a.phase) * 5 * D
   av.neck.rotation.x = 14 * D
@@ -223,7 +251,7 @@ function read(a: AnimAgent, t: number) {
 function coffee(a: AnimAgent, t: number) {
   const av = a.avatar
   // stools are counter height, so the hip rides higher than a desk chair
-  sit(a, 0.66, -84, 74)
+  sit(a, SEATS.stool.hip, SEATS.stool.thigh, SEATS.stool.knee)
   const sip = Math.max(0, wave(t, 0.55, a.phase))
   av.chest.rotation.x = (-4 - sip * 5) * D
   av.chest.rotation.y = wave(t, 0.3, a.phase) * 7 * D
@@ -244,7 +272,7 @@ function coffee(a: AnimAgent, t: number) {
 /** Relaxed sit on the sofa without a controller. */
 function sofa(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, 0.54, -92, 84)
+  sit(a, SEATS.sofa.hip, SEATS.sofa.thigh, SEATS.sofa.knee)
   av.chest.rotation.x = 10 * D
   av.chest.rotation.y = wave(t, 0.3, a.phase) * 5 * D
   av.neck.rotation.x = -6 * D
