@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { commentOnTask, listRuns, releaseWorker, taskLog } from '@/lib/hermes/kanban'
+import { commentOnTask, getTask, listRuns, releaseWorker, taskLog } from '@/lib/hermes/kanban'
 
 export const dynamic = 'force-dynamic'
 
-/** Screen peeker payload: run history + raw log tail for a task. */
+/**
+ * One task: its run history and log tail, or an intervention.
+ *
+ * The `id` is checked against the board before anything else. A dynamic segment
+ * matches ANY path, so without this check `/api/hermes/tasks/<anything>` answered
+ * 200 with an empty payload — a misspelled or deleted task looked like a real task
+ * that simply had no runs. A 404 is the honest answer.
+ */
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   try {
+    const task = await getTask(id)
+    if (!task) return notFound(id)
     const [runs, log] = await Promise.all([listRuns(id), taskLog(id)])
-    return NextResponse.json({ taskId: id, runs, log })
+    return NextResponse.json({ taskId: id, task, runs, log })
   } catch (err) {
     return NextResponse.json(
       { error: { code: 'peek_failed', message: (err as Error).message, status: 502 } },
@@ -23,6 +32,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action || '')
   try {
+    // Same guard as GET: acting on a task that does not exist must say so rather
+    // than report a downstream CLI error as a server fault.
+    const task = await getTask(id)
+    if (!task) return notFound(id)
+
     if (action === 'steer') {
       const message = String(body?.message || '').trim()
       if (!message) {
@@ -61,4 +75,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       { status: 502 },
     )
   }
+}
+
+function notFound(id: string) {
+  return NextResponse.json(
+    { error: { code: 'not_found', message: `tugas "${id}" tidak ada di board`, status: 404 } },
+    { status: 404 },
+  )
 }

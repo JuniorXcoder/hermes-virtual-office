@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Candidate, TaskOrigin } from '@/types/hermes'
+import { fetchJson } from '@/lib/api'
 
 /**
  * "Turn these into tasks" — the shared cross-menu control.
@@ -63,7 +64,11 @@ export default function ActionItems({
     setErr(null)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/tasks/from-items', {
+      const res = await fetchJson<{
+        created?: { id: string }[]
+        failed?: unknown[]
+        error?: { message?: string }
+      }>('/api/hermes/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -77,16 +82,14 @@ export default function ActionItems({
           })),
         }),
       })
-      const d = await r.json()
-      if (!r.ok && !d?.created?.length) {
-        throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      const d = res.data
+      // Partial success is a valid outcome, so only a reply with NO created tasks is
+      // a failure — the route answers 502 in exactly that case.
+      if (!d?.created?.length) {
+        throw new Error(res.error || d?.error?.message || 'tidak ada tugas yang dibuat')
       }
-      const n = d.created?.length ?? 0
-      setNote(
-        d.failed?.length
-          ? `${n} tugas dibuat, ${d.failed.length} gagal`
-          : `${n} tugas dibuat`,
-      )
+      const n = d.created.length
+      setNote(d.failed?.length ? `${n} tugas dibuat, ${d.failed.length} gagal` : `${n} tugas dibuat`)
       setRows((prev) => prev.map((x) => (chosen.includes(x) ? { ...x, on: false } : x)))
       onDone?.(n)
     } catch (e) {

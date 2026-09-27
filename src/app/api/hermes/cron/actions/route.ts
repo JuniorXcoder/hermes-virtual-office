@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic'
  * proposal rather than inventing one, so the task carries the real message.
  *
  * `GET ?from=<jobId>` — nothing is written; creating goes through the shared
- * `/api/hermes/tasks/from-items`.
+ * `/api/hermes/tasks`.
  */
 export async function GET(req: NextRequest) {
   const from = req.nextUrl.searchParams.get('from')

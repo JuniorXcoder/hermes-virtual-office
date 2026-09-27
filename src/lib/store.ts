@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
+import { fetchJson } from './api'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
 
@@ -32,7 +33,7 @@ type State = {
   refreshMeeting: () => Promise<void>
 }
 
-export const useOffice = create<State>((set, get) => ({
+export const useOffice = create<State>((set) => ({
   tasks: [],
   agents: [],
   meeting: null,
@@ -48,35 +49,39 @@ export const useOffice = create<State>((set, get) => ({
   newTaskOpen: false,
 
   async load() {
-    try {
-      const r = await fetch('/api/hermes/tasks', { cache: 'no-store' })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      set({ tasks: d.tasks || [], agents: d.agents || [], error: null, loading: false })
-    } catch (e) {
-      set({ error: (e as Error).message, loading: false })
+    const res = await fetchJson<{ tasks?: Task[]; agents?: Agent[] }>('/api/hermes/tasks', {
+      cache: 'no-store',
+    })
+    if (!res.ok || !res.data) {
+      set({ error: res.error || 'gagal memuat papan', loading: false })
+      return
     }
+    set({ tasks: res.data.tasks || [], agents: res.data.agents || [], error: null, loading: false })
   },
 
   async refreshMeeting() {
-    try {
-      const r = await fetch('/api/hermes/meeting', { cache: 'no-store' })
-      const d = await r.json()
-      // `live` are meetings in this process; `archived` are the transcripts on
-      // disk from this and earlier runs. The picker needs both.
-      const list: Meeting[] = d.live || []
-      // Only a live meeting may pin agents to the conference table. A finished or
-      // failed one still belongs in the panel for its transcript, but the office
-      // floor must let those avatars go.
-      const active = list.find((m) => m.state === 'queued' || m.state === 'running') ?? null
-      set({
-        meeting: active ?? list[0] ?? null,
-        meetingConfigured: !!d.configured,
-        meetingHistory: d.archived || [],
-      })
-    } catch {
-      /* keep the last known meeting on a blip */
-    }
+    // A blip here must not clear the panel: keep the last known meeting and say
+    // nothing, because this polls every few seconds and an error banner that
+    // flickers on every dropped packet is worse than silence.
+    const res = await fetchJson<{
+      configured?: boolean
+      live?: Meeting[]
+      archived?: ArchivedMeeting[]
+    }>('/api/hermes/meeting', { cache: 'no-store' })
+    if (!res.ok || !res.data) return
+    const d = res.data
+    // `live` are meetings in this process; `archived` are the transcripts on disk
+    // from this and earlier runs. The picker needs both.
+    const list: Meeting[] = d.live || []
+    // Only a live meeting may pin agents to the conference table. A finished or
+    // failed one still belongs in the panel for its transcript, but the office
+    // floor must let those avatars go.
+    const active = list.find((m) => m.state === 'queued' || m.state === 'running') ?? null
+    set({
+      meeting: active ?? list[0] ?? null,
+      meetingConfigured: !!d.configured,
+      meetingHistory: d.archived || [],
+    })
   },
 
   setView: (view) => set({ view }),

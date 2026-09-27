@@ -64,7 +64,6 @@ export default function OfficeApp() {
   }, [setView, setNewTaskOpen])
 
   const backendOnline = !error
-  const activeAgents = agents.filter((a) => a.status !== 'idle').length
   const running = tasks.filter((t) => t.status === 'running').length
   const done = tasks.filter((t) => t.status === 'done').length
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0

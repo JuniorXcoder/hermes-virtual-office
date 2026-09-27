@@ -224,26 +224,34 @@ export async function releaseWorker(taskId: string): Promise<boolean> {
 type RawAssignee = { name: string; on_disk?: boolean; counts?: Record<string, number> }
 
 /**
- * Desk assignment is derived, not stored: agents that are working or reviewing
- * get a station first, idle ones fill the remaining desks in alphabetical
- * order. That keeps desk positions stable across reloads without persisting
- * layout state in the Hermes install.
+ * Desk assignment is derived, not stored: agents that are working or reviewing get a
+ * station first, idle ones fill the remaining desks in alphabetical order. That keeps
+ * desk positions stable across reloads without persisting layout state in the Hermes
+ * install.
+ *
+ * Roles are guessed from the profile NAME, which is all the board gives us. The
+ * mapping is deliberately generic — a keyword in the name, not a list of people.
+ * It used to carry a table of specific profiles ('lulu', 'risko', 'zaki', 'pingot')
+ * which was one install's roster hardcoded into a program meant to ship to anyone;
+ * an operator here would get roles assigned by somebody else's naming.
+ *
+ * `default` is special-cased because it is the install's own profile, not a person.
  */
-const ROLE_BY_NAME: Record<string, AgentRole> = {
-  default: 'orchestrator',
-  lulu: 'qa',
-  risko: 'backend',
-  zaki: 'frontend',
-  pingot: 'researcher',
-}
+const ROLE_KEYWORDS: [RegExp, AgentRole][] = [
+  [/qa|test|verif/i, 'qa'],
+  [/research|riset|analyst/i, 'researcher'],
+  [/ops|devops|infra|deploy|sre/i, 'devops'],
+  [/front|ui|web|design/i, 'frontend'],
+  [/back|api|server|data|db/i, 'backend'],
+]
 
-function roleFor(name: string): AgentRole {
-  if (ROLE_BY_NAME[name]) return ROLE_BY_NAME[name]
-  if (/qa|test|lulu/i.test(name)) return 'qa'
-  if (/research|riset|pingot/i.test(name)) return 'researcher'
-  if (/ops|devops|infra/i.test(name)) return 'devops'
-  if (/front|ui/i.test(name)) return 'frontend'
-  if (/back|api/i.test(name)) return 'backend'
+export function roleFor(name: string): AgentRole {
+  if (name === 'default') return 'orchestrator'
+  for (const [re, role] of ROLE_KEYWORDS) {
+    if (re.test(name)) return role
+  }
+  // A name that says nothing about its job still needs a desk; backend is the
+  // least surprising default for an autonomous engineering office.
   return 'backend'
 }
 

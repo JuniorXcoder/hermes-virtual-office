@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
 import ActionItems, { type Candidate } from './ActionItems'
+import { fetchJson } from '@/lib/api'
 
 /**
  * Meeting room.
@@ -68,15 +69,17 @@ export default function MeetingPanel({
     }
     let alive = true
     setItemsBusy(true)
-    fetch(`/api/hermes/meeting/actions?from=${encodeURIComponent(openId)}`, { cache: 'no-store' })
-      .then(async (r) => {
-        const d = await r.json()
-        if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+    fetchJson<{ items?: Candidate[]; roster?: string[] }>(
+      `/api/hermes/meeting/actions?from=${encodeURIComponent(openId)}`,
+      { cache: 'no-store' },
+    )
+      .then((res) => {
         if (!alive) return
-        setItems(d.items || [])
-        setRoster(d.roster || [])
+        // A meeting with no follow-ups is a normal outcome, not an error: the panel
+        // simply shows nothing to convert.
+        setItems(res.ok ? res.data?.items || [] : [])
+        setRoster(res.data?.roster || [])
       })
-      .catch(() => alive && setItems([]))
       .finally(() => alive && setItemsBusy(false))
     return () => {
       alive = false
@@ -105,13 +108,12 @@ export default function MeetingPanel({
     setBusy(true)
     setErr(null)
     try {
-      const r = await fetch('/api/hermes/meeting', {
+      const res = await fetchJson('/api/hermes/meeting', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic, participants: picked, moderator, mode }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok) throw new Error(res.error || 'gagal memulai rapat')
       await refresh()
       setTopic('')
       setPicked([])
@@ -130,10 +132,12 @@ export default function MeetingPanel({
     setOpened({ kind: 'archive', id })
     setArchive(null)
     try {
-      const r = await fetch(`/api/hermes/meeting?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      setArchive({ id: d.id, body: d.body })
+      const res = await fetchJson<{ id: string; body: string }>(
+        `/api/hermes/meeting?id=${encodeURIComponent(id)}`,
+        { cache: 'no-store' },
+      )
+      if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuka transkrip')
+      setArchive({ id: res.data.id, body: res.data.body })
     } catch (e) {
       setErr((e as Error).message)
     } finally {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Collapsible from './Collapsible'
 import ActionItems from './ActionItems'
 import type { Candidate } from '@/types/hermes'
+import { fetchJson } from '@/lib/api'
 
 /**
  * Cron job management.
@@ -103,11 +104,12 @@ export default function CronPanel({
     setLoading(true)
     setErr(null)
     try {
-      const r = await fetch('/api/hermes/cron', { cache: 'no-store' })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      setJobs(d.jobs || [])
-      setRuns(d.runs || [])
+      const res = await fetchJson<{ jobs?: Job[]; runs?: Run[] }>('/api/hermes/cron', {
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(res.error || 'gagal memuat cron')
+      setJobs(res.data?.jobs || [])
+      setRuns(res.data?.runs || [])
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -132,13 +134,12 @@ export default function CronPanel({
     setErr(null)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/cron', {
+      const res = await fetchJson('/api/hermes/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, id }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok) throw new Error(res.error || 'aksi gagal')
       setNote(
         action === 'remove'
           ? 'job dihapus'
@@ -160,13 +161,13 @@ export default function CronPanel({
     setItemsBusy(jobId)
     setErr(null)
     try {
-      const r = await fetch(`/api/hermes/cron/actions?from=${encodeURIComponent(jobId)}`, {
-        cache: 'no-store',
-      })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      setItems((prev) => ({ ...prev, [jobId]: d.items || [] }))
-      setRoster(d.roster || [])
+      const res = await fetchJson<{ items?: Candidate[]; roster?: string[] }>(
+        `/api/hermes/cron/actions?from=${encodeURIComponent(jobId)}`,
+        { cache: 'no-store' },
+      )
+      if (!res.ok) throw new Error(res.error || 'gagal membaca tindak lanjut')
+      setItems((prev) => ({ ...prev, [jobId]: res.data?.items || [] }))
+      setRoster(res.data?.roster || [])
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -179,7 +180,7 @@ export default function CronPanel({
     setErr(null)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/cron', {
+      const res = await fetchJson<{ id: string }>('/api/hermes/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -190,12 +191,12 @@ export default function CronPanel({
           paused: !liveNow,
         }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuat job')
+      const newId = res.data.id
       setNote(
         liveNow
-          ? `job dibuat dan langsung aktif (${d.id})`
-          : `job dibuat dalam keadaan pause (${d.id}) — aktifkan kalau sudah benar`,
+          ? `job dibuat dan langsung aktif (${newId})`
+          : `job dibuat dalam keadaan pause (${newId}) — aktifkan kalau sudah benar`,
       )
       setSchedule('')
       setPrompt('')

@@ -80,7 +80,7 @@ CURRENT ROUND: {{meeting.round}} of {{meeting.maxRounds}}
 RULES:
 1. Be direct, dense, and pragmatic. Strip filler greetings ("Good morning team", "I agree with everyone").
 2. Focus on technical trade-offs: data consistency, failure modes, race conditions, latency, and operational cost.
-3. If disagreeing with another agent, cite their name and specific technical argument directly (e.g. "Lulu's unique index does not prevent cumulative over-refunds").
+3. If disagreeing with another agent, cite their name and specific technical argument directly (e.g. "Bob's unique index does not prevent cumulative over-refunds").
 4. Propose concrete implementation primitives: column names, locking mechanisms, SQL constraints, or HTTP retry semantics.
 5. Keep your response under 100 words.
 ```

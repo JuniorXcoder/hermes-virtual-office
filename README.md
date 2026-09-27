@@ -135,10 +135,11 @@ Hermes Virtual Office is designed with clean boundary layers:
                            │ HTTP
 ┌──────────────────────────▼─────────────────────────────┐
 │                 Next.js App Server                     │
-│  ├── /api/hermes/tasks        (board snapshot)         │
-│  ├── /api/hermes/tasks/create (create + dispatch)      │
+│  ├── /api/hermes/tasks        (board; POST = create)   │
 │  ├── /api/hermes/tasks/{id}   (log tail; steer/cancel) │
-│  └── /api/hermes/meeting      (Meeting Room Orchestrator)│
+│  ├── /api/hermes/meeting      (orchestrator + actions) │
+│  ├── /api/hermes/agents       (spawn / kill profiles)  │
+│  └── /api/hermes/cron         (jobs + actions)         │
 └──────────────────────────┬─────────────────────────────┘
                            │
              ┌─────────────┴─────────────┐
@@ -188,14 +189,19 @@ Two commands cover the invariants a screenshot cannot:
 
 ```bash
 npm run typecheck   # types, including the layout and pose tables
-npm run selftest    # 10 measured invariants
+npm run selftest    # 22 measured invariants
 ```
 
 `npm run selftest` asserts what actually broke while this was built: the Kanban
 board fits both its room and the ceiling, every window cut-out falls inside the
 wall as built, no artwork is buried inside a wall, no furniture overlaps another
-piece, and the building is not walkable from outside. Each of those was once a
-real bug that looked fine in a screenshot — which is why they are numbers now.
+piece, the building is not walkable from outside, every seated pose plants the
+avatar's feet on its seat, and no API reply can throw while being read.
+
+Each of those was once a real bug that looked fine in a screenshot — which is why
+they are numbers now. A chair modelled 9 cm taller than the avatar's legs could
+reach, a label that never left the doorway, a lane 1.8 m wide for a 1.8 m car:
+none were visible at normal zoom.
 
 CI runs typecheck, the self-test and a production build on every push, plus a
 publish-hygiene job that fails if a private identifier or an authoring-machine
@@ -205,12 +211,22 @@ path reaches a published file.
 
 ## 📚 Documentation
 
-- [Implementation Notes](docs/IMPLEMENTATION-NOTES.md) — real findings, gotchas, and the verification log.
 - [System Architecture](docs/ARCHITECTURE.md) — Component map, the 3D coordinate contract, and how the server reaches Hermes.
 - [API Specification](docs/API-SPEC.md) — REST endpoints, payloads, error codes, and server limits — described from the implementation.
-- [Meeting Protocol](docs/MEETING-PROTOCOL.md) — Turn management, prompt guardrails, and auto-notulen engine.
+- [Meeting Protocol](docs/MEETING-PROTOCOL.md) — Turn management, prompt guardrails, and the auto-notulen engine.
 - [Production Deployment](docs/DEPLOYMENT.md) — Docker, systemd, reverse proxy, and hardening guides.
+- [Security Policy](SECURITY.md) — What the office does and does not do with credentials, and the no-auth caveat.
 - [Contributing Guidelines](CONTRIBUTING.md) — Code style, pull request workflow, and issue templates.
+
+### Implementation notes
+
+The reasoning behind the code, split by area. These record real bugs, what the
+measurement showed, and what changed — not a changelog.
+
+- [Index](docs/IMPLEMENTATION-NOTES.md) — start here.
+- [Backend & Hermes integration](docs/notes-backend.md) — Kanban CLI, cron store, meetings, cross-menu links.
+- [3D scene, layout & animation](docs/notes-3d.md) — footprint, collision, facade, seats, poses, textures, street.
+- [Product & UI](docs/notes-product.md) — what to show, hide, and confirm.
 
 ---
 

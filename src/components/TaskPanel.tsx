@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
 import type { Task } from '@/types/hermes'
+import { fetchJson } from '@/lib/api'
 
 type RunInfo = {
   id: number
@@ -72,15 +73,18 @@ export default function TaskPanel() {
     let alive = true
     setLoading(true)
     setErr(null)
-    fetch(`/api/hermes/tasks/${taskId}`, { cache: 'no-store' })
-      .then(async (r) => {
-        const d = await r.json()
-        if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+    fetchJson<{ runs?: RunInfo[]; log?: string }>(`/api/hermes/tasks/${taskId}`, {
+      cache: 'no-store',
+    })
+      .then((res) => {
         if (!alive) return
-        setRuns(d.runs || [])
-        setLog(d.log || '')
+        if (!res.ok) {
+          setErr(res.error || 'gagal memuat detail tugas')
+          return
+        }
+        setRuns(res.data?.runs || [])
+        setLog(res.data?.log || '')
       })
-      .catch((e) => alive && setErr((e as Error).message))
       .finally(() => alive && setLoading(false))
     return () => {
       alive = false

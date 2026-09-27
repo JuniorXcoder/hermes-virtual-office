@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
 import type { Agent, Task } from '@/types/hermes'
+import { fetchJson } from '@/lib/api'
 
 type RunInfo = {
   id: number
@@ -39,15 +40,15 @@ export default function PeekPanel() {
     }
     let alive = true
     const pull = async () => {
-      try {
-        const r = await fetch(`/api/hermes/tasks/${task.id}`, { cache: 'no-store' })
-        const d = await r.json()
-        if (!alive) return
-        setLog(d.log || '')
-        setRuns(d.runs || [])
-      } catch {
-        /* transient */
-      }
+      // Polls every 5 s: a dropped packet must leave the last known log on screen
+      // rather than clearing it or flashing an error.
+      const res = await fetchJson<{ log?: string; runs?: RunInfo[] }>(
+        `/api/hermes/tasks/${task.id}`,
+        { cache: 'no-store' },
+      )
+      if (!alive || !res.ok || !res.data) return
+      setLog(res.data.log || '')
+      setRuns(res.data.runs || [])
     }
     pull()
     const id = setInterval(pull, 5000)
@@ -64,13 +65,12 @@ export default function PeekPanel() {
     setBusy(true)
     setNote(null)
     try {
-      const r = await fetch(`/api/hermes/tasks/${task.id}`, {
+      const res = await fetchJson(`/api/hermes/tasks/${task.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, message: msg }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok) throw new Error(res.error || 'aksi gagal')
       setNote(action === 'steer' ? 'Arahan terkirim ke worker.' : 'Worker claim dilepas.')
       setMsg('')
       void load()

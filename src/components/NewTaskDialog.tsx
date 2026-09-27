@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useOffice } from '@/lib/store'
+import { fetchJson } from '@/lib/api'
 
 /** Dispatch a new task straight into the Hermes board. */
 export default function NewTaskDialog() {
@@ -23,7 +24,7 @@ export default function NewTaskDialog() {
     setBusy(true)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/tasks/create', {
+      const res = await fetchJson<{ task: { id: string } }>('/api/hermes/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -33,9 +34,8 @@ export default function NewTaskDialog() {
           priority,
         }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      setNote(`Dibuat: ${d.task.id}`)
+      if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuat tugas')
+      setNote(`Dibuat: ${res.data.task.id}`)
       setTitle('')
       setBody('')
       await load()

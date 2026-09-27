@@ -45,8 +45,10 @@ jobs:
       - name: Published files carry no private identifiers or host paths
         run: |
           set -e
+          # notes-backend.md documents the private identifiers it removed, so it is
+          # the one file exempt from the identifier scan.
           files=$(git ls-files '*.ts' '*.tsx' '*.md' '*.json' '*.example' '*.yml' '*.mjs' \
-                  ':!:docs/IMPLEMENTATION-NOTES.md')   # documents the leak it describes
+                  ':!:docs/notes-backend.md')
           fail=0
 
           ids="hol""la|natural""ine|radius""ku|drac""in|pcbuild""it"

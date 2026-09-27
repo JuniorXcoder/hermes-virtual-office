@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { fetchJson } from '@/lib/api'
 
 /**
  * Spawn / kill control.
@@ -56,10 +57,11 @@ export default function AgentSpawnPanel({
     setLoading(true)
     setErr(null)
     try {
-      const r = await fetch('/api/hermes/agents', { cache: 'no-store' })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
-      setRows(d.available || [])
+      const res = await fetchJson<{ available?: Row[] }>('/api/hermes/agents', {
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(res.error || 'gagal memuat daftar agent')
+      setRows(res.data?.available || [])
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -76,13 +78,13 @@ export default function AgentSpawnPanel({
     setErr(null)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/agents', {
+      const res = await fetchJson<{ purged?: number }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, name }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok) throw new Error(res.error || 'aksi gagal')
+      const d = res.data
       if (action === 'kill') {
         const n = Number(d?.purged ?? 0)
         setNote(
@@ -107,16 +109,15 @@ export default function AgentSpawnPanel({
     setErr(null)
     setNote(null)
     try {
-      const r = await fetch('/api/hermes/agents', {
+      const res = await fetchJson<{ name: string }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'create', name, description: newDesc.trim() }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuat profil')
       setNewName('')
       setNewDesc('')
-      setNote(`profil "${d.name}" dibuat — agent berjalan masuk lewat pintu utama`)
+      setNote(`profil "${res.data.name}" dibuat — agent berjalan masuk lewat pintu utama`)
       await load()
       onChanged()
     } catch (e) {

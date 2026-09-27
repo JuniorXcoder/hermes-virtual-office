@@ -4,6 +4,9 @@
   "private": true,
   "description": "An open-source 3D virtual workspace & meeting simulator for autonomous AI agents.",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

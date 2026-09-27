@@ -6,7 +6,7 @@ import {
   listMeetings,
   readArchived,
   startMeeting,
-} from '@/lib/meeting-engine'
+} from '@/lib/hermes/meeting'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
 
 export const dynamic = 'force-dynamic'

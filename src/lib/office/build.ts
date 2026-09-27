@@ -22,7 +22,6 @@ import {
   PANTRY,
   PANTRY_STOOLS,
   PANTRY_STOOL_GAP,
-  DART,
   FLOOR,
   CEILING_Y,
   FOOTPRINTS,
@@ -37,7 +36,6 @@ import {
   ROOMS,
   WALL_H,
   WALL_T,
-  WINDOWS,
   NORTH_WINDOWS,
   SIDE_WINDOWS,
   SIDE_WINDOW_W,
@@ -50,11 +48,9 @@ import {
   ROOF_BAY,
   WINDOW_Y,
   WINDOW_H,
-  BOARD_D,
   paletteFor,
   SEATS,
   seatTop,
-  type Desk,
   type Palette,
 } from './layout'
 
@@ -732,7 +728,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const metalTex = track(brushedMetalTexture('#9aa8b2', '#6b7880'))
   metalTex.repeat.set(2, 2)
   const fabricTex = track(fabricTexture('#8fb0d4', '#5f80a4'))
-  const fabricTex2 = track(fabricTexture('#8397a4', '#5b6c78'))
   // Furniture-grade surfaces. The floor wood has 30 cm planks with visible seams —
   // wrong on a desk top, so furniture gets its own finer veneer. Chairs get vinyl
   // (office task chairs are not woven), the rug gets pile, and monitors get real

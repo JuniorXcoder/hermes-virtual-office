@@ -35,6 +35,7 @@ import { BODY_R, blocked } from '../src/lib/office/nav'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { originMarker, parseOrigin } from '../src/lib/hermes/kanban'
+import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
 import * as THREE from 'three'
 
@@ -224,13 +225,17 @@ console.log('geometry')
 // starting a meeting answered 405 with an empty body — which the browser reports
 // as "Unexpected end of JSON input". A missing method is invisible to typecheck.
 {
+  // The method each route must export. A route that lost its POST answers 405 with
+  // an empty body, which the browser reports as a JSON parse error — so this is
+  // checked per file, not just that the file exists.
   const routes: Record<string, string[]> = {
-    'src/app/api/hermes/tasks/route.ts': ['GET'],
-    'src/app/api/hermes/tasks/create/route.ts': ['POST'],
+    'src/app/api/hermes/tasks/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/tasks/[id]/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/meeting/route.ts': ['GET', 'POST'],
+    'src/app/api/hermes/meeting/actions/route.ts': ['GET'],
     'src/app/api/hermes/agents/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/cron/route.ts': ['GET', 'POST'],
+    'src/app/api/hermes/cron/actions/route.ts': ['GET'],
   }
   const missing: string[] = []
   for (const [file, methods] of Object.entries(routes)) {
@@ -281,7 +286,7 @@ console.log('geometry')
 // It measures the REAL rig rather than a re-derived formula, so it stays honest if
 // the limb lengths in avatar.ts change.
 {
-  const av = buildAvatar('jun' as never)
+  const av = buildAvatar('alice' as never)
   const root = new THREE.Group()
   root.add(av.group)
   const D = Math.PI / 180
@@ -326,7 +331,7 @@ console.log('geometry')
   const round: [string, string][] = [
     ['meeting', 'mTESTLINK'],
     ['cron', '4a349bb25d9f'],
-    ['agent', 'jun'],
+    ['agent', 'alice'],
   ]
   for (const [kind, ref] of round) {
     const o = { kind: kind as 'meeting' | 'cron' | 'agent', ref }
@@ -342,6 +347,12 @@ console.log('geometry')
   check('task origin markers round-trip', problems.length === 0, problems.join(' | '))
 }
 
+// Reading an API reply must never throw, whatever the body is. The panels used to
+// call `await r.json()` directly, so a 502 from a proxy — HTML, not JSON — surfaced
+// as "Failed to execute 'json' on 'Response': Unexpected end of JSON input", which
+// describes the parser and hides that the backend was down. That exact message was
+// reported from production.
+
 // Parsing minutes into follow-ups is what makes the meeting -> board link work, and
 // it is a text contract with an LLM, so the shapes it may emit are tested rather
 // than assumed. A miss here silently produces no tasks, or a task assigned to a
@@ -352,23 +363,23 @@ console.log('geometry')
 - Pakai Postgres.
 
 ## TINDAK LANJUT
-- **jun**: tulis migrasi tabel invoices — 2026-09-30.
-- **lulu**: tambah test regresi checkout.
-- zaki: siapkan runbook.
+- **alice**: tulis migrasi tabel invoices — 2026-09-30.
+- **bob**: tambah test regresi checkout.
+- dave: siapkan runbook.
 
 ## RISIKO
 - Lock lama.`
   const items = parseActionItems(MD)
   if (items.length !== 3) problems.push(`expected 3 items, got ${items.length}`)
-  if (items[0]?.owner !== 'jun') problems.push(`owner[0]=${items[0]?.owner}`)
+  if (items[0]?.owner !== 'alice') problems.push(`owner[0]=${items[0]?.owner}`)
   if (items[0]?.due !== '2026-09-30') problems.push(`due[0]=${items[0]?.due}`)
   // A trailing sentence period must not survive into the title.
   if (items[1]?.text.endsWith('.')) problems.push(`text[1] kept its period: ${items[1]?.text}`)
   // An owner the roster does not know resolves to null rather than a wrong name.
-  if (matchOwner('zaki', ['default', 'jun', 'lulu']) !== null) {
+  if (matchOwner('dave', ['default', 'alice', 'bob']) !== null) {
     problems.push('unknown owner matched anyway')
   }
-  if (matchOwner('Jun', ['default', 'jun']) !== 'jun') problems.push('case-insensitive match failed')
+  if (matchOwner('Alice', ['default', 'alice']) !== 'alice') problems.push('case-insensitive match failed')
   // Minutes that agreed nothing must yield nothing, not a placeholder task.
   const none = parseActionItems('## TINDAK LANJUT\n- Belum ada kesepakatan final')
   if (none.length !== 0) problems.push(`empty minutes produced ${none.length} items`)
@@ -447,9 +458,39 @@ check('window band fits under the wall top', WINDOW_Y + WINDOW_H / 2 < WALL_H,
 check('ceiling sits at the wall top (no beam across the board)', CEILING_Y === WALL_H,
   `${CEILING_Y} vs ${WALL_H}`)
 
-/* ------------------------------------------------------------------ result -- */
-console.log(`\n${checks - failures}/${checks} checks passed\n`)
-if (failures) {
-  console.error(`${failures} FAILED\n`)
-  process.exit(1)
-}
+// `readJson` is async and this file compiles to CJS, so the check runs inside an
+// async IIFE and records its own result. Everything else here is synchronous.
+void (async () => {
+  const cases: [string, string, number][] = [
+    ['json ok', '{"a":1}', 200],
+    ['json error body', '{"error":{"message":"nope"}}', 409],
+    ['html 502', '<!DOCTYPE html><html>bad gateway</html>', 502],
+    ['html 404', '<html>not found</html>', 404],
+    ['empty 200', '', 200],
+    ['empty 500', '', 500],
+    ['truncated json', '{"a":', 200],
+    ['plain text', 'Internal Server Error', 500],
+  ]
+  const problems: string[] = []
+  for (const [name, body, status] of cases) {
+    const res = new Response(body, { status })
+    try {
+      const out = await readJson(res)
+      // A failure must always carry a message, or the panel shows nothing at all.
+      if (!out.ok && !out.error) problems.push(`${name}: failed with no message`)
+      if (out.status !== status) problems.push(`${name}: status ${out.status} != ${status}`)
+      // A success with a JSON body must actually be parsed.
+      if (out.ok && name === 'json ok' && !out.data) problems.push(`${name}: body not parsed`)
+    } catch (e) {
+      problems.push(`${name} THREW: ${(e as Error).message}`)
+    }
+  }
+  check('API replies never throw while being read', problems.length === 0, problems.join(' | '))
+  /* ------------------------------------------------------------- result -- */
+  console.log(`\n${checks - failures}/${checks} checks passed\n`)
+  if (failures) {
+    console.error(`${failures} FAILED\n`)
+    process.exit(1)
+  }
+})()
+

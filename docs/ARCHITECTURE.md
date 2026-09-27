@@ -32,13 +32,17 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |  +------------------------------------v------------------------------------+  |
 |  |                       API Route Handlers                                |  |
 |  |  • GET  /api/hermes/tasks         (board snapshot: tasks + agents)      |  |
-|  |  • POST /api/hermes/tasks/create  (create and dispatch a task)          |  |
+|  |  • POST /api/hermes/tasks         (create one task, or a batch)         |  |
 |  |  • GET  /api/hermes/tasks/{id}    (run history + log tail)              |  |
 |  |  • POST /api/hermes/tasks/{id}    (steer or cancel a running task)      |  |
 |  |  • GET  /api/hermes/meeting       (configured flag + meeting list)      |  |
 |  |  • POST /api/hermes/meeting       (start a simulated meeting)           |  |
+|  |  • GET  /api/hermes/meeting/actions (follow-ups from the minutes)       |  |
+|  |  • GET  /api/hermes/agents        (profiles + office membership)        |  |
+|  |  • POST /api/hermes/agents        (create / spawn / kill a profile)     |  |
 |  |  • GET  /api/hermes/cron          (scheduled jobs + recent runs)        |  |
 |  |  • POST /api/hermes/cron          (create / pause / resume / run / rm)  |  |
+|  |  • GET  /api/hermes/cron/actions  (a failing job as a candidate task)   |  |
 |  +------------------------------------^------------------------------------+  |
 |                                       |                                       |
 |  +------------------------------------v------------------------------------+  |

@@ -7,15 +7,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { buildOffice, type OfficeProps } from './build'
-import { buildAvatar, type Avatar } from './avatar'
+import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
 import { buildBoardCards } from './board'
 import { blocked, route, BODY_R } from './nav'
 import {
   CONFERENCE,
   CONFERENCE_CHAIRS,
-  BOARD_COLUMNS as BOARD_COLS,
-  DESKS,
   deskByIndex,
   DOOR,
   KANBAN_BOARD,
@@ -26,9 +24,6 @@ import {
   PANTRY,
   DART,
   LOUNGE,
-  ROOMS,
-  HALF_D,
-  HALF_W,
   deskSeatWorld,
   visitorSpot,
   type Desk,
@@ -387,13 +382,7 @@ export function createScene(
   ].filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
 
   /** Decide activity + destination for the coming frames. */
-  function retarget(
-    a: SceneAgent,
-    meeting: Meeting | null,
-    seed: number,
-    index: number,
-    total: number,
-  ) {
+  function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
     // Clear the previous destination's heading first. Each branch below sets it
     // when its target defines one; the wander fallbacks do not, and would
     // otherwise inherit the heading of wherever the agent was before — the pose
@@ -551,7 +540,7 @@ export function createScene(
     }
 
     agents.forEach((a, i) => {
-      retarget(a, currentMeeting, i, i, agents.length)
+      retarget(a, currentMeeting, i)
 
       const g = a.avatar.group
       if (a.target) {

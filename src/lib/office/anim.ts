@@ -5,7 +5,6 @@
  * animation state to keep in sync — the scene tick simply re-derives the pose
  * each frame from the agent's current activity.
  */
-import * as THREE from 'three'
 import type { Avatar } from './avatar'
 
 import { HIP_STAND } from './avatar'
