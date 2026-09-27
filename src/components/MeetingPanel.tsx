@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useOffice } from '@/lib/store'
+import Collapsible from './Collapsible'
 
 /**
  * Meeting room.
@@ -173,8 +174,11 @@ export default function MeetingPanel({
                   <div className="vp-muted">memuat transkrip…</div>
                 ) : (
                   <>
-                    <div className="vp-sub">TRANSKRIP · {archive.id}</div>
-                    <pre className="vp-pre">{archive.body}</pre>
+                    <Collapsible
+                      label={`Transkrip · ${archive.id}`}
+                      text={archive.body}
+                      defaultOpen
+                    />
                     <button
                       className="vp-btn vp-btn-ghost"
                       onClick={() => download(`rapat-${archive.id}.md`, archive.body)}
@@ -207,34 +211,36 @@ export default function MeetingPanel({
                     <b>{meeting.currentSpeaker || '—'}</b>
                   </div>
 
-                  <div className="vp-sub">TRANSKRIP ({meeting.turns.length})</div>
-                  <div className="flex flex-col gap-2">
-                    {meeting.turns.map((t, i) => (
-                      <div
-                        key={i}
-                        className={`vp-turn ${
-                          t.speaker === meeting.currentSpeaker && live ? 'talk' : ''
-                        }`}
-                      >
-                        <div className="vp-turn-who">
-                          {t.speaker}
-                          <i>
-                            {t.kind}
-                            {t.round ? ` · r${t.round}` : ''}
-                          </i>
+                  <Collapsible
+                    label="Transkrip"
+                    count={meeting.turns.length}
+                    defaultOpen={!!live}
+                    empty="belum ada giliran"
+                  >
+                    <div className="flex flex-col gap-2">
+                      {meeting.turns.map((t, i) => (
+                        <div
+                          key={i}
+                          className={`vp-turn ${
+                            t.speaker === meeting.currentSpeaker && live ? 'talk' : ''
+                          }`}
+                        >
+                          <div className="vp-turn-who">
+                            {t.speaker}
+                            <i>
+                              {t.kind}
+                              {t.round ? ` · r${t.round}` : ''}
+                            </i>
+                          </div>
+                          <div className="vp-turn-body">{t.text}</div>
                         </div>
-                        <div className="vp-turn-body">{t.text}</div>
-                      </div>
-                    ))}
-                    {!meeting.turns.length && (
-                      <span className="vp-muted">belum ada giliran</span>
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  </Collapsible>
 
                   {meeting.minutes && (
                     <>
-                      <div className="vp-sub">NOTULEN</div>
-                      <pre className="vp-pre">{meeting.minutes}</pre>
+                      <Collapsible label="Notulen" text={meeting.minutes} defaultOpen />
                       <button
                         className="vp-btn vp-btn-ghost"
                         onClick={() => download(`notulen-${meeting.id}.md`, meeting.minutes)}

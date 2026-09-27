@@ -1053,3 +1053,46 @@ kill   (gateway up)  -> 400 'gateway profil … sedang berjalan'
 
 Probe profiles deleted afterwards; `profiles/` is back to `jun, lulu, risko`, and
 the default gateway (PID 131415) was never touched.
+
+---
+
+## 25. One collapsible block, applied everywhere
+
+Long output — worker logs, transcripts, minutes, task bodies, run history, cron
+prompts — rendered straight into its panel. A single chatty log pushed everything
+else off screen and the panel became one wall of monospace.
+
+There is now one `Collapsible` component, used in eight places:
+
+| Panel | Collapsed by default |
+|---|---|
+| Task | Uraian, Log worker |
+| Peek (screen) | Log terakhir (open), Riwayat run |
+| Meeting | Transkrip (open while live), Notulen (open), archived transcript (open) |
+| Cron | Prompt |
+
+### `<pre>`, not `<textarea>`
+
+The request was for a textarea, and that is what the look needed — a fixed-height
+scrolling block of monospace. The element is a `<pre>`: this is read-only output,
+and a textarea would add a focus ring, a blinking caret, spellcheck squiggles and
+text-selection quirks for no benefit. What was wanted was the appearance, so the
+appearance is what was built.
+
+### Two things that make long text behave
+
+- `overflow-wrap: anywhere` in addition to `pre-wrap`. Worker logs contain long
+  unbroken tokens — absolute paths, base64, URLs — and `pre-wrap` alone lets those
+  widen the panel instead of wrapping.
+- `max-height: 380px` with `overflow: auto`, so an enormous log scrolls inside its
+  own box rather than making the whole panel enormous.
+
+### Structured content keeps its markup
+
+`Collapsible` takes either `text` (rendered in a `<pre>`) or `children`. The meeting
+transcript needs its own markup — one styled block per speaker, with the current
+speaker highlighted — and forcing that into a monospace string would have lost it.
+Collapsing a section should not change what the section is.
+
+The first attempt did exactly that: it rendered the live transcript twice, once as
+plain text and once as structured turns. Replaced with a single `children` usage.

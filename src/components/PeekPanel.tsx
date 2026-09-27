@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
+import Collapsible from './Collapsible'
 import type { Agent, Task } from '@/types/hermes'
 
 type RunInfo = {
@@ -101,21 +102,30 @@ export default function PeekPanel() {
 
           {task && (
             <>
-              <div className="vp-sub">LOG TERAKHIR</div>
-              <pre className="vp-pre">{log.trim() || '(log masih kosong)'}</pre>
+              <Collapsible
+                label="Log terakhir"
+                text={log}
+                count={log.trim() ? log.trim().split('\n').length : undefined}
+                defaultOpen
+                empty="log masih kosong"
+              />
 
-              <div className="vp-sub">RIWAYAT RUN</div>
-              <div className="flex flex-col gap-1">
-                {runs.slice(-4).reverse().map((r) => (
-                  <div key={r.id} className="vp-run">
-                    <b>{r.status}</b>
-                    {r.outcome ? <span> · {r.outcome}</span> : null}
-                    {r.summary ? <div className="vp-muted">{r.summary}</div> : null}
-                    {r.error ? <div className="vp-err">{r.error}</div> : null}
-                  </div>
-                ))}
-                {!runs.length && <div className="vp-muted">belum ada run</div>}
-              </div>
+              <Collapsible
+                label="Riwayat run"
+                count={runs.length}
+                empty="belum ada run"
+              >
+                <div className="flex flex-col gap-1">
+                  {runs.slice(-4).reverse().map((r) => (
+                    <div key={r.id} className="vp-run">
+                      <b>{r.status}</b>
+                      {r.outcome ? <span> · {r.outcome}</span> : null}
+                      {r.summary ? <div className="vp-muted">{r.summary}</div> : null}
+                      {r.error ? <div className="vp-err">{r.error}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              </Collapsible>
 
               <div className="vp-sub">ARAHKAN / HENTIKAN</div>
               <textarea

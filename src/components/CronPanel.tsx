@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Collapsible from './Collapsible'
 
 /**
  * Cron job management.
@@ -260,7 +261,7 @@ export default function CronPanel({
                       <span className="vp-cron-bad">gagal {j.failureStreak}×</span>
                     )}
                   </div>
-                  {j.prompt && <div className="vp-cron-prompt">{j.prompt}</div>}
+                  {j.prompt && <Collapsible label="Prompt" text={j.prompt} />}
                   {j.lastError && <div className="vp-cron-err">{j.lastError}</div>}
                   <div className="vp-cron-actions">
                     {j.enabled ? (

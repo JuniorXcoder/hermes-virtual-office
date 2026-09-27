@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
+import Collapsible from './Collapsible'
 import type { Task } from '@/types/hermes'
 
 type RunInfo = {
@@ -104,12 +105,7 @@ export default function TaskPanel() {
             )}
             <code className="vp-code-block">{task.id}</code>
 
-            {task.body && (
-              <>
-                <div className="vp-sub">URAIAN</div>
-                <pre className="vp-pre">{task.body}</pre>
-              </>
-            )}
+            {task.body && <Collapsible label="Uraian" text={task.body} />}
 
             <div className="vp-sub">RIWAYAT RUN ({runs.length})</div>
             {loading && <div className="vp-muted">memuat…</div>}
@@ -130,12 +126,12 @@ export default function TaskPanel() {
               {!loading && !runs.length && <div className="vp-muted">belum ada run</div>}
             </div>
 
-            {log.trim() && (
-              <>
-                <div className="vp-sub">LOG WORKER</div>
-                <pre className="vp-pre">{log}</pre>
-              </>
-            )}
+            <Collapsible
+              label="Log worker"
+              text={log}
+              count={log.trim() ? log.trim().split('\n').length : undefined}
+              empty="belum ada log"
+            />
           </>
         )}
       </div>

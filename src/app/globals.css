@@ -579,3 +579,42 @@ kbd {
   border-color: #b04a4a !important;
   color: #ffe0e0 !important;
 }
+
+/* ------------------------------------------------- collapsible long text -- */
+.vp-collapse { display: flex; flex-direction: column; gap: 5px; }
+.vp-collapse-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #12191fcc;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.vp-collapse-head:hover { background: #1a242b; border-color: #3b5568; }
+.vp-collapse-head.open { border-color: #2c6b51; }
+.vp-collapse-caret { font-size: 9px; color: #7f9dad; width: 9px; }
+.vp-collapse-label {
+  font: 700 10px/1 ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  color: #8fd8b6;
+  text-transform: uppercase;
+}
+.vp-collapse-count {
+  font: 500 9px/1 ui-monospace, monospace;
+  color: #7f9dad;
+  background: #1b2a3366;
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+.vp-collapse-hint {
+  margin-left: auto;
+  font: 400 9px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #5f7a8a;
+}
+/* pre-wrap alone lets a long unbroken token widen the panel instead of wrapping */
+.vp-pre-block { overflow-wrap: anywhere; word-break: normal; max-height: 380px; }
