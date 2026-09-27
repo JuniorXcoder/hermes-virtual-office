@@ -47,7 +47,7 @@ We are committed to providing a welcoming, constructive, and inclusive environme
 
 ## Architectural Principles
 
-1. **Adapter-First**: Any interaction with external agent frameworks must pass through an interface in `src/lib/hermes/types.ts`. Never hardcode raw endpoint URLs directly inside UI components.
+1. **Adapter-First**: Any interaction with external agent frameworks must pass through an interface in `src/types/hermes.ts`. Never hardcode raw endpoint URLs directly inside UI components.
 2. **Three.js Encapsulation**: Keep 3D scene code isolated inside `src/components/office3d/`. React components should interface with the 3D world via standard event handlers and state hooks.
 3. **TypeScript Strictness**: No implicit `any`. All API requests and responses must validate against typed interfaces.
 4. **Clean Asset Management**: Avoid heavy 3D GLTF files unless optimized. Prefer procedural low-poly geometries (`BoxGeometry`, `CylinderGeometry`) with stylized palette materials for high framerates across low-end GPUs and mobile browsers.

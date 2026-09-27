@@ -30,7 +30,7 @@ grepping the codebase for it).
 
 ### Private identifiers in a repo about to be published
 
-`meeting-engine.ts` fell back to a provider-specific key variable named after the
+`meeting-engine.ts` (now `lib/hermes/meeting.ts`) fell back to a provider-specific key variable named after the
 operator's own infrastructure, and defaulted the model to that provider's private
 alias. Both are gone: `AI_API_KEY` only, and the default model is a public one.
 `docs/DEPLOYMENT.md` carried the same private model name in two places.

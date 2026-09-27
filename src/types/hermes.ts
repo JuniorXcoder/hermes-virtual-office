@@ -104,7 +104,7 @@ export type Meeting = {
   file?: string | null
 }
 
-/** A meeting transcript stored on disk (see meeting-engine.listArchived). */
+/** A meeting transcript stored on disk (see lib/hermes/meeting.ts listArchived). */
 export type ArchivedMeeting = {
   id: string
   topic: string

@@ -86,7 +86,7 @@ with no separating newline:
 
 `await res.json()` throws `Unexpected non-whitespace character after JSON`,
 which turned *every* meeting turn into an instant failure. `extractContent()` in
-`src/lib/meeting-engine.ts` now handles all three observed shapes:
+`src/lib/hermes/meeting.ts` (then `meeting-engine.ts`) handles all three observed shapes:
 
 1. a plain JSON document
 2. SSE frames (`data: {...}` lines, closed by `data: [DONE]`)

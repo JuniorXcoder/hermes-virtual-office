@@ -173,9 +173,8 @@ and pantry (east), and a corridor along the entrance that links them.
   the dashboard plugin on `:9119`, gated by dashboard-cookie auth. This app
   therefore drives the official `hermes kanban ... --json` CLI, which means **it
   must run on the same host as Hermes.** See
-  [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md) for the route-table
-  evidence and the one-file seam (`src/lib/hermes/kanban.ts`) where an HTTP driver
-  would slot in.
+  [docs/notes-backend.md](docs/notes-backend.md) for the route-table evidence and the
+  one-file seam (`src/lib/hermes/kanban.ts`) where an HTTP driver would slot in.
 - The CLI refuses to run inside a delegated agent context; the bridge strips those
   environment markers for you.
 - Some OpenAI-compatible gateways reply with SSE frames even when `stream` is not
