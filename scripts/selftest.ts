@@ -33,6 +33,8 @@ import {
 } from '../src/lib/office/layout'
 import { BODY_R, blocked } from '../src/lib/office/nav'
 import { buildAvatar } from '../src/lib/office/avatar'
+import { matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
+import { originMarker, parseOrigin } from '../src/lib/hermes/kanban'
 import { SEATS } from '../src/lib/office/layout'
 import * as THREE from 'three'
 
@@ -314,6 +316,63 @@ console.log('geometry')
     }
   }
   check('every seated pose plants the feet on its seat', problems.length === 0, problems.join(' | '))
+}
+
+// The cross-menu link rides on `created_by`, a free-text field, so both halves have
+// to round-trip: the marker we write must parse back to the same origin, and a value
+// the CLI sets itself (`worker`) must not be mistaken for one of ours.
+{
+  const problems: string[] = []
+  const round: [string, string][] = [
+    ['meeting', 'mTESTLINK'],
+    ['cron', '4a349bb25d9f'],
+    ['agent', 'jun'],
+  ]
+  for (const [kind, ref] of round) {
+    const o = { kind: kind as 'meeting' | 'cron' | 'agent', ref }
+    const parsed = parseOrigin(originMarker(o))
+    if (parsed?.kind !== kind || parsed?.ref !== ref) {
+      problems.push(`${kind}:${ref} -> ${JSON.stringify(parsed)}`)
+    }
+  }
+  // Values the CLI writes itself must not be claimed as a cross-menu link.
+  const foreign = parseOrigin('worker')
+  if (foreign?.kind !== 'manual') problems.push(`'worker' parsed as ${foreign?.kind}`)
+  if (parseOrigin(null) !== undefined) problems.push('null should parse to undefined')
+  check('task origin markers round-trip', problems.length === 0, problems.join(' | '))
+}
+
+// Parsing minutes into follow-ups is what makes the meeting -> board link work, and
+// it is a text contract with an LLM, so the shapes it may emit are tested rather
+// than assumed. A miss here silently produces no tasks, or a task assigned to a
+// name that does not exist.
+{
+  const problems: string[] = []
+  const MD = `## KEPUTUSAN
+- Pakai Postgres.
+
+## TINDAK LANJUT
+- **jun**: tulis migrasi tabel invoices — 2026-09-30.
+- **lulu**: tambah test regresi checkout.
+- zaki: siapkan runbook.
+
+## RISIKO
+- Lock lama.`
+  const items = parseActionItems(MD)
+  if (items.length !== 3) problems.push(`expected 3 items, got ${items.length}`)
+  if (items[0]?.owner !== 'jun') problems.push(`owner[0]=${items[0]?.owner}`)
+  if (items[0]?.due !== '2026-09-30') problems.push(`due[0]=${items[0]?.due}`)
+  // A trailing sentence period must not survive into the title.
+  if (items[1]?.text.endsWith('.')) problems.push(`text[1] kept its period: ${items[1]?.text}`)
+  // An owner the roster does not know resolves to null rather than a wrong name.
+  if (matchOwner('zaki', ['default', 'jun', 'lulu']) !== null) {
+    problems.push('unknown owner matched anyway')
+  }
+  if (matchOwner('Jun', ['default', 'jun']) !== 'jun') problems.push('case-insensitive match failed')
+  // Minutes that agreed nothing must yield nothing, not a placeholder task.
+  const none = parseActionItems('## TINDAK LANJUT\n- Belum ada kesepakatan final')
+  if (none.length !== 0) problems.push(`empty minutes produced ${none.length} items`)
+  check('minutes parse into action items', problems.length === 0, problems.join(' | '))
 }
 
 // The street must be layered, not overlapping: building, then sidewalk, then road.

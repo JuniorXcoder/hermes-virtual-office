@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
+import ActionItems, { type Candidate } from './ActionItems'
 
 /**
  * Meeting room.
@@ -42,6 +43,45 @@ export default function MeetingPanel({
   const [opened, setOpened] = useState<{ kind: 'live' | 'archive'; id: string } | null>(null)
   const [archive, setArchive] = useState<{ id: string; body: string } | null>(null)
   const [archBusy, setArchBusy] = useState(false)
+
+  /**
+   * Follow-up items parsed from the open meeting's minutes, offered as tasks.
+   * Loaded per opened meeting, including archived ones — a follow-up from last
+   * week's meeting is exactly the thing that still needs doing.
+   */
+  const [items, setItems] = useState<Candidate[]>([])
+  const [roster, setRoster] = useState<string[]>([])
+  const [itemsBusy, setItemsBusy] = useState(false)
+
+  // Load the follow-ups whenever an open card has minutes to read from. A meeting
+  // that is still running has none yet, so this fires on completion.
+  const openId = opened?.id || ''
+  const minutesReady = opened
+    ? opened.kind === 'live'
+      ? !!meeting?.minutes
+      : !!archive?.body
+    : false
+  useEffect(() => {
+    if (!openId || !minutesReady) {
+      setItems([])
+      return
+    }
+    let alive = true
+    setItemsBusy(true)
+    fetch(`/api/hermes/meeting/actions?from=${encodeURIComponent(openId)}`, { cache: 'no-store' })
+      .then(async (r) => {
+        const d = await r.json()
+        if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+        if (!alive) return
+        setItems(d.items || [])
+        setRoster(d.roster || [])
+      })
+      .catch(() => alive && setItems([]))
+      .finally(() => alive && setItemsBusy(false))
+    return () => {
+      alive = false
+    }
+  }, [openId, minutesReady])
 
   if (!open) return null
 
@@ -185,6 +225,17 @@ export default function MeetingPanel({
                     >
                       Unduh
                     </button>
+
+                    {itemsBusy ? (
+                      <div className="vp-muted">membaca tindak lanjut…</div>
+                    ) : (
+                      <ActionItems
+                        candidates={items}
+                        roster={roster}
+                        origin={{ kind: 'meeting', ref: archive.id }}
+                        label="TINDAK LANJUT → TUGAS"
+                      />
+                    )}
                   </>
                 )
               ) : !meeting ? (
@@ -247,6 +298,18 @@ export default function MeetingPanel({
                       >
                         Unduh notulen
                       </button>
+
+                      {/* The cross-menu link: what this meeting asked for, as tasks. */}
+                      {itemsBusy ? (
+                        <div className="vp-muted">membaca tindak lanjut…</div>
+                      ) : (
+                        <ActionItems
+                          candidates={items}
+                          roster={roster}
+                          origin={{ kind: 'meeting', ref: meeting.id }}
+                          label="TINDAK LANJUT → TUGAS"
+                        />
+                      )}
                     </>
                   )}
                 </>

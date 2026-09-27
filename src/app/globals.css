@@ -573,6 +573,39 @@ kbd {
 }
 .vp-check input { margin-top: 1px; }
 
+/* ------------------------------------------------- cross-menu action items -- */
+/* One row per proposed task. The row is a checkbox + the deliverable, with the
+   owner picker underneath, because the owner is the part that needs a decision:
+   the minutes often name nobody, and an item assigned to nobody is not work. */
+.vp-action {
+  border: 1px solid #23313c;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: #131c23;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vp-action.on { border-color: #2f5a45; background: #14211b; }
+.vp-action-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-left: 22px;
+}
+.vp-input-sm {
+  font-size: 10.5px !important;
+  padding: 3px 6px !important;
+  max-width: 150px;
+}
+/* Origin chips. Colour-coded by source so the board can be read at a glance:
+   green = meeting, blue = cron, amber = the source named an owner we do not know. */
+.vp-chip-meeting { background: #1d2f3d; color: #8fc4e8; }
+.vp-chip-cron { background: #33291a; color: #e0bd7a; }
+.vp-chip-agent { background: #2a2337; color: #c0a8e8; }
+.vp-chip-warn { background: #3a2a18; color: #e8b978; }
+
 /* Armed destructive button: one more click fires it. */
 .vp-btn-armed {
   background: #6b2020 !important;

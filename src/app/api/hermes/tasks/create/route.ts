@@ -1,7 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createTask } from '@/lib/hermes/kanban'
+import type { TaskOrigin } from '@/types/hermes'
 
 export const dynamic = 'force-dynamic'
+
+/** Accept only the origins the UI is allowed to set, so `created_by` stays parseable. */
+function readOrigin(raw: unknown): TaskOrigin | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const kind = String(o.kind ?? '')
+  if (kind !== 'meeting' && kind !== 'cron' && kind !== 'agent' && kind !== 'manual') {
+    return undefined
+  }
+  const ref = typeof o.ref === 'string' && o.ref.trim() ? o.ref.trim().slice(0, 120) : undefined
+  return { kind, ref }
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -24,6 +37,9 @@ export async function POST(req: NextRequest) {
       assignee: body.assignee.trim(),
       body: typeof body.body === 'string' ? body.body : undefined,
       priority: Number.isFinite(Number(body.priority)) ? Number(body.priority) : undefined,
+      // The cross-menu link. Recorded on `created_by` so the board can say where a
+      // task came from and the source panel can list what it produced.
+      origin: readOrigin(body.origin),
     })
     return NextResponse.json({ success: true, task }, { status: 201 })
   } catch (err) {

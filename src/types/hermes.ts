@@ -9,6 +9,25 @@ export type TaskStatus = 'todo' | 'ready' | 'running' | 'review' | 'blocked' | '
 export type MeetingMode = 'auto' | 'directed' | 'manual'
 export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle'
 
+/**
+ * Where a task came from.
+ *
+ * The board is one shared surface that every other menu writes to: a meeting
+ * produces follow-ups, a cron job produces checks. Without a recorded origin the
+ * board is a flat pile and you cannot tell which meeting asked for what, or get
+ * back to it. `created_by` is a free-text field on the CLI, so the marker lives
+ * there and is parsed back out — no schema change needed.
+ *
+ * Format: `kind:ref`, e.g. `meeting:m1759...`, `cron:daily-report`, `agent:jun`.
+ */
+export type TaskOrigin = {
+  kind: 'meeting' | 'cron' | 'agent' | 'manual'
+  /** Meeting id, cron job id, or agent name. Absent for `manual`. */
+  ref?: string
+  /** Raw `created_by` value, for display when it does not parse. */
+  raw?: string
+}
+
 /** A Kanban task as rendered on the office floor. */
 export type Task = {
   id: string
@@ -19,6 +38,21 @@ export type Task = {
   body?: string
   createdAt?: string
   updatedAt?: string
+  /** Where this task came from, when it is known. */
+  origin?: TaskOrigin
+}
+
+/**
+ * One follow-up item parsed out of a meeting's minutes, or supplied by a cron job.
+ * This is the unit the UI offers as "make this a task".
+ */
+export type ActionItem = {
+  /** Who the minutes named as owner, or '' when unspecified. */
+  owner: string
+  /** The deliverable, as written. */
+  text: string
+  /** Deadline, when the minutes gave one. */
+  due?: string
 }
 
 /** An agent profile available to staff the office. */
@@ -86,6 +120,27 @@ export type ArchivedMeeting = {
   archived: true
 }
 
+/**
+ * A proposed task, offered by a source panel before anything is written.
+ *
+ * Shared by the meeting panel (follow-ups from the minutes) and the cron panel (a
+ * job's failure), and by the routes that produce them — which is why it lives here
+ * rather than in a component: a server route importing from a 'use client' module
+ * drags the component into the server bundle.
+ */
+export type Candidate = {
+  /** Deliverable text — becomes the task title. */
+  text: string
+  /** Owner as written in the source; may be '' or unrecognised. */
+  owner: string
+  /** Resolved profile name, when the source named one we know. */
+  suggested?: string | null
+  /** Deadline as written; goes into the body, not the title. */
+  due?: string
+  /** Extra context for the task body. */
+  body?: string
+}
+
 /** A single line of live agent telemetry, shown in the screen-peeker modal. */
 export type AgentActivity = {
   agent: string
@@ -100,6 +155,8 @@ export type NewTaskInput = {
   assignee: string
   body?: string
   priority?: number
+  /** Where this task came from; written to `created_by` as a marker. */
+  origin?: TaskOrigin
 }
 
 /**

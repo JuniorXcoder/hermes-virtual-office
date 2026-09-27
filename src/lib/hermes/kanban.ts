@@ -15,7 +15,7 @@ import { access, readFile, readdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { Agent, AgentRole, NewTaskInput, Task, TaskStatus } from '@/types/hermes'
+import type { Agent, AgentRole, NewTaskInput, Task, TaskOrigin, TaskStatus } from '@/types/hermes'
 
 const run = promisify(execFile)
 
@@ -76,8 +76,29 @@ type RawTask = {
   assignee?: string | null
   status: string
   priority?: number | null
+  created_by?: string | null
   created_at?: number | null
   updated_at?: number | null
+}
+
+/**
+ * Parse the origin marker out of `created_by`.
+ *
+ * The CLI stores this field as free text, so it carries the cross-menu link. It is
+ * deliberately forgiving: anything unrecognised is kept as `raw` rather than
+ * dropped, because the value is set by the CLI (`worker`, `user`) as well as by us.
+ */
+/** The inverse of parseOrigin: the string stored in `created_by`. */
+export function originMarker(o: TaskOrigin): string {
+  return o.ref ? `${o.kind}:${o.ref}` : o.kind
+}
+
+export function parseOrigin(createdBy?: string | null): TaskOrigin | undefined {
+  if (!createdBy) return undefined
+  const m = /^(meeting|cron|agent|manual):?(.*)$/.exec(createdBy.trim())
+  if (!m) return { kind: 'manual', raw: createdBy }
+  const kind = m[1] as TaskOrigin['kind']
+  return { kind, ref: m[2] || undefined, raw: createdBy }
 }
 
 /** The CLI emits unix seconds; the UI wants ISO. */
@@ -95,6 +116,7 @@ function toTask(r: RawTask): Task {
     priority: r.priority ?? 0,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
+    origin: parseOrigin(r.created_by),
   }
 }
 
@@ -133,6 +155,10 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   const args = ['create', input.title, '--assignee', input.assignee]
   if (input.body) args.push('--body', input.body)
   if (typeof input.priority === 'number') args.push('--priority', String(input.priority))
+  // The origin marker rides on `created_by`, which the CLI accepts as free text.
+  // Verified: `create --created-by meeting:m_test123` stores it verbatim and it
+  // comes back on `list --json`, so no schema change is needed for the link.
+  if (input.origin) args.push('--created-by', originMarker(input.origin))
 
   const out = await kanban(args)
   const m = out.match(/t_[0-9a-f]{8}/)

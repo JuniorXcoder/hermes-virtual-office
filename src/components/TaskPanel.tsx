@@ -14,6 +14,28 @@ type RunInfo = {
   error?: string | null
 }
 
+/**
+ * How an origin reads in the panel.
+ *
+ * Returns null for anything that is not a cross-menu link. The CLI writes
+ * `created_by` itself for ordinary tasks ('worker', 'user'), and showing "asal:
+ * worker" on every task is noise — the line only earns its space when it names the
+ * meeting or job the work came from.
+ */
+function originLabel(o?: { kind: string; ref?: string }): string | null {
+  if (!o) return null
+  switch (o.kind) {
+    case 'meeting':
+      return o.ref ? `rapat ${o.ref}` : 'rapat'
+    case 'cron':
+      return o.ref ? `cron ${o.ref}` : 'cron'
+    case 'agent':
+      return o.ref ? `agent ${o.ref}` : 'agent'
+    default:
+      return null
+  }
+}
+
 const STATUS_LABEL: Record<string, string> = {
   todo: 'Belum dikerjakan',
   triage: 'Perlu dispesifikasi',
@@ -101,6 +123,12 @@ export default function TaskPanel() {
               <div className="vp-kv">
                 <span>diubah</span>
                 <b>{new Date(task.updatedAt).toLocaleString('id-ID')}</b>
+              </div>
+            )}
+            {originLabel(task.origin) && (
+              <div className="vp-kv">
+                <span>asal</span>
+                <b>{originLabel(task.origin)}</b>
               </div>
             )}
             <code className="vp-code-block">{task.id}</code>

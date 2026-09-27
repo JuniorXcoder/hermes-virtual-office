@@ -36,6 +36,13 @@ export default function Kanban2D() {
                     <div className="vp-card-title">{t.title}</div>
                     <div className="vp-card-meta">
                       <span className="vp-chip">{t.assignee || '—'}</span>
+                      {/* Where the task came from. Without it the board is a flat
+                          pile and you cannot tell which meeting asked for what. */}
+                      {t.origin && t.origin.kind !== 'manual' && (
+                        <span className={`vp-chip vp-chip-${t.origin.kind}`}>
+                          {t.origin.kind}
+                        </span>
+                      )}
                       <code>{t.id}</code>
                     </div>
                   </article>

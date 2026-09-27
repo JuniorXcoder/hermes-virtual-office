@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Collapsible from './Collapsible'
+import ActionItems from './ActionItems'
+import type { Candidate } from '@/types/hermes'
 
 /**
  * Cron job management.
@@ -78,6 +80,15 @@ export default function CronPanel({
   const [note, setNote] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [screen, setScreen] = useState<'list' | 'new'>('list')
+  /**
+   * Follow-up candidates per job id. Loaded lazily when the user asks for them —
+   * most jobs are healthy and have nothing to hand over, so this is not fetched
+   * for every row on every poll.
+   */
+  const [items, setItems] = useState<Record<string, Candidate[]>>({})
+  const [roster, setRoster] = useState<string[]>([])
+  const [itemsBusy, setItemsBusy] = useState<string | null>(null)
+
   /** id + action awaiting the second click. */
   const [confirm, setConfirm] = useState<{ id: string; action: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -141,6 +152,25 @@ export default function CronPanel({
     } finally {
       setBusy(null)
       setConfirm(null)
+    }
+  }
+
+  /** Fetch a job's follow-up candidates. */
+  async function loadItems(jobId: string) {
+    setItemsBusy(jobId)
+    setErr(null)
+    try {
+      const r = await fetch(`/api/hermes/cron/actions?from=${encodeURIComponent(jobId)}`, {
+        cache: 'no-store',
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`)
+      setItems((prev) => ({ ...prev, [jobId]: d.items || [] }))
+      setRoster(d.roster || [])
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setItemsBusy(null)
     }
   }
 
@@ -263,6 +293,32 @@ export default function CronPanel({
                   </div>
                   {j.prompt && <Collapsible label="Prompt" text={j.prompt} />}
                   {j.lastError && <div className="vp-cron-err">{j.lastError}</div>}
+
+                  {/* The cross-menu link: a failing job becomes a task. Offered only
+                      when there is something to fix, so a healthy job stays quiet. */}
+                  {j.failureStreak > 0 && (
+                    <>
+                      {items[j.id] ? (
+                        <ActionItems
+                          candidates={items[j.id]}
+                          roster={roster}
+                          origin={{ kind: 'cron', ref: j.id }}
+                          label="TINDAK LANJUT → TUGAS"
+                        />
+                      ) : (
+                        <button
+                          className="vp-btn vp-btn-ghost"
+                          disabled={itemsBusy === j.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void loadItems(j.id)
+                          }}
+                        >
+                          {itemsBusy === j.id ? '…' : 'Buat tugas dari kegagalan ini'}
+                        </button>
+                      )}
+                    </>
+                  )}
                   <div className="vp-cron-actions">
                     {j.enabled ? (
                       <Guarded

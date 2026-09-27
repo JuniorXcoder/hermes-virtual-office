@@ -1346,3 +1346,69 @@ the screenshot showed.
 before removing the group.
 
 Self-test: 19 checks.
+
+---
+
+## 30. Crossing menus: output of one becomes input of another
+
+The board was a flat pile. A meeting produced follow-ups and a cron job produced
+failures, and neither left a trace of where the work came from — you could not tell
+which meeting asked for what, or get back to it.
+
+### The link lives in `created_by`
+
+`hermes kanban create --created-by` accepts free text and returns it verbatim on
+`list --json` (verified). So the origin rides there as a marker — `meeting:m123`,
+`cron:abc`, `agent:jun` — and is parsed back out. No schema change, and the field the
+CLI already writes itself (`worker`, `user`) is left alone rather than mistaken for a
+link: `parseOrigin('worker')` returns `manual`, and the UI shows nothing for it.
+
+### The meeting contract was already there
+
+`MINUTES_SYSTEM` has always asked for a `## TINDAK LANJUT` section with one line per
+item as `**Owner**: deliverable — tenggat`. That is a contract, not a guess, so the
+parser reads it. It is lenient about FORM and strict about CONTENT: bold or plain
+owners, bullets or numbers, wrapped lines joined back to their bullet — but a line
+that yields no text is dropped, and `Belum ada kesepakatan` is not a task.
+
+Measured against real minutes, it produces exactly the three items written, resolves
+`jun`/`lulu` to real profiles, and returns `null` for `zaki`, who is not on the
+roster. That null is the point: an item whose owner the roster does not know is
+offered with the picker open, not silently assigned to nobody.
+
+### Nothing is created until you say so
+
+Both sources PROPOSE. The meeting panel lists the parsed items with a checkbox and an
+owner picker; the cron panel offers one item, only for a job that is actually failing
+(`failureStreak > 0` — a healthy job has nothing to hand over, and offering one would
+be noise). The default is every row with a resolved owner ON, every row without one
+OFF, because an item assigned to nobody is not work.
+
+The create call is one shared endpoint, `POST /api/hermes/tasks/from-items`, rather
+than one per source: the only thing that differs is the marker, and duplicating the
+path would let the two drift. Partial success is reported as such — one row with no
+assignee must not lose the others.
+
+### Both directions are visible
+
+A created task shows its origin in the task panel (`asal: rapat m123`) and carries a
+colour-coded chip on the board card (green meeting, blue cron, purple agent), so the
+link can be read from either end.
+
+### Verified end to end
+
+```
+GET  meeting/actions?from=mTESTLINK  -> 3 items, zaki unresolved (null)
+POST tasks/from-items                -> 2 created, 1 refused ("penanggung belum dipilih")
+     created_by on the board          -> 'meeting:mTESTLINK' on both
+GET  cron/actions?from=<healthy job> -> 0 items
+GET  cron/actions?from=<failing job> -> 1 item carrying the job's real error text
+POST tasks/from-items (cron origin)  -> 1 created, origin reads back as cron:<id>
+GET  */actions?from=unknown          -> 404 JSON from the handler, not a route miss
+```
+
+All probe tasks, the probe job and the probe transcript were removed afterwards; the
+board is back to its 13 tasks and `jobs.json` was restored from a backup taken before
+the test.
+
+Self-test: 21 checks (added origin round-trip and minutes parsing).
