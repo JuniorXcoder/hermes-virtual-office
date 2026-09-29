@@ -18,22 +18,18 @@ import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { BOARD_COLUMNS, KANBAN_BOARD } from './layout'
 import type { Task } from '@/types/hermes'
 
-/** Group Hermes' finer-grained statuses into the four displayed columns. */
+/** Display 3D board has four columns; keep every task within those bounds. */
 export function columnOf(status: string): number {
   switch (status) {
-    case 'todo':
-    case 'triage':
-    case 'ready':
-    case 'scheduled':
-      return 0
     case 'running':
       return 1
     case 'review':
       return 2
     case 'done':
+    case 'archived':
       return 3
     default:
-      return 0 // blocked / archived ride with the backlog
+      return 0
   }
 }
 
@@ -121,9 +117,11 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
         const card = document.createElement('button')
         card.type = 'button'
         card.className = 'vp-board-card'
-        card.dataset.status = t.status
+        card.dataset.status = ['todo', 'triage', 'ready', 'scheduled', 'running', 'review', 'done', 'blocked', 'archived'].includes(t.status)
+          ? t.status
+          : 'unknown'
         card.textContent = t.title
-        card.title = `${t.id} · ${t.assignee || 'tanpa penanggung jawab'} — klik untuk detail`
+        card.title = `${t.id} · ${t.status} · ${t.assignee || 'tanpa penanggung jawab'} — klik untuk detail`
         card.addEventListener('click', (e) => {
           e.stopPropagation()
           onClick(t.id)

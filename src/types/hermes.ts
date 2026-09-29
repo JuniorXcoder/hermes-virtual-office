@@ -5,8 +5,19 @@
  * payloads into these shapes so the UI never learns about a specific backend.
  */
 
-export type TaskStatus = 'todo' | 'ready' | 'running' | 'review' | 'blocked' | 'done'
-export type MeetingMode = 'auto' | 'directed' | 'manual'
+/** Every status the CLI can emit; the UI groups them into its columns. */
+export type TaskStatus =
+  | 'todo'
+  | 'triage'
+  | 'ready'
+  | 'scheduled'
+  | 'running'
+  | 'review'
+  | 'blocked'
+  | 'done'
+  | 'archived'
+/** Only one mode is implemented; the meeting route rejects anything else. */
+export type MeetingMode = 'auto'
 export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle'
 
 /**
@@ -40,6 +51,19 @@ export type Task = {
   updatedAt?: string
   /** Where this task came from, when it is known. */
   origin?: TaskOrigin
+  /** Model pinned to this task's worker; null/undefined means the profile default. */
+  model?: string | null
+  /** Provider that owns `model`, when one was pinned with it. */
+  provider?: string | null
+  /**
+   * Ids of the tasks this one waits for, from `kanban show`.
+   *
+   * The board has a real dependency edge: `auto-decomposer` splits a task into
+   * children and parks the parent until every child is `done`. Without the ids in
+   * the payload the UI can only say "waiting for prerequisites", which names
+   * nothing — the one thing the reader needs to act.
+   */
+  parents?: string[]
 }
 
 /**
@@ -64,6 +88,8 @@ export type Agent = {
   deskIndex: number | null
   status: AgentStatus
   currentTaskId?: string | null
+  /** The profile's default model — what its workers and chats run. */
+  model?: string | null
 }
 
 export type AgentRole =
@@ -141,15 +167,6 @@ export type Candidate = {
   body?: string
 }
 
-/** A single line of live agent telemetry, shown in the screen-peeker modal. */
-export type AgentActivity = {
-  agent: string
-  taskId?: string | null
-  kind: 'command' | 'tool' | 'message' | 'diff'
-  detail: string
-  ts: number
-}
-
 export type NewTaskInput = {
   title: string
   assignee: string
@@ -157,26 +174,4 @@ export type NewTaskInput = {
   priority?: number
   /** Where this task came from; written to `created_by` as a marker. */
   origin?: TaskOrigin
-}
-
-/**
- * The single seam between the office UI and a Hermes installation.
- * Add a new driver by implementing this; nothing else has to change.
- */
-export interface HermesDriver {
-  readonly kind: 'api' | 'mock'
-  listTasks(): Promise<Task[]>
-  listAgents(): Promise<Agent[]>
-  createTask(input: NewTaskInput): Promise<Task>
-  steerTask(taskId: string, message: string): Promise<boolean>
-  cancelTask(taskId: string): Promise<boolean>
-  /** Recent output for a running task, newest last. */
-  taskActivity(taskId: string, limit?: number): Promise<AgentActivity[]>
-  startMeeting(input: {
-    topic: string
-    participants: string[]
-    moderator?: string
-    mode?: MeetingMode
-  }): Promise<Meeting>
-  getMeeting(id: string): Promise<Meeting | null>
 }

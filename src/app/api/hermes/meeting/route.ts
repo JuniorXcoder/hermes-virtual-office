@@ -8,6 +8,7 @@ import {
   startMeeting,
 } from '@/lib/hermes/meeting'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,7 +57,15 @@ export async function GET(req: NextRequest) {
  * old page cannot start a meeting with a non-existent agent.
  */
 export async function POST(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const body = await req.json().catch(() => ({}))
+  if (body?.mode && body.mode !== 'auto') {
+    return NextResponse.json(
+      { error: { code: 'invalid_request', message: 'mode ini belum didukung; gunakan auto', status: 400 } },
+      { status: 400 },
+    )
+  }
   try {
     const tasks = await listTasks()
     const known = new Set((await listAgents(tasks)).map((a) => a.name))

@@ -5,6 +5,7 @@ node_modules/
 
 # next
 .next/
+.next-dev/
 out/
 build/
 next-env.d.ts

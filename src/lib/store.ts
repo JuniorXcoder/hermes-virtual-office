@@ -17,7 +17,7 @@ type State = {
   meetingArchive: { id: string; body: string } | null
   loading: boolean
   error: string | null
-  view: '3d' | '2d'
+  view: '3d' | '2d' | 'sprite'
   peekDesk: number | null
   selectedAgent: string | null
   /** Task opened from the 3D board or the 2D board. */
@@ -25,7 +25,7 @@ type State = {
   newTaskOpen: boolean
 
   load: () => Promise<void>
-  setView: (v: '3d' | '2d') => void
+  setView: (v: '3d' | '2d' | 'sprite') => void
   setPeek: (desk: number | null) => void
   openTask: (taskId: string | null) => void
   select: (name: string | null) => void
@@ -93,11 +93,34 @@ export const useOffice = create<State>((set) => ({
 
 /** Poll the board; returns a stop function. */
 export function startPolling() {
-  const tick = () => {
-    void useOffice.getState().load()
-    void useOffice.getState().refreshMeeting()
+  let stopped = false
+  let running = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const tick = async () => {
+    if (stopped || running) return
+    if (document.hidden) return schedule()
+    running = true
+    try {
+      await Promise.all([useOffice.getState().load(), useOffice.getState().refreshMeeting()])
+    } finally {
+      running = false
+      schedule()
+    }
   }
-  tick()
-  const id = setInterval(tick, POLL_MS)
-  return () => clearInterval(id)
+  const schedule = () => {
+    if (!stopped) timer = setTimeout(tick, POLL_MS)
+  }
+  const onVisibility = () => {
+    if (!document.hidden) {
+      clearTimeout(timer)
+      void tick()
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+  void tick()
+  return () => {
+    stopped = true
+    clearTimeout(timer)
+    document.removeEventListener('visibilitychange', onVisibility)
+  }
 }

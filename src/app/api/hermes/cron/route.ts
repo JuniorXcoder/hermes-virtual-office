@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { actOnJob, createJob, listJobs, listRuns, type JobAction } from '@/lib/hermes/cron'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
+import { actOnJob, createJob, listJobs, listRuns, parseLimit, type JobAction } from '@/lib/hermes/cron'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +44,8 @@ export async function GET(req: NextRequest) {
 const ACTIONS: JobAction[] = ['pause', 'resume', 'run', 'remove']
 
 export async function POST(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action || '')
 

@@ -7,6 +7,7 @@ import {
   sendChatMessage,
 } from '@/lib/hermes/chat'
 import { listAgents, listProfiles, listTasks } from '@/lib/hermes/kanban'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -75,6 +76,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const body = await req.json().catch(() => null)
   const agent = typeof body?.agent === 'string' ? body.agent.trim() : ''
   const message = typeof body?.message === 'string' ? body.message : ''
@@ -110,6 +113,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const agent = req.nextUrl.searchParams.get('agent')
   if (!agent) return bad('agent wajib')
   try {

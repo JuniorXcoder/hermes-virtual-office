@@ -325,15 +325,20 @@ hint, and where it and the runtime disagree, believe the runtime.
 
 ## 14. Spawn/kill, meeting history, and four geometry bugs the measurements found
 
-### Kill must not delete work
+### Membership is `hide`, deleting is `kill`
 
-`POST /api/hermes/agents` toggles office MEMBERSHIP, not data. An agent exists in
-the room when its Hermes profile is an assignee, so "kill" adds the name to an
-in-memory kill-list and the avatar leaves; its tasks stay on the board. Verified:
-killing `default` drops the office to `['bob','carol']` while the board still
-reports 10 tasks, two of them `default`'s.
+`POST /api/hermes/agents` offers both, and they are not the same operation:
 
-The kill-list lives in memory for the life of the process. That is deliberate —
+- `hide` adds the name to an in-memory hide list and the avatar walks out. The
+  profile and its tasks are untouched, so the board still reports them.
+- `kill` DELETES the profile (`hermes profile delete`) and purges its tasks.
+
+This split exists because the two were once the same code path. A row with tasks but
+no profile on disk — an assignee whose profile was already deleted — was offered a
+button labelled "Sembunyikan" with the tooltip "tanpa menghapus apa pun", and that
+button called `kill`. Clicking it deleted the tasks it promised to keep.
+
+The hide list lives in memory for the life of the process. That is deliberate —
 persisting it would mean writing office state into the Hermes install, which this
 app otherwise never does. A restart restores "everyone visible". Documented in
 API-SPEC.md rather than left as a surprise.

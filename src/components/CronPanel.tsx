@@ -41,7 +41,7 @@ type Job = {
 }
 
 type Run = {
-  id: number
+  id: string
   jobId: string
   status: string
   source: string
@@ -361,7 +361,9 @@ export default function CronPanel({
                 <div className="flex flex-col gap-1">
                   {runs.slice(0, 12).map((r) => (
                     <div key={r.id} className="vp-cron-run">
-                      <span className={`vp-cron-state ${r.status === 'success' ? 'on' : 'off'}`}>
+                      {/* Hermes reports a good run as `completed`, not `success`;
+                          matching only `success` painted every green run grey. */}
+                      <span className={`vp-cron-state ${['success', 'completed'].includes(r.status) ? 'on' : 'off'}`}>
                         {r.status}
                       </span>
                       <i>{r.jobId}</i>
