@@ -172,7 +172,7 @@ Returns `502 peek_failed` only when both fail at the transport level.
 
 ## 5. `POST /api/hermes/tasks/{id}`
 
-Desk intervention — the "tegur meja" controls. Two actions, discriminated by
+Desk intervention — the "tegur meja" controls. Five actions, discriminated by
 `action`.
 
 ### `action: "steer"`
@@ -202,6 +202,54 @@ Releases the worker's claim on the task.
   `not running`, or `unknown id` from stderr.
 - `502 action_failed` → any other CLI failure
 
+### `action: "run"`
+
+Runs ONE dispatcher pass (`hermes kanban dispatch --max 1`) so the task's worker
+is spawned now.
+
+Why it exists: the board has no runner of its own. `ready` only means "a worker
+may take this" — the dispatcher that actually spawns workers lives in the Hermes
+gateway. With the gateway stopped, a task sits in `ready` forever and the UI had
+no way to say why or to do anything about it. The worker is spawned detached, so
+it outlives this request.
+
+A parked task (`blocked`/`scheduled`) is lifted first (`unblock`), because the
+dispatcher ignores those rows entirely.
+
+```json
+{ "action": "run" }
+```
+
+- `200` → `{ "success": true, "spawned": ["t_..."], "mine": true, "note": "Worker dijalankan — pantau lewat Intip layar." }`
+- `200` with `mine: false` → the dispatcher took another task first, or nothing was
+  runnable. `note` says which. A task that lands back in `todo` is waiting on its
+  parent dependencies — that is reported, not swallowed.
+
+### `action: "promote"`
+
+Returns a parked task to the board. `promote` refuses `scheduled`, so the route
+calls `unblock` for that status; both land in `todo` when a parent is still open.
+
+```json
+{ "action": "promote", "message": "dijalankan dari kantor" }
+```
+
+- `200` → `{ "success": true, "promoted": true }`
+- `502 action_failed` → the CLI refused (e.g. unsatisfied parent dependencies)
+
+### `action: "set-model"`
+
+Pins the model this task's worker is spawned with (`hermes kanban set-model`). It
+takes effect on the **next** spawn. `model: null` clears the override.
+
+```json
+{ "action": "set-model", "model": "kn/deepseek-v4-flash", "provider": "9router" }
+```
+
+- `200` → `{ "success": true, "model": true }`
+- The provider is optional but should be sent: `kanban set-model --provider` writes
+  `provider_override`, and without it the worker inherits the profile's provider.
+
 ---
 
 ## 6. `GET /api/hermes/agents`
@@ -211,11 +259,11 @@ The spawn/kill menu.
 ```json
 {
   "available": [
-    { "name": "budi",    "total": 0, "profile": true,  "inOffice": true,  "reason": null },
-    { "name": "default", "total": 7, "profile": false, "inOffice": true,  "reason": null },
-    { "name": "carol",   "total": 1, "profile": true,  "inOffice": false, "reason": "killed" }
+    { "name": "budi",    "total": 0, "profile": true,  "inOffice": true,  "model": "claude-sonnet-4.6", "reason": null },
+    { "name": "default", "total": 7, "profile": true,  "inOffice": true,  "model": "Kenari",            "reason": null },
+    { "name": "carol",   "total": 1, "profile": true,  "inOffice": false, "model": null,                "reason": "hidden" }
   ],
-  "killed": ["carol"]
+  "hidden": ["carol"]
 }
 ```
 
@@ -226,7 +274,11 @@ no tasks is still listed — otherwise creating one would look like it failed.
 - `profile` — the profile exists on disk. `false` means the name appears only as a
   task assignee (or came from a stale task), which the UI flags as `tanpa profil`.
 - `inOffice` — currently shown in the room.
-- `reason` — `killed` (removed here), `unknown` (absent for another reason), `null`.
+- `model` — the profile's default model (`hermes -p <name> config get model`). One
+  CLI read per profile, run in parallel and only for profiles on disk; `null` when
+  the profile has none or the read failed.
+- `reason` — `hidden` (removed here via the membership toggle), `unknown` (absent
+  for another reason), `no_profile` (assignee with no profile on disk), else `null`.
 
 ---
 
@@ -264,25 +316,53 @@ does not need because it drives profiles through the kanban CLI.
 { "action": "kill", "name": "carol" }
 ```
 
-- `action`: `"spawn"`, `"kill"` or `"create"` (required)
+- `action`: `"spawn"`, `"hide"`, `"kill"`, `"create"` or `"set-model"` (required)
 - `name`: must be a profile the install knows (required)
 
 Responses:
 
-- `200` → `{ "success": true, "action", "name", "changed": true, "killed": [...] }`.
+- `200` → `{ "success": true, "action", "name", "changed": true, "hidden": [...] }`.
   `changed` is `false` when the profile was already in the requested state.
 - `400 invalid_request` → unknown action, missing name, `profil "x" tidak dikenal`,
   `profil "x" tidak ada di disk`, `profil "default" tidak bisa dihapus`, or
   `gateway profil "x" sedang berjalan — hentikan dulu sebelum dihapus`
 - `502 action_failed` → the CLI failed while listing or deleting
 
+### `action: "set-model"`
+
+Sets the profile's **default** model — what its workers and chat turns run when a
+task carries no override.
+
+```json
+{ "action": "set-model", "name": "budi", "model": "claude-sonnet-4.6", "provider": "9router" }
+```
+
+- `200` → `{ "success": true, "action": "set-model", "name": "budi", "model": "…", "provider": "9router" }`
+- `400 invalid_request` → `model` empty
+- `502 action_failed` → the CLI refused
+
+Two writes: `model.default` (the model id) and `model.provider`. The provider is
+stored **qualified** (`custom:9router`) — that is the form `hermes model` itself
+writes, and a bare name is not accepted here. Both land in the profile's own
+`config.yaml`, so they affect the next spawn or chat turn, not a running one.
+
+Per-task overrides are separate and win over this: see `action: "set-model"` on
+`POST /api/hermes/tasks/{id}`.
+
 ### What each action does to the profile
 
 | `action` | Effect |
 |---|---|
 | `create` | creates a new, **empty** profile (no `--clone`) |
-| `spawn` | removes the name from the in-memory hide-list; profile untouched |
+| `spawn` | removes the name from the in-memory hide list; profile untouched |
+| `hide` | adds the name to the in-memory hide list; profile **and tasks untouched** |
 | `kill` | **DELETES the profile** (directory, sessions, memory store, wrapper script) **and its tasks** |
+| `set-model` | writes `model.default` / `model.provider` into the profile's `config.yaml` |
+
+`hide` is the safe membership toggle, and it is the only action the UI offers for a
+name that has tasks but no profile on disk — there is nothing to delete, and routing
+that row to `kill` deleted the tasks behind a button that promised nothing would be
+removed.
 
 `kill` is destructive and permanent. `hermes profile delete` leaves a one-line
 tombstone at `profiles/.deleted/<name>`, but that is a marker for the gateway, **not
@@ -593,7 +673,31 @@ pointer operation, not a destructive one.
 
 ---
 
-## 16. Polling
+## 16. `GET /api/hermes/models`
+
+The model catalogue for the two pickers (per-task override, per-agent default).
+
+```json
+{
+  "models": [
+    { "model": "Kenari", "provider": "9router", "label": "Kenari · 9router" },
+    { "model": "kn/deepseek-v4-flash", "provider": "9router", "label": "kn/deepseek-v4-flash · 9router" }
+  ]
+}
+```
+
+Read from `hermes config get custom_providers --json`, because that list is exactly
+what a worker can be spawned with — a hardcoded dropdown would drift from
+`config.yaml`. The CLI masks `api_key`, so no credential reaches the browser.
+
+- Deduped by model id; the first provider that declares an id wins.
+- A provider with no `base_url` is skipped (unreachable), and a provider with no
+  `models` map still contributes its default `model` so it can be picked at all.
+- Sorted by label. Memoised for the same 3 s as every other CLI read.
+
+---
+
+## 17. Polling
 
 There is no push channel. The client polls `GET /api/hermes/tasks` on an interval
 set by `NEXT_PUBLIC_POLL_MS` (default `4000`). This is a build-time constant, so
@@ -604,7 +708,7 @@ adding SSE would mean inventing a second source of truth.
 
 ---
 
-## 17. Server-side limits worth knowing
+## 18. Server-side limits worth knowing
 
 - **One meeting at a time per server process.** State lives in memory, so a
   multi-instance deployment would run one meeting per instance and they would not

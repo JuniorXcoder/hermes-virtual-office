@@ -5,8 +5,19 @@
  * payloads into these shapes so the UI never learns about a specific backend.
  */
 
-export type TaskStatus = 'todo' | 'ready' | 'running' | 'review' | 'blocked' | 'done'
-export type MeetingMode = 'auto' | 'directed' | 'manual'
+/** Every status the CLI can emit; the UI groups them into its columns. */
+export type TaskStatus =
+  | 'todo'
+  | 'triage'
+  | 'ready'
+  | 'scheduled'
+  | 'running'
+  | 'review'
+  | 'blocked'
+  | 'done'
+  | 'archived'
+/** Only one mode is implemented; the meeting route rejects anything else. */
+export type MeetingMode = 'auto'
 export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle'
 
 /**
@@ -40,6 +51,10 @@ export type Task = {
   updatedAt?: string
   /** Where this task came from, when it is known. */
   origin?: TaskOrigin
+  /** Model pinned to this task's worker; null/undefined means the profile default. */
+  model?: string | null
+  /** Provider that owns `model`, when one was pinned with it. */
+  provider?: string | null
 }
 
 /**
@@ -64,6 +79,8 @@ export type Agent = {
   deskIndex: number | null
   status: AgentStatus
   currentTaskId?: string | null
+  /** The profile's default model — what its workers and chats run. */
+  model?: string | null
 }
 
 export type AgentRole =

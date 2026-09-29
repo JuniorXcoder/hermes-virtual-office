@@ -10,12 +10,13 @@
  * had no chat, but the memory layer it needs already exists and is battle-tested.
  * Writing a second store would mean two sources of truth for "what was said".
  *
- * So: `hermes chat -q <message> -Q --oneshot` answers and prints a `session_id`, and
- * `--resume <session_id>` continues that conversation with its history intact.
+ * So: `hermes -p <profile> chat -q <message> -Q` answers and prints a `session_id`, and
+ * `--resume <session_id>` continues that conversation with its history intact. `-Q`
+ * already selects one-shot behavior; do not add the redundant `--oneshot` flag.
  * Measured working:
  *
- *   chat -q "remember the cat is called Bleki" -Q --oneshot  -> session_id + "Oke."
- *   chat --resume <id> -q "what is my cat called?"           -> "Bleki."
+ *   -p default chat -q "remember the cat is called Bleki" -Q  -> session_id + "Oke."
+ *   -p default chat --resume <id> -q "what is my cat called?" -Q -> "Bleki."
  *
  * ## Isolation is per PROFILE, which is why chat gets its own
  *
@@ -69,6 +70,13 @@ function cleanEnv(): NodeJS.ProcessEnv {
   return env
 }
 
+export function officeChatArgs(profile: string, message: string, sessionId?: string): string[] {
+  const args = ['-p', profile, 'chat']
+  if (sessionId) args.push('--resume', sessionId)
+  args.push('-q', message, '-Q')
+  return args
+}
+
 /**
  * Run the CLI and return BOTH streams.
  *
@@ -98,14 +106,14 @@ async function cli(args: string[], timeout = CHAT_TIMEOUT_MS): Promise<{ stdout:
       throw new Error(`Hermes CLI tidak ditemukan di "${HERMES_BIN}". Set HERMES_BIN.`)
     }
     // A timeout still carries partial output; an answer may be in there.
-    const partial = (e.stdout || e.stderr || '').trim()
+    const partial = [e.stdout, e.stderr].filter(Boolean).join('\n').trim()
     if (e.killed || (err as Error).name === 'AbortError') {
       throw new Error(
         `agent tidak menjawab dalam ${Math.round(timeout / 1000)} detik` +
           (partial ? ` (keluaran sebagian: ${partial.slice(0, 200)})` : ''),
       )
     }
-    throw new Error(`hermes ${args.join(' ')} gagal: ${(e.stderr || e.message || '').trim()}`)
+    throw new Error(`hermes chat gagal: ${(e.stderr || e.message || '').trim()}`)
   }
 }
 
@@ -149,8 +157,18 @@ function storePath(): string {
 async function readIndex(): Promise<Record<string, ChatSession>> {
   try {
     const raw = await readFile(storePath(), 'utf8')
-    const parsed = JSON.parse(raw) as Record<string, ChatSession>
-    return parsed && typeof parsed === 'object' ? parsed : {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, value]) => {
+        if (!value || typeof value !== 'object') return false
+        const session = value as Partial<ChatSession>
+        return typeof session.id === 'string' && typeof session.agent === 'string' &&
+          typeof session.profile === 'string' && typeof session.title === 'string' &&
+          typeof session.createdAt === 'string' && typeof session.updatedAt === 'string' &&
+          typeof session.messageCount === 'number'
+      }),
+    ) as Record<string, ChatSession>
   } catch {
     return {}
   }
@@ -237,10 +255,7 @@ export async function sendChatMessage(
     throw new Error('pesan terlalu panjang (maks 60.000 karakter)')
   }
 
-  const args = ['chat', '-p', profile, '-q', text, '-Q', '--oneshot']
-  if (existing?.id) {
-    args.splice(3, 0, '--resume', existing.id)
-  }
+  const args = officeChatArgs(profile, text, existing?.id)
 
   const { stdout, stderr } = await cli(args)
   const reply = cleanReply(stdout)

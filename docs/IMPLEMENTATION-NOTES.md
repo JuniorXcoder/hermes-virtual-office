@@ -23,5 +23,5 @@ label that never left the doorway because a three.js event does not fire on chil
 a lane 1.8 m wide for a 1.8 m car. None were visible in a screenshot at normal zoom.
 
 Where it was possible, the fix is a self-test that compares two numbers
-(`npm run selftest`, 22 checks) rather than a comment asking the next person to be
+(`npm run selftest`, 34 checks) rather than a comment asking the next person to be
 careful.

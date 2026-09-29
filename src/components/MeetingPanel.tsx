@@ -33,7 +33,6 @@ export default function MeetingPanel({
   const [topic, setTopic] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [moderator, setModerator] = useState('')
-  const [mode, setMode] = useState('auto')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -111,7 +110,7 @@ export default function MeetingPanel({
       const res = await fetchJson('/api/hermes/meeting', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, participants: picked, moderator, mode }),
+        body: JSON.stringify({ topic, participants: picked, moderator }),
       })
       if (!res.ok) throw new Error(res.error || 'gagal memulai rapat')
       await refresh()
@@ -402,13 +401,6 @@ export default function MeetingPanel({
                   {p}
                 </option>
               ))}
-            </select>
-
-            <label className="vp-sub">MODE</label>
-            <select className="vp-input" value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="auto">auto — semua bicara bergiliran</option>
-              <option value="directed">directed — hanya yang ditunjuk</option>
-              <option value="manual">manual — hanya yang disebut namanya</option>
             </select>
 
             <button

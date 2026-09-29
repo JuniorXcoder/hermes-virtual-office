@@ -191,7 +191,11 @@ export default function ChatPanel({
     const res = await fetchJson(`/api/hermes/chat?agent=${encodeURIComponent(openAgent)}`, {
       method: 'DELETE',
     })
-    if (!res.ok) setErr(res.error || 'gagal menghapus thread')
+    if (!res.ok) {
+      setErr(res.error || 'gagal menghapus thread')
+      setBusy(false)
+      return
+    }
     setMessages([])
     setSession(null)
     setBusy(false)

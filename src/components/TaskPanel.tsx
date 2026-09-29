@@ -15,6 +15,9 @@ type RunInfo = {
   error?: string | null
 }
 
+/** One row of the model picker (see /api/hermes/models). */
+type ModelChoice = { model: string; provider: string; label: string }
+
 /**
  * How an origin reads in the panel.
  *
@@ -59,11 +62,16 @@ export default function TaskPanel() {
   const openTask = useOffice((s) => s.openTask)
   const tasks = useOffice((s) => s.tasks)
   const agents = useOffice((s) => s.agents)
+  const load = useOffice((s) => s.load)
 
   const [runs, setRuns] = useState<RunInfo[]>([])
   const [log, setLog] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelChoice[]>([])
+  const [pick, setPick] = useState('')
 
   const task: Task | undefined = tasks.find((t) => t.id === taskId)
   const agent = agents.find((a) => a.name === task?.assignee)
@@ -91,7 +99,59 @@ export default function TaskPanel() {
     }
   }, [taskId])
 
+  // The model list is config, not board state: fetched once per panel, not on the
+  // poll, so opening a task does not spawn a CLI read every 4 seconds.
+  useEffect(() => {
+    if (!taskId || models.length) return
+    let alive = true
+    fetchJson<{ models?: ModelChoice[] }>('/api/hermes/models', { cache: 'no-store' }).then((res) => {
+      if (alive && res.ok) setModels(res.data?.models || [])
+    })
+    return () => {
+      alive = false
+    }
+  }, [taskId, models.length])
+
+  // Show what the task is actually pinned to, not a stale pick from another task.
+  useEffect(() => {
+    setPick(task?.model || '')
+    setNote(null)
+  }, [taskId, task?.model])
+
   if (!taskId) return null
+
+  /** run | promote | set-model */
+  async function act(action: 'run' | 'promote' | 'set-model', extra: Record<string, unknown> = {}) {
+    setBusy(true)
+    setNote(null)
+    try {
+      const res = await fetchJson<{ note?: string; mine?: boolean }>(
+        `/api/hermes/tasks/${taskId}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, ...extra }),
+        },
+      )
+      if (!res.ok) throw new Error(res.error || 'aksi gagal')
+      setNote(res.data?.note || (action === 'set-model' ? 'Model disimpan.' : 'Selesai.'))
+      await load()
+      const fresh = await fetchJson<{ runs?: RunInfo[]; log?: string }>(
+        `/api/hermes/tasks/${taskId}`,
+        { cache: 'no-store' },
+      )
+      if (fresh.ok) {
+        setRuns(fresh.data?.runs || [])
+        setLog(fresh.data?.log || '')
+      }
+    } catch (e) {
+      setNote(`Gagal: ${(e as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const blocked = task?.status === 'blocked' || task?.status === 'scheduled'
 
   return (
     <aside className="vp-panel left-0">
@@ -123,6 +183,10 @@ export default function TaskPanel() {
               <span>prioritas</span>
               <b>{task.priority}</b>
             </div>
+            <div className="vp-kv">
+              <span>model worker</span>
+              <b>{task.model || 'bawaan profil'}</b>
+            </div>
             {task.updatedAt && (
               <div className="vp-kv">
                 <span>diubah</span>
@@ -136,6 +200,56 @@ export default function TaskPanel() {
               </div>
             )}
             <code className="vp-code-block">{task.id}</code>
+
+            {/* A `ready` task is not running on its own: the dispatcher that spawns
+                workers lives in the gateway. Without this button a task just sits
+                there whenever the gateway is down. It lifts a parked task first,
+                so one click covers blocked/scheduled too. */}
+            <div className="vp-sub">JALANKAN</div>
+            <div className="flex gap-2">
+              <button
+                className="vp-btn"
+                disabled={busy || task.status === 'running' || task.status === 'review'}
+                onClick={() => act('run')}
+                title="Buka blokir bila perlu, lalu suruh dispatcher Hermes mengeksekusi tugas ini"
+              >
+                {busy ? '…' : 'Jalankan'}
+              </button>
+            </div>
+            {blocked && (
+              <div className="vp-muted">
+                Status <b>{task.status}</b>: tombol Jalankan otomatis membuka blokir dulu.
+              </div>
+            )}
+
+            <div className="vp-sub">MODEL AGENT UNTUK TUGAS INI</div>
+            <select
+              className="vp-input"
+              value={pick}
+              onChange={(e) => setPick(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">bawaan profil{agent ? ` (${agent.name})` : ''}</option>
+              {models.map((m) => (
+                <option key={`${m.provider}/${m.model}`} value={m.model}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button
+                className="vp-btn"
+                disabled={busy || pick === (task.model || '')}
+                onClick={() => {
+                  const hit = models.find((m) => m.model === pick)
+                  void act('set-model', pick ? { model: pick, provider: hit?.provider } : { model: null })
+                }}
+                title="Berlaku pada spawn worker berikutnya"
+              >
+                Simpan model
+              </button>
+            </div>
+            {note && <div className="vp-note">{note}</div>}
 
             {task.body && <Collapsible label="Uraian" text={task.body} />}
 

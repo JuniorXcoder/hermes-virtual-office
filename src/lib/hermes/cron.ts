@@ -89,7 +89,7 @@ export type CronJob = {
 }
 
 export type CronRun = {
-  id: number
+  id: string
   jobId: string
   status: string
   source: string
@@ -171,6 +171,17 @@ export async function getJob(id: string): Promise<CronJob | null> {
 }
 
 /**
+ * `?limit=` is user input: junk, zero and negatives fall back to the default
+ * instead of reaching the CLI as `--limit NaN`, which exits non-zero and makes
+ * the office report the whole install as unavailable.
+ */
+export function parseLimit(raw: unknown, fallback = 25): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(500, Math.floor(n))
+}
+
+/**
  * Recent executions.
  *
  * Read from the CLI (`hermes cron runs`) because the table shape is its business,
@@ -179,21 +190,25 @@ export async function getJob(id: string): Promise<CronJob | null> {
 export async function listRuns(jobId?: string, limit = 25): Promise<CronRun[]> {
   const args = ['cron', 'runs']
   if (jobId) args.push(jobId)
-  args.push('--limit', String(Math.max(1, Math.min(500, limit))))
+  args.push('--limit', String(parseLimit(limit)))
   const out = await cli(args)
-  // The command prints a table; keep only the rows that start with an id.
+  return parseCronRuns(out)
+}
+
+/** Parse the stable fields Hermes prints for a run; IDs are UUID-like strings. */
+export function parseCronRuns(out: string): CronRun[] {
   const rows: CronRun[] = []
   for (const line of out.split('\n')) {
-    const cols = line.trim().split(/\s{2,}/)
-    if (cols.length < 3) continue
-    if (!/^\d+$/.test(cols[0])) continue
+    const id = /^([a-f0-9]{32})\s+/i.exec(line)?.[1]
+    if (!id) continue
+    const field = (name: string) => new RegExp(`(?:^|\\s)${name}=([^\\s]+)`).exec(line)?.[1] ?? null
     rows.push({
-      id: Number(cols[0]),
-      jobId: cols[1] ?? '',
-      status: cols[2] ?? '',
-      source: cols[3] ?? '',
-      startedAt: cols[4] ?? null,
-      finishedAt: cols[5] ?? null,
+      id,
+      jobId: field('job') ?? '',
+      status: line.match(/\b(completed|failed|running|skipped|queued)\b/)?.[1] ?? 'unknown',
+      source: field('source') ?? '',
+      startedAt: line.match(/\b\d{4}-\d{2}-\d{2}T[^\s]+/)?.[0] ?? null,
+      finishedAt: null,
     })
   }
   return rows

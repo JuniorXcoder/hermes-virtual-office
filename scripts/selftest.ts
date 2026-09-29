@@ -11,6 +11,7 @@
  */
 import { readFileSync } from 'node:fs'
 import {
+  BOARD_COLUMNS,
   CEILING_Y,
   DESKS,
   deskByIndex,
@@ -37,9 +38,13 @@ import { BODY_R, blocked } from '../src/lib/office/nav'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
-import { originMarker, parseOrigin } from '../src/lib/hermes/kanban'
+import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
+import { hide, isHidden, show, visible } from '../src/lib/hermes/office-membership'
+import { originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/kanban'
 import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
+import { columnOf } from '../src/lib/office/board'
+import { officeChatArgs, sendChatMessage } from '../src/lib/hermes/chat'
 import * as THREE from 'three'
 
 let failures = 0
@@ -61,6 +66,13 @@ console.log('\nhermes-virtual-office — invariant self-test\n')
 
 /* ---------------------------------------------------------------- geometry -- */
 console.log('geometry')
+
+// Every Hermes status must map into the 3D board's four rendered columns.
+{
+  const statuses = ['todo', 'triage', 'ready', 'scheduled', 'running', 'review', 'done', 'blocked', 'archived', 'future_status']
+  const invalid = statuses.filter((status) => columnOf(status) < 0 || columnOf(status) >= BOARD_COLUMNS.length)
+  check('all task states fit a rendered 3D kanban column', invalid.length === 0, invalid.join(', '))
+}
 
 // The board must fit the surface it hangs on AND the room it is in.
 {
@@ -520,7 +532,14 @@ console.log('geometry')
 
 
 
-// The street must be layered, not overlapping: building, then sidewalk, then road.
+// The base `default` profile is itself the Hermes orchestrator and is part of
+// the office roster. Agent counts and the `/api/hermes/agents` panel depend on it.
+{
+  const source = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
+  check('base default profile remains included in office agent roster', !/\.filter\(\(name\) => name !== 'default'\)/.test(source))
+}
+
+
 //
 // This shipped wrong twice in opposite directions — pedestrians at z 16.4/19.6
 // walked through the neighbouring blocks, and the "fix" put them at 11.6/10.2,
@@ -654,6 +673,111 @@ void (async () => {
     if (cleaned !== 'Jawaban asli.') problems.push(`cleaned = ${JSON.stringify(cleaned)}`)
     check('chat reads the session id from stderr and the reply from stdout', problems.length === 0, problems.join(' | '))
   }
+  // The CLI parser rejects an obsolete positional flag shape; verify the bridge
+  // builds the exact profile-global + chat-local argv for fresh and resumed turns.
+  {
+    const first = officeChatArgs('default', 'tes')
+    const resumed = officeChatArgs('default', 'lanjut', 'session_123')
+    const expectedFirst = ['-p', 'default', 'chat', '-q', 'tes', '-Q']
+    const expectedResumed = ['-p', 'default', 'chat', '--resume', 'session_123', '-q', 'lanjut', '-Q']
+    const ok = JSON.stringify(first) === JSON.stringify(expectedFirst) && JSON.stringify(resumed) === JSON.stringify(expectedResumed)
+    check('chat CLI args match Hermes profile, fresh, and resume syntax', ok, JSON.stringify({ first, resumed }))
+  }
+
+  // Hermes now emits a UUID and key=value fields. Numeric-column parsing used to
+  // drop every actual run and make the dashboard claim there were none.
+  {
+    const sample = [
+      '11daffce534f427abdd68dac590358ae  completed  job=755466374cb7  source=builtin  2026-09-26T13:04:50.512832+07:00',
+      '5aaa8ccf80d4423ca8f229c885f87442  failed     job=755466374cb7  source=builtin  2026-09-18T15:59:13.387333+07:00',
+      '    RuntimeError: HTTP 404: no credentials',
+    ].join('\n')
+    const runs = parseCronRuns(sample)
+    const ok = runs.length === 2 && runs[0].id === '11daffce534f427abdd68dac590358ae' &&
+      runs[0].jobId === '755466374cb7' && runs[0].status === 'completed' &&
+      runs[0].source === 'builtin' && runs[0].startedAt?.startsWith('2026-09-26T') === true &&
+      runs[1].status === 'failed'
+    check('cron runs parse Hermes UUID/key-value output', ok, JSON.stringify(runs))
+  }
+
+  // `?limit=abc` reached the CLI as `--limit NaN`, which exits non-zero — so a
+  // typo in a URL made the office report the whole Hermes install as unavailable.
+  {
+    const cases: [unknown, number][] = [
+      ['abc', 25],
+      ['', 25],
+      ['0', 25],
+      ['-5', 25],
+      ['NaN', 25],
+      ['Infinity', 25],
+      ['10', 10],
+      ['10.7', 10],
+      ['9999', 500],
+    ]
+    const bad = cases.filter(([input, want]) => parseLimit(input) !== want)
+    check(
+      'cron ?limit= junk falls back instead of reaching the CLI as NaN',
+      bad.length === 0,
+      bad.map(([i]) => `limit=${String(i)}`).join(' | '),
+    )
+  }
+
+  // The office hide list is membership only. A name with tasks but no profile
+  // (an assignee whose profile was deleted) used to be routed to the destructive
+  // kill action by a button that said "tanpa menghapus apa pun".
+  {
+    const problems: string[] = []
+    if (isHidden('carol')) problems.push('hidden set is not empty at start')
+    if (!hide('carol')) problems.push('hide() refused a fresh name')
+    if (!isHidden('carol')) problems.push('hide() did not take effect')
+    if (hide('carol')) problems.push('hide() reported a change twice')
+    if (!show('carol')) problems.push('show() refused a hidden name')
+    if (isHidden('carol')) problems.push('show() did not take effect')
+    if (show('carol')) problems.push('show() reported a change twice')
+    const visibleList = visible([{ name: 'a' }, { name: 'b' }])
+    if (visibleList.length !== 2) problems.push('visible() dropped a name that was never hidden')
+    hide('b')
+    if (visible([{ name: 'a' }, { name: 'b' }]).length !== 1) {
+      problems.push('visible() kept a hidden name')
+    }
+    show('b')
+    check('hide list is membership-only and reversible', problems.length === 0, problems.join(' | '))
+  }
+
+  // A real CLI smoke test, opted into explicitly so routine selftests never spend
+  // model tokens or create Hermes chat sessions by surprise.
+  if (process.env.HERMES_CHAT_SMOKE === '1') {
+    try {
+      const { reply } = await sendChatMessage('default', 'default', 'Balas hanya: OK')
+      check('Hermes chat CLI accepts the office request and returns a reply', reply.length > 0, reply.slice(0, 100))
+    } catch (e) {
+      check('Hermes chat CLI accepts the office request and returns a reply', false, (e as Error).message)
+    }
+  }
+
+  /* ------------------------------------------------- model catalogue (picker) -- */
+  // The picker's catalogue decides what a worker can be pinned to, so the dedupe
+  // and the "skip an entry with no endpoint" rule are load-bearing.
+  {
+    const problems: string[] = []
+    const got = providersToModels([
+      { name: 'alpha', base_url: 'http://a/v1', model: 'm1', models: { m2: {}, m1: {} } },
+      { name: 'beta', base_url: 'http://b/v1', models: { m2: {}, m3: {} } },
+      // no base_url: not reachable, must not appear
+      { name: 'ghost', models: { m9: {} } },
+      // no models map: the default model still has to be pickable
+      { name: 'gamma', base_url: 'http://c/v1', model: 'm4' },
+    ])
+    const keys = got.map((c) => c.model)
+    if (keys.length !== 4) problems.push(`expected 4 choices, got ${keys.length}: ${keys.join(',')}`)
+    if (new Set(keys).size !== keys.length) problems.push('duplicate model ids survived the dedupe')
+    if (keys.includes('m9')) problems.push('a provider with no base_url leaked into the catalogue')
+    if (!keys.includes('m4')) problems.push('a provider default model was dropped')
+    const m2 = got.find((c) => c.model === 'm2')
+    if (m2?.provider !== 'alpha') problems.push('dedupe kept the wrong provider for a shared model id')
+    check('model catalogue dedupes ids and skips unreachable providers', problems.length === 0, problems.join(' | '))
+  }
+
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {

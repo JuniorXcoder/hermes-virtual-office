@@ -153,7 +153,9 @@ Removed every explanatory blurb from the UI:
 - "Profil dibuat kosong (tanpa model/kunci) dan langsung masuk kantor. Tidak
   meng-clone kredensial profil lain." (Agent panel)
 - "Spawn dan kill mengubah keanggotaan kantor saja — tugas agent tidak dihapus…"
-  (Agent panel)
+  (Agent panel — and it was wrong: at the time that text was written, `kill`
+  deleted the profile and purged its tasks. The membership-only path is now the
+  separate `hide` action, and the panel says so.)
 - "format: 30m, every 2h, atau cron 0 9 * * *" (Cron panel — the placeholder
   already shows all three)
 - The 3D control legend ("seret = putar · scroll = zoom · …") and its CSS.
@@ -222,5 +224,52 @@ Collapsing a section should not change what the section is.
 
 The first attempt did exactly that: it rendered the live transcript twice, once as
 plain text and once as structured turns. Replaced with a single `children` usage.
+
+---
+
+## 26. Why a task sat in `ready` and nothing happened
+
+`ready` is not a state the board runs. It means "a worker may take this" — the
+dispatcher that actually spawns workers lives in the **gateway**, not in the office
+app. Two consequences the UI had no answer for:
+
+1. With the gateway down, every `ready` task sat there forever. The board looked
+   healthy, the diagnostics only said `stranded_in_ready`, and nothing in the office
+   explained why or offered a way out.
+2. Even with the gateway up, a click could not ask for "this one, now".
+
+So the task panel gained a **Jalankan** button (`POST /api/hermes/tasks/{id}` with
+`action: "run"`): it lifts a parked task (`blocked`/`scheduled`, which the
+dispatcher ignores entirely), then runs ONE dispatcher pass
+(`hermes kanban dispatch --max 1`). The spawned worker is detached and outlives the
+request, so the panel does not hold a connection open for a job that runs for
+minutes.
+
+`--max 1` matters: without it, one click on a six-task backlog spawns six workers
+at once.
+
+### The gateway has to be able to start
+
+A gateway that dies at startup takes the dispatcher with it, and the failure is
+invisible from the office. The concrete cause here: `WHATSAPP_ENABLED=true` with no
+paired session is a **non-retryable startup conflict** (`exit 78/CONFIG`), so the
+whole gateway refused to boot — cron never fired either. Commenting the flag out in
+`~/.hermes/.env` and setting `platforms.whatsapp.enabled: false` let it come up.
+`hermes gateway status` and `hermes cron status` are the two commands that show it.
+
+### Model per agent, and per task
+
+Two different scopes, both driven from the office:
+
+| Scope | Where | CLI | Applies to |
+|---|---|---|---|
+| Profile default | Agent panel dropdown | `hermes -p <name> config set model.default` | that profile's workers and chats, unless overridden |
+| One task | Task panel dropdown | `hermes kanban set-model <task> <model> --provider <p>` | the next spawn of that task |
+
+Both catalogues come from `hermes config get custom_providers --json` (masked), so
+the pickers cannot drift from `config.yaml`. The profile write stores the provider
+**qualified** (`custom:9router`) because that is what `hermes model` writes; a bare
+name is accepted by `kanban set-model` (its own resolver) but not by
+`config set model.provider`.
 
 ---

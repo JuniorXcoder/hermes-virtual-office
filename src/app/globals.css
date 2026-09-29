@@ -346,8 +346,25 @@ kbd {
   max-width: 80vw;
 }
 
+/* sprite-office: retro pixel scene; view is rendered from the shared 3D room plan */
+.vp-sprite-toggle button { padding-inline: 9px; }
+.vp-sprite-toggle button.on { background: #c9aa72; color: #30271c; font-weight: 700; }
+.vp-sprite-office { background: #18232a; }
+.vp-sprite-hud {
+  position: sticky; top: 58px; z-index: 4; display: flex; gap: 12px; align-items: center;
+  width: max-content; max-width: calc(100% - 24px); margin: 10px auto 8px; padding: 6px 10px;
+  color: #e8dfc4; background: #25343b; border: 2px solid #62736a; font: 700 11px ui-monospace, monospace;
+  image-rendering: pixelated;
+}
+.pixel-office { image-rendering: pixelated; margin: 0 auto 24px; border: 4px solid #596b61; box-shadow: 0 8px 0 #10191e; }
 @media (max-width: 720px) {
   .vp-panel { width: calc(100vw - 24px); }
+  .vp-topbar { align-items: flex-start; flex-direction: column; gap: 5px; padding: 7px 9px; }
+  .vp-topbar > div:last-child { width: 100%; flex-wrap: wrap; gap: 4px; }
+  .vp-topbar .vp-btn { padding: 6px 8px; font-size: 11px; }
+  .vp-topbar .vp-seg { margin-left: auto; }
+  .vp-topbar .vp-seg button { padding: 6px 8px; }
+  .vp-sprite-office { padding-top: 96px !important; }
 }
 
 /* ------------------------------------------------------- kanban wall board -- */
@@ -430,6 +447,9 @@ kbd {
 .vp-board-card[data-status='review'] { border-left-color: #f0b556; }
 .vp-board-card[data-status='blocked'] { border-left-color: #e5726f; }
 .vp-board-card[data-status='running'] { border-left-color: #58d2f0; }
+.vp-board-card[data-status='archived'] { opacity: 0.58; border-left-color: #87949e; }
+.vp-board-card[data-status='unknown'] { border-left-color: #b38be8; }
+.vp-board-card[data-status='unknown']::after { content: 'STATUS?'; }
 .vp-board-empty { font-size: 9px; color: #4d7f6f; text-align: center; padding: 3px 0; }
 
 /* ---------------------------------------------------- meeting picker rows -- */
@@ -464,18 +484,33 @@ kbd {
 /* -------------------------------------------------------- agent spawn rows -- */
 .vp-agent-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 9px;
+  /* Stacked, not side-by-side: the panel is ~320px, and one line for the name,
+     the model picker and three buttons truncated the agent name to "defa". */
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  padding: 8px 9px;
   border-radius: 7px;
   border: 1px solid #2f4a5a88;
   background: #16232bcc;
 }
 .vp-agent-row.off { opacity: 0.72; }
+.vp-agent-row > .flex { justify-content: flex-end; }
 .vp-agent-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .vp-agent-meta b { font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif; color: #e8f6f0; }
 .vp-agent-meta i { font: 400 10px/1.2 ui-monospace, monospace; color: #7f9dad; font-style: normal; }
+/* Model picker inside a roster row: full width, under the name. */
+.vp-agent-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vp-agent-model .vp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 5px 7px;
+}
 .vp-btn-danger {
   border-color: #7f3a3a !important;
   color: #ffbdbd !important;
