@@ -173,9 +173,14 @@ export async function getTask(id: string): Promise<Task | null> {
   const out = await kanban(['show', id, '--json']).catch(() => '')
   const start = out.search(/[[{]/)
   if (start < 0) return null
-  const parsed = JSON.parse(out.slice(start)) as RawTask | { task?: RawTask }
+  const parsed = JSON.parse(out.slice(start)) as RawTask | { task?: RawTask; parents?: unknown }
   const raw = 'task' in parsed && parsed.task ? parsed.task : (parsed as RawTask)
-  return raw?.id ? toTask(raw) : null
+  if (!raw?.id) return null
+  // `show --json` carries the dependency edges; `list --json` does not.
+  const parents = 'parents' in parsed && Array.isArray(parsed.parents)
+    ? parsed.parents.filter((p): p is string => typeof p === 'string')
+    : []
+  return { ...toTask(raw), parents }
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {

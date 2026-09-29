@@ -45,6 +45,7 @@ import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
 import { columnOf } from '../src/lib/office/board'
 import { wrapBubble } from '../src/components/SpriteOffice'
+import { filterModels } from '../src/components/ModelPicker'
 import { officeChatArgs, sendChatMessage } from '../src/lib/hermes/chat'
 import * as THREE from 'three'
 
@@ -782,6 +783,24 @@ void (async () => {
     // and it has to survive a token with no spaces in it (URLs, file paths).
     const wrapped = wrapBubble('halo dunia ini pesan yang cukup panjang untuk diuji pemenggalannya sekarang')
     const urlLines = wrapBubble('https://example.com/very/long/unbreakable/path/that/keeps/going/and/going')
+    // The model picker suggests only after 3 characters, and it must never hide how
+    // many rows it left out — a silently truncated list reads as "no such model".
+    const pool = [
+      { model: 'a', provider: 'p', label: 'kn/alpha · p' },
+      { model: 'b', provider: 'p', label: 'kn/beta · p' },
+      { model: 'c', provider: 'p', label: 'cfr/gamma · p' },
+    ]
+    const short = filterModels(pool, 'kn')
+    const typed = filterModels(pool, 'bet')
+    const none = filterModels(pool, 'zzz')
+    check(
+      'model picker suggests from 3 characters and reports the full match count',
+      short.shown.length === 3 && short.total === 3 &&
+        typed.shown.length === 1 && typed.shown[0].model === 'b' &&
+        none.shown.length === 0 && none.total === 0,
+      JSON.stringify({ short: short.total, typed: typed.shown.map((m) => m.model), none: none.total }),
+    )
+
     check(
       'speech balloon wraps to <=3 lines and hard-slices unbreakable tokens',
       wrapped.length <= 3 && wrapped.every((l) => l.length <= 26) &&

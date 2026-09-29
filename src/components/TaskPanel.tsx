@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
+import ModelPicker, { type ModelChoice } from './ModelPicker'
 import type { Task } from '@/types/hermes'
 import { fetchJson } from '@/lib/api'
 
@@ -15,8 +16,6 @@ type RunInfo = {
   error?: string | null
 }
 
-/** One row of the model picker (see /api/hermes/models). */
-type ModelChoice = { model: string; provider: string; label: string }
 
 /**
  * How an origin reads in the panel.
@@ -65,6 +64,8 @@ export default function TaskPanel() {
   const load = useOffice((s) => s.load)
 
   const [runs, setRuns] = useState<RunInfo[]>([])
+  /** The same task as `/tasks/{id}` reports it — `list` has no dependency edges. */
+  const [detail, setDetail] = useState<Task | null>(null)
   const [log, setLog] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -73,7 +74,8 @@ export default function TaskPanel() {
   const [models, setModels] = useState<ModelChoice[]>([])
   const [pick, setPick] = useState('')
 
-  const task: Task | undefined = tasks.find((t) => t.id === taskId)
+  // `detail` first: it is the only payload with `parents`.
+  const task: Task | undefined = detail?.id === taskId ? detail : tasks.find((t) => t.id === taskId)
   const agent = agents.find((a) => a.name === task?.assignee)
 
   useEffect(() => {
@@ -81,7 +83,7 @@ export default function TaskPanel() {
     let alive = true
     setLoading(true)
     setErr(null)
-    fetchJson<{ runs?: RunInfo[]; log?: string }>(`/api/hermes/tasks/${taskId}`, {
+    fetchJson<{ runs?: RunInfo[]; log?: string; task?: Task }>(`/api/hermes/tasks/${taskId}`, {
       cache: 'no-store',
     })
       .then((res) => {
@@ -92,6 +94,7 @@ export default function TaskPanel() {
         }
         setRuns(res.data?.runs || [])
         setLog(res.data?.log || '')
+        setDetail(res.data?.task || null)
       })
       .finally(() => alive && setLoading(false))
     return () => {
@@ -136,13 +139,14 @@ export default function TaskPanel() {
       if (!res.ok) throw new Error(res.error || 'aksi gagal')
       setNote(res.data?.note || (action === 'set-model' ? 'Model disimpan.' : 'Selesai.'))
       await load()
-      const fresh = await fetchJson<{ runs?: RunInfo[]; log?: string }>(
+      const fresh = await fetchJson<{ runs?: RunInfo[]; log?: string; task?: Task }>(
         `/api/hermes/tasks/${taskId}`,
         { cache: 'no-store' },
       )
       if (fresh.ok) {
         setRuns(fresh.data?.runs || [])
         setLog(fresh.data?.log || '')
+        setDetail(fresh.data?.task || null)
       }
     } catch (e) {
       setNote(`Gagal: ${(e as Error).message}`)
@@ -201,6 +205,37 @@ export default function TaskPanel() {
             )}
             <code className="vp-code-block">{task.id}</code>
 
+            {/* The board's own dependency edge. A parent parks its subtasks: the
+                dispatcher will not spawn them until every parent is `done`, and
+                "menunggu prasyarat" without the ids is unactionable. */}
+            {!!task.parents?.length && (
+              <>
+                <div className="vp-sub">PRASYARAT ({task.parents.length})</div>
+                <div className="flex flex-col gap-1">
+                  {task.parents.map((id) => {
+                    const parent = tasks.find((t) => t.id === id)
+                    const state = parent?.status
+                    const clear = state === 'done' || state === 'archived'
+                    return (
+                      <button
+                        key={id}
+                        className="vp-run text-left"
+                        onClick={() => openTask(id)}
+                        title="Buka tugas ini"
+                      >
+                        <b className={clear ? '' : 'vp-warn'}>{clear ? 'selesai' : STATUS_LABEL[state || ''] || state || 'tidak ada di board'}</b>
+                        <span className="vp-muted"> · {parent?.title || id}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="vp-muted">
+                  Tugas ini baru boleh jalan setelah semua prasyarat di atas selesai. Tombol
+                  Jalankan pada tugas ini tidak akan men-spawn worker selama masih ada yang belum selesai.
+                </div>
+              </>
+            )}
+
             {/* A `ready` task is not running on its own: the dispatcher that spawns
                 workers lives in the gateway. Without this button a task just sits
                 there whenever the gateway is down. It lifts a parked task first,
@@ -223,19 +258,14 @@ export default function TaskPanel() {
             )}
 
             <div className="vp-sub">MODEL AGENT UNTUK TUGAS INI</div>
-            <select
-              className="vp-input"
+            <ModelPicker
               value={pick}
-              onChange={(e) => setPick(e.target.value)}
+              onChange={setPick}
+              models={models}
+              emptyLabel={`bawaan profil${agent ? ` (${agent.name})` : ''}`}
               disabled={busy}
-            >
-              <option value="">bawaan profil{agent ? ` (${agent.name})` : ''}</option>
-              {models.map((m) => (
-                <option key={`${m.provider}/${m.model}`} value={m.model}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+              title="Berlaku pada spawn worker berikutnya"
+            />
             <div className="flex gap-2">
               <button
                 className="vp-btn"

@@ -55,6 +55,15 @@ export type Task = {
   model?: string | null
   /** Provider that owns `model`, when one was pinned with it. */
   provider?: string | null
+  /**
+   * Ids of the tasks this one waits for, from `kanban show`.
+   *
+   * The board has a real dependency edge: `auto-decomposer` splits a task into
+   * children and parks the parent until every child is `done`. Without the ids in
+   * the payload the UI can only say "waiting for prerequisites", which names
+   * nothing — the one thing the reader needs to act.
+   */
+  parents?: string[]
 }
 
 /**

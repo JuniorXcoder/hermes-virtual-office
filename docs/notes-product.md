@@ -297,3 +297,27 @@ spaces in it (a URL, an absolute path), which would otherwise set the balloon's 
 to the whole token.
 
 ---
+
+## 28. Two questions a picker and a prerequisite list have to answer
+
+**"Where is my model?"** With ~400 models across five providers, a dropdown that only
+scrolls is a lookup table, not a picker. The native `<select>` also had a defect that
+no CSS could fix: its popup is browser chrome, drawn dark on dark against the panel.
+So the pickers are now `ModelPicker` — an input with its own list, light background
+and black text, filtering from the third character. Below three characters it shows
+everything (capped at 80 rows) because a one-letter query matches half the catalogue
+and hiding that would look like the list is broken. The row always states the true
+match count, so a capped list never reads as "this model does not exist".
+
+**"Waiting for what, exactly?"** The Run button answered "Tugas masih menunggu
+subtugas prasyaratnya selesai", which is a sentence that raises the question it
+claims to answer. The prerequisites exist: `auto-decomposer` files a parent task and
+parks it until every child is `done`. They were simply invisible, because
+`kanban list --json` — the only call the board makes — carries no dependency edge;
+`parents` appears only in `kanban show --json`. So `getTask()` now returns them, the
+panel renders `PRASYARAT (n)` with each parent's status and title (clickable, amber
+while unfinished), and the Run note names the ids. One `listTasks()` maps their
+statuses rather than one `show` per parent: six CLI spawns to answer a status
+question turns a 3-second button into a 20-second one.
+
+---

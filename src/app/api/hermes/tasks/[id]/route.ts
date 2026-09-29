@@ -4,6 +4,7 @@ import {
   dispatchTask,
   getTask,
   listRuns,
+  listTasks,
   promoteTask,
   releaseWorker,
   setTaskModel,
@@ -106,16 +107,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         })
       }
       const after = await getTask(id)
+      // Name the prerequisites. "menunggu prasyarat" without the ids leaves the
+      // reader with nothing to open, which is exactly the question it raises.
+      const waiting = after?.parents ?? []
+      // One board read, not one `show` per parent: the board already carries every
+      // status, and six CLI spawns to answer a status question is the kind of thing
+      // that turns a 3 s button into a 20 s one.
+      const board = new Map((await listTasks()).map((row) => [row.id, row.status]))
+      const open = waiting.filter((pid) => !['done', 'archived'].includes(board.get(pid) ?? ''))
+      const list = open.length ? open : waiting
       return NextResponse.json({
         success: true,
         spawned,
         mine,
+        parents: after?.parents ?? [],
         note:
-          after?.status === 'todo'
-            ? 'Tugas masih menunggu subtugas prasyaratnya selesai.'
-            : spawned.length
-              ? 'Dispatcher menjalankan tugas lain lebih dulu; coba lagi.'
-              : 'Belum ada yang bisa dijalankan sekarang.',
+          after?.status === 'todo' && list.length
+            ? `Tugas ini diparkir menunggu ${list.length} subtugas selesai dulu: ${list.join(', ')}.`
+            : after?.status === 'todo'
+              ? 'Tugas masih menunggu subtugas prasyaratnya selesai.'
+              : spawned.length
+                ? 'Dispatcher menjalankan tugas lain lebih dulu; coba lagi.'
+                : 'Belum ada yang bisa dijalankan sekarang.',
       })
     }
     if (action === 'promote') {

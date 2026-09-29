@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { fetchJson } from '@/lib/api'
+import ModelPicker, { type ModelChoice } from './ModelPicker'
 
 /**
  * Spawn / hide / kill control.
@@ -24,7 +25,6 @@ type Row = {
   model?: string | null
 }
 
-type ModelChoice = { model: string; provider: string; label: string }
 
 export default function AgentSpawnPanel({
   open,
@@ -239,20 +239,14 @@ export default function AgentSpawnPanel({
                   applies to every future spawn — not just one task. */}
               {r.profile && (
                 <div className="vp-agent-model">
-                  <select
-                    className="vp-input"
+                  <ModelPicker
                     value={pick[r.name] ?? r.model ?? ''}
+                    onChange={(model) => setPick((p) => ({ ...p, [r.name]: model }))}
+                    models={models}
                     disabled={busy === r.name}
-                    onChange={(e) => setPick((p) => ({ ...p, [r.name]: e.target.value }))}
+                    emptyLabel="bawaan Hermes"
                     title="Model bawaan profil ini"
-                  >
-                    <option value="">bawaan Hermes</option>
-                    {models.map((m) => (
-                      <option key={`${m.provider}/${m.model}`} value={m.model}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <button
                     className="vp-btn"
                     disabled={busy === r.name || (pick[r.name] ?? r.model ?? '') === (r.model ?? '')}

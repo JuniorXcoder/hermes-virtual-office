@@ -152,17 +152,25 @@ other items are still created.
 
 ## 4. `GET /api/hermes/tasks/{id}`
 
-The **screen peeker**: what a clicked monitor shows.
+The **screen peeker**: what a clicked monitor shows, plus the task's own row.
 
 ```json
 {
   "taskId": "t_52abe1e8",
+  "task": { "id": "t_52abe1e8", "status": "todo", "parents": ["t_0c35ea2b", "t_43e2205b"] },
   "runs": [
     { "id": "r_1", "status": "completed", "startedAt": "…", "finishedAt": "…", "outcome": "ok" }
   ],
   "log": "…raw CLI log tail…"
 }
 ```
+
+`task.parents` lists the tasks this one waits for. It comes from `kanban show
+--json`, not `kanban list --json` — the board rows carry no dependency edge at
+all, so a task parked by the auto-decomposer looks identical to a task nobody
+picked up. The panel renders them as `PRASYARAT (n)` with each parent's status,
+so "waiting for prerequisites" names the prerequisites instead of raising the
+question.
 
 `runs` and `log` are fetched in parallel and individually tolerated: a missing run
 history or an unreadable log yields an empty value rather than failing the request.
@@ -694,6 +702,13 @@ what a worker can be spawned with — a hardcoded dropdown would drift from
 - A provider with no `base_url` is skipped (unreachable), and a provider with no
   `models` map still contributes its default `model` so it can be picked at all.
 - Sorted by label. Memoised for the same 3 s as every other CLI read.
+
+The two pickers are the `ModelPicker` component, not a `<select>`. A native select's
+popup is browser chrome: on a dark panel its option list renders dark-on-dark and
+cannot be styled, and with ~400 models there is no way to reach one by typing. The
+component draws its own list (light background, black text) and filters once the
+query is 3 characters — below that it shows everything, capped at 80 rows, and always
+reports the true match count so a truncated list never reads as "no such model".
 
 ---
 

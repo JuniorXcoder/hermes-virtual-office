@@ -136,6 +136,9 @@ kbd {
 }
 .vp-muted { color: var(--muted); font-size: 12.5px; }
 .vp-err { color: var(--red); font-size: 12.5px; }
+/* A prerequisite that is not finished yet — the one thing on the panel that must
+   not read as neutral grey. */
+.vp-warn { color: var(--amber, #e0b95f); }
 .vp-note {
   background: #1b2a22;
   border: 1px solid #2f5340;
@@ -193,6 +196,19 @@ kbd {
   padding: 2px 0 2px 8px;
   font-size: 12px;
 }
+/* The prerequisite rows are buttons (they open the parent task), so they need the
+   button reset without losing the run-row look. */
+button.vp-run {
+  width: 100%;
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--line);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
 
 .vp-chip-btn {
   background: #16212a;
@@ -511,6 +527,44 @@ kbd {
   font-size: 11px;
   padding: 5px 7px;
 }
+/* ------------------------------------------------------- model picker -- */
+/* Light menu on purpose: the list is long, and dark-on-dark rows at 11px read as
+   a smudge. Black text on a near-white panel is the only version that is legible
+   at this size, and it is the one thing a native <select> popup could not do. */
+.vp-model { position: relative; flex: 1 1 auto; min-width: 0; }
+.vp-model-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow: auto;
+  background: #f7f6f2;
+  border: 1px solid #b9b4a8;
+  border-radius: 8px;
+  box-shadow: 0 10px 26px #0007;
+  padding: 4px;
+}
+.vp-model-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: #14161a;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vp-model-item[data-active='true'] { background: #1f6f4f; color: #fff; }
+.vp-model-empty { color: #6b6558; font-size: 11px; padding: 5px 7px; }
+
 .vp-btn-danger {
   border-color: #7f3a3a !important;
   color: #ffbdbd !important;
