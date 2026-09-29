@@ -273,3 +273,27 @@ name is accepted by `kanban set-model` (its own resolver) but not by
 `config set model.provider`.
 
 ---
+
+## 27. The sprite office at night, and a balloon that says something
+
+Two things the sprite view was missing next to 3D, both fixed without a second
+rendering path:
+
+**Day/night.** The 3D scene swaps materials because it has them; the sprite room is
+a cached bitmap of hand-picked retro colours, and re-picking every one of them for a
+dusk that lasts half the day is a lot of palette for one boolean. One translucent
+fill over the finished frame gets the same read. The boundary comes from
+`paletteFor(hour)` — the same function 3D uses — so switching views at 18:05 cannot
+change the time of day. Measured: mean frame brightness 81.5 (day) → 67.6 (night),
+with the clock shifted in the page to force 20:00 WIB.
+
+**Speech balloons.** The 3D view already shows the speaker's actual line; the sprite
+view only blinked a mouth, which reads as decoration. The current speaker now gets a
+retro balloon with the text of its latest turn. Wrapping is `wrapBubble()`, exported
+and pinned by a self-test because canvas has no text layout: a full meeting turn is a
+paragraph, and the only thing between that paragraph and a balloon covering the room
+is greedy wrapping capped at 3 lines × 26 chars. It also hard-slices a token with no
+spaces in it (a URL, an absolute path), which would otherwise set the balloon's width
+to the whole token.
+
+---

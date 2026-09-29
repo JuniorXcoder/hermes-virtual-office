@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { Agent, Meeting, Task } from '@/types/hermes'
 import { useOffice } from '@/lib/store'
 import { columnOf } from '@/lib/office/board'
+import { NIGHT_PALETTE, paletteFor } from '@/lib/office/layout'
 import {
   BOOK_NOOK, CONFERENCE, CONFERENCE_CHAIRS, DESKS, DOOR, FLOOR, GARDEN, HALF_D, HALF_W,
   IDLE_SPOTS, LOUNGE, NORTH_WINDOWS, PANTRY, RECEPTION, ROOM_DOORS, ROOMS,
@@ -42,6 +43,17 @@ const C = {
   rug: '#6f8f6b', rug2: '#5f7fa0', leaf: '#4f8149', leaf2: '#6da05c', pot: '#a86a4c',
   cream: '#efe6cd', sofa: '#4f7ba3', board: '#2f5a45', glass: '#8fc3cc',
 }
+
+/**
+ * Night is a wash over the finished frame, not a second set of colours.
+ *
+ * The 3D view swaps materials because it has them; the sprite room is a cached
+ * bitmap of hand-picked retro colours, and re-picking all of them for a dusk that
+ * lasts half the day is a lot of palette for one boolean. One translucent fill
+ * gets the same read — and the boundary is `paletteFor`, so both views agree on
+ * when night starts.
+ */
+const NIGHT_WASH = 'rgba(26,38,66,0.34)'
 
 function poly(ctx: CanvasRenderingContext2D, pts: Pt[], fill: string) {
   ctx.fillStyle = fill
@@ -392,15 +404,91 @@ function person(
   }
 }
 
+/**
+ * Greedy word wrap for the balloon, capped at `maxLines`.
+ *
+ * Pure and exported so the self-test can pin the edge cases: canvas has no text
+ * layout, so the only thing standing between a meeting turn and a balloon that
+ * covers the whole room is this function.
+ */
+export function wrapBubble(text: string, max = 26, maxLines = 3): string[] {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  const lines: string[] = []
+  let line = ''
+  let truncated = false
+  for (const word of words) {
+    // A single unbreakable token (a URL, a path) would otherwise make the balloon
+    // as wide as the word: hard-slice it before wrapping.
+    if (word.length > max) {
+      if (line) { lines.push(line); line = '' }
+      for (let i = 0; i < word.length && lines.length < maxLines; i += max) lines.push(word.slice(i, i + max))
+      truncated = lines.length === maxLines
+      continue
+    }
+    const next = line ? `${line} ${word}` : word
+    if (next.length > max && line) {
+      lines.push(line)
+      line = word
+      if (lines.length === maxLines) {
+        truncated = true
+        break
+      }
+    } else {
+      line = next
+    }
+  }
+  if (truncated) lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, max - 1)}…`
+  else if (line) lines.push(line)
+  return lines
+}
+
+/**
+ * Retro speech balloon carrying the speaker's actual line.
+ *
+ * The 3D view shows the text; a 2D office where the speaker only blinks reads as
+ * decoration. Capped at three lines — a full meeting turn is a paragraph and
+ * would cover the room.
+ */
+function speechBubble(ctx: CanvasRenderingContext2D, cx: number, cy: number, text: string, t: number) {
+  const lines = wrapBubble(text)
+  if (!lines.length) return
+
+  ctx.save()
+  ctx.font = '8px ui-monospace, monospace'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  const wpx = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 9
+  const hpx = lines.length * 10 + 7
+  // A gentle float so a long speech does not look frozen; clamped so it never
+  // drifts off the top of the canvas.
+  const bx = cx + 10
+  const by = Math.max(4, cy - 40 - hpx + Math.round(Math.sin(t * 2) * 1.5))
+  ctx.fillStyle = '#fff8e2'
+  ctx.fillRect(bx, by, wpx, hpx)
+  ctx.fillRect(bx + 3, by + hpx, 4, 4)
+  ctx.fillStyle = '#8d8265'
+  ctx.fillRect(bx, by, wpx, 1)
+  ctx.fillRect(bx, by + hpx - 1, wpx, 1)
+  ctx.fillRect(bx, by, 1, hpx)
+  ctx.fillRect(bx + wpx - 1, by, 1, hpx)
+  ctx.fillStyle = '#4a4436'
+  lines.forEach((l, i) => ctx.fillText(l, bx + 5, by + 4 + i * 10))
+  ctx.restore()
+}
+
 type CardRect = { x: number; y: number; w: number; h: number; id: string }
 
 /** Frame pass: blit the cached room, then the two things that actually change. */
 function drawFrame(
   ctx: CanvasRenderingContext2D, room: HTMLCanvasElement,
   agents: Agent[], tasks: Task[], meeting: Meeting | null, selected: string | null,
-  t: number, cards: CardRect[], motions: Map<string, Motion>, dt: number,
+  t: number, cards: CardRect[], motions: Map<string, Motion>, dt: number, night: boolean,
 ) {
   ctx.drawImage(room, 0, 0)
+  if (night) {
+    ctx.fillStyle = NIGHT_WASH
+    ctx.fillRect(0, 0, W, H)
+  }
   cards.length = 0
 
   const face = -HALF_D + WALL_T / 2
@@ -441,6 +529,11 @@ function drawFrame(
 
   stepMotions(agents, meeting, dt, motions)
 
+  // The current speaker's latest line, looked up once for the whole frame.
+  const spoken = meeting?.state === 'running' && meeting.currentSpeaker
+    ? [...meeting.turns].reverse().find((turn) => turn.speaker === meeting.currentSpeaker)?.text ?? ''
+    : ''
+
   // ponytail: characters draw over the cached room rather than interleaving with it;
   // split-sort against the walls if a sprite ever needs to stand behind a partition.
   const placed = agents
@@ -455,6 +548,7 @@ function drawFrame(
     const talking = meeting?.state === 'running' && meeting.currentSpeaker === a.name
     person(ctx, a, m.x, m.z, t, seated, selected === a.name, talking, m.dir, m.moving)
     const [cx, cy] = at(m.x, m.z)
+    if (talking && spoken) speechBubble(ctx, cx, cy, spoken, t)
     const label = a.displayName.slice(0, 11)
     const width = Math.max(34, ctx.measureText(label).width + 10)
     ctx.fillStyle = '#1d2a32'
@@ -489,6 +583,13 @@ export default function SpriteOffice({ onSelect }: { onSelect: (name: string) =>
     let raf = 0
     let last = 0
 
+    // Same clock and same timezone as the 3D scene, so switching views at 18:05
+    // does not change the time of day. Re-checked once a minute, not per frame.
+    const hourNow = () =>
+      Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' }).format(new Date()))
+    let hour = hourNow()
+    let lastHourCheck = performance.now()
+
     const frame = (now: number) => {
       if (document.hidden) {
         raf = 0
@@ -498,8 +599,12 @@ export default function SpriteOffice({ onSelect }: { onSelect: (name: string) =>
       const step = now - last
       if (step < 1000 / 12) return
       last = now
+      if (now - lastHourCheck > 60_000) {
+        lastHourCheck = now
+        hour = hourNow()
+      }
       // Clamped so a background tab that resumes does not teleport everyone.
-      drawFrame(ctx, room, data.current.agents, data.current.tasks, data.current.meeting, data.current.selected, now / 1000, cards, motions, Math.min(step / 1000, 0.25))
+      drawFrame(ctx, room, data.current.agents, data.current.tasks, data.current.meeting, data.current.selected, now / 1000, cards, motions, Math.min(step / 1000, 0.25), paletteFor(hour) === NIGHT_PALETTE)
     }
     raf = requestAnimationFrame(frame)
 

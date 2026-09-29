@@ -44,6 +44,7 @@ import { originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/
 import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
 import { columnOf } from '../src/lib/office/board'
+import { wrapBubble } from '../src/components/SpriteOffice'
 import { officeChatArgs, sendChatMessage } from '../src/lib/hermes/chat'
 import * as THREE from 'three'
 
@@ -776,6 +777,17 @@ void (async () => {
     const m2 = got.find((c) => c.model === 'm2')
     if (m2?.provider !== 'alpha') problems.push('dedupe kept the wrong provider for a shared model id')
     check('model catalogue dedupes ids and skips unreachable providers', problems.length === 0, problems.join(' | '))
+
+    // The balloon is the only thing keeping a meeting turn from covering the room,
+    // and it has to survive a token with no spaces in it (URLs, file paths).
+    const wrapped = wrapBubble('halo dunia ini pesan yang cukup panjang untuk diuji pemenggalannya sekarang')
+    const urlLines = wrapBubble('https://example.com/very/long/unbreakable/path/that/keeps/going/and/going')
+    check(
+      'speech balloon wraps to <=3 lines and hard-slices unbreakable tokens',
+      wrapped.length <= 3 && wrapped.every((l) => l.length <= 26) &&
+        urlLines.length <= 3 && urlLines.every((l) => l.length <= 26),
+      JSON.stringify({ wrapped, urlLines }),
+    )
   }
 
   /* ------------------------------------------------------------- result -- */

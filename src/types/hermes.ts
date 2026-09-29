@@ -158,15 +158,6 @@ export type Candidate = {
   body?: string
 }
 
-/** A single line of live agent telemetry, shown in the screen-peeker modal. */
-export type AgentActivity = {
-  agent: string
-  taskId?: string | null
-  kind: 'command' | 'tool' | 'message' | 'diff'
-  detail: string
-  ts: number
-}
-
 export type NewTaskInput = {
   title: string
   assignee: string
@@ -174,26 +165,4 @@ export type NewTaskInput = {
   priority?: number
   /** Where this task came from; written to `created_by` as a marker. */
   origin?: TaskOrigin
-}
-
-/**
- * The single seam between the office UI and a Hermes installation.
- * Add a new driver by implementing this; nothing else has to change.
- */
-export interface HermesDriver {
-  readonly kind: 'api' | 'mock'
-  listTasks(): Promise<Task[]>
-  listAgents(): Promise<Agent[]>
-  createTask(input: NewTaskInput): Promise<Task>
-  steerTask(taskId: string, message: string): Promise<boolean>
-  cancelTask(taskId: string): Promise<boolean>
-  /** Recent output for a running task, newest last. */
-  taskActivity(taskId: string, limit?: number): Promise<AgentActivity[]>
-  startMeeting(input: {
-    topic: string
-    participants: string[]
-    moderator?: string
-    mode?: MeetingMode
-  }): Promise<Meeting>
-  getMeeting(id: string): Promise<Meeting | null>
 }
