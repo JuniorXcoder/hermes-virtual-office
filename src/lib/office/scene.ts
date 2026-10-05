@@ -5,7 +5,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
@@ -118,6 +118,53 @@ function skyGradientTexture(stops = ['#9dc4e8', '#c6dcef', '#e2edf6', '#eef4f8']
   return t
 }
 
+/**
+ * Environment map KONTRAS untuk pantulan realistis.
+ *
+ * RoomEnvironment adalah kotak abu yang seragam: dipantulkan oleh marmer/kaca
+ * hasilnya abu rata — secara visual identik dengan permukaan matte, itulah
+ * sebabnya lantai tetap terlihat kartun meski roughness-nya 0.08.
+ *
+ * Peta ini menaruh langit terang di atas, horizon hangat, lantai gelap di
+ * bawah, dan beberapa panel lampu yang SANGAT terang. Panel-panel itulah yang
+ * muncul sebagai highlight memanjang di permukaan glossy.
+ */
+function envContrastTexture(): THREE.Texture {
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 256
+  const g = c.getContext('2d')!
+  // langit -> horizon -> lantai
+  const grad = g.createLinearGradient(0, 0, 0, 256)
+  grad.addColorStop(0, '#dfefff') // zenith terang
+  grad.addColorStop(0.42, '#bcd6ea')
+  grad.addColorStop(0.5, '#f4e6cf') // horizon hangat
+  grad.addColorStop(0.62, '#6a6152')
+  grad.addColorStop(1, '#241f1a') // lantai gelap
+  g.fillStyle = grad
+  g.fillRect(0, 0, 512, 256)
+  // panel lampu sangat terang (sumber highlight)
+  const panels: [number, number, number, number][] = [
+    [40, 30, 70, 26],
+    [190, 22, 90, 30],
+    [360, 36, 64, 24],
+    [110, 62, 48, 18],
+    [300, 70, 56, 20],
+  ]
+  for (const [x, y, w, h] of panels) {
+    const rg = g.createRadialGradient(x + w / 2, y + h / 2, 1, x + w / 2, y + h / 2, Math.max(w, h))
+    rg.addColorStop(0, '#ffffff')
+    rg.addColorStop(0.5, 'rgba(255,246,224,0.85)')
+    rg.addColorStop(1, 'rgba(255,246,224,0)')
+    g.fillStyle = rg
+    g.fillRect(x - w, y - h, w * 3, h * 3)
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.mapping = THREE.EquirectangularReflectionMapping
+  return t
+}
+
 export function createScene(
   canvas: HTMLCanvasElement,
   labelHost: HTMLElement,
@@ -140,7 +187,9 @@ export function createScene(
   // made the building look like painted cardboard. The room environment is
   // generated, so it costs no asset files.
   const pmrem = new THREE.PMREMGenerator(renderer)
-  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04)
+  // KONTRAS, bukan RoomEnvironment: env seragam membuat glossy tampak matte.
+  const envRT = pmrem.fromEquirectangular(envContrastTexture())
+  envRT.texture.mapping = THREE.EquirectangularReflectionMapping
 
   const labelRenderer = new CSS2DRenderer({ element: labelHost })
   labelRenderer.domElement.style.position = 'absolute'
