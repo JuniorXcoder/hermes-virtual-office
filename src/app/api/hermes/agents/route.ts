@@ -13,6 +13,8 @@ import {
 } from '@/lib/hermes/kanban'
 import { hiddenNames, isHidden, hide, show } from '@/lib/hermes/office-membership'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
+import type { AgentDivision, AgentRole } from '@/types/hermes'
+import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,6 +49,8 @@ export async function GET() {
         profiles.includes(name) ? (await profileModel(name)).model : null,
       ),
     )
+    // role/division/soul dari listAgents (baca SOUL.md + fallback keyword).
+    const agentMeta = new Map(agents.map((a) => [a.name, a]))
     return NextResponse.json({
       available: roster.map((name, i) => ({
         name,
@@ -56,6 +60,10 @@ export async function GET() {
         inOffice: inOffice.has(name),
         /** The profile's default model, when it has one. */
         model: models[i],
+        /** Role + divisi (dari SOUL.md, fallback keyword nama). */
+        role: agentMeta.get(name)?.role ?? null,
+        division: agentMeta.get(name)?.division ?? null,
+        soulExists: agentMeta.get(name)?.soulExists ?? false,
         /** Why it is absent, when it is. */
         reason: inOffice.has(name)
           ? null
@@ -136,15 +144,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Creating a profile is a different operation: it makes the profile, walks the
+  // Creating a profile is a different operation: it makes the profile, writes
+  // its SOUL.md (1 prompt dari form, atau template per role), walks the
   // agent in, and returns a distinct shape so the UI can report what happened.
   if (action === 'create') {
+    const role = (typeof body?.role === 'string' && body.role.trim() ? body.role.trim() : 'backend') as AgentRole
+    const division = (
+      typeof body?.division === 'string' && body.division.trim() ? body.division.trim() : undefined
+    ) as AgentDivision | undefined
+    const soul = typeof body?.soul === 'string' ? body.soul : ''
     try {
-      const created = await createProfile(name, String(body?.description || ''))
+      const created = await createProfile(name, {
+        description: String(body?.description || ''),
+        role,
+        division,
+        soul,
+      })
       // A brand-new profile carries no kill-list entry, so it appears on the next
       // poll — no need to touch membership.
       return NextResponse.json(
-        { success: true, action, name: created.name, description: created.description },
+        {
+          success: true,
+          action,
+          name: created.name,
+          description: created.description,
+          role: created.role,
+          division: created.division,
+          /** Preview soul yang tertulis (template atau prompt Jun). */
+          soulPreview: soul.trim() || soulFor(created.role, created.name, created.division),
+        },
         { status: 201 },
       )
     } catch (err) {

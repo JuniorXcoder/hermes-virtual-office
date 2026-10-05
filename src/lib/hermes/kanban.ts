@@ -11,11 +11,12 @@
  * strips those markers so the office UI can drive the board from a web request.
  */
 import { execFile } from 'node:child_process'
-import { access, readFile, readdir } from 'node:fs/promises'
+import { access, readFile, readdir, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { Agent, AgentRole, NewTaskInput, Task, TaskOrigin, TaskStatus } from '@/types/hermes'
+import type { Agent, NewTaskInput, Task, TaskOrigin, TaskStatus, AgentDivision, AgentRole } from '@/types/hermes'
+import { parseSoulMarker, soulFor } from './soul'
 
 const run = promisify(execFile)
 
@@ -458,12 +459,42 @@ type RawAssignee = { name: string; on_disk?: boolean; counts?: Record<string, nu
  * and is included in the office roster like the Hermes assignee list.
  */
 const ROLE_KEYWORDS: [RegExp, AgentRole][] = [
+  [/ceo|direktur|boss|chief/i, 'ceo'],
   [/qa|test|verif/i, 'qa'],
   [/research|riset|analyst/i, 'researcher'],
   [/ops|devops|infra|deploy|sre/i, 'devops'],
+  [/affiliat/i, 'affiliator'],
+  [/market|promo|growth/i, 'marketing'],
+  [/seo|keyword|ranking/i, 'seo'],
+  [/content|konten|creator|video|script|tulis/i, 'content'],
   [/front|ui|web|design/i, 'frontend'],
   [/back|api|server|data|db/i, 'backend'],
 ]
+
+/** Role → divisi. CEO/orchestrator = exec, tech roles = tech, dst. */
+const ROLE_DIVISION: Record<AgentRole, AgentDivision> = {
+  ceo: 'exec',
+  orchestrator: 'exec',
+  backend: 'tech',
+  frontend: 'tech',
+  qa: 'tech',
+  researcher: 'tech',
+  devops: 'tech',
+  marketing: 'growth',
+  seo: 'growth',
+  content: 'content',
+  affiliator: 'content',
+}
+
+/** Divisi untuk sebuah role. */
+export function divisionFor(role: AgentRole): AgentDivision {
+  return ROLE_DIVISION[role] ?? 'tech'
+}
+
+/** Divisi untuk sebuah nama profil (via role keyword). */
+export function divisionForName(name: string): AgentDivision {
+  return divisionFor(roleFor(name))
+}
 
 export function roleFor(name: string): AgentRole {
   if (name === 'default') return 'orchestrator'
@@ -554,10 +585,20 @@ const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
  * `--no-alias` skips wrapper-script creation; the office drives the profile
  * through the kanban CLI, which does not need a shell alias.
  */
+/**
+ * Create a profile — with soul.
+ *
+ * `soul`: 1 prompt teks bebas dari form create. Ditulis utuh sebagai SOUL.md
+ * profil tersebut (jadi identitas + role agent itu). Kosong → pakai template
+ * soulFor(role, division).
+ *
+ * `role`/`division`: dicatat di marker SOUL.md + `hermes profile describe`,
+ * supaya route agents GET bisa baca tanpa menebak dari nama.
+ */
 export async function createProfile(
   name: string,
-  description?: string,
-): Promise<{ name: string; description: string }> {
+  opts?: { description?: string; role?: AgentRole; division?: AgentDivision; soul?: string },
+): Promise<{ name: string; description: string; role: AgentRole; division: AgentDivision }> {
   const clean = name.trim().toLowerCase()
   if (!PROFILE_NAME.test(clean)) {
     throw new Error(
@@ -568,7 +609,9 @@ export async function createProfile(
   if (existing.includes(clean)) {
     throw new Error(`profil "${clean}" sudah ada`)
   }
-  const desc = (description || `Office worker ${clean}`).trim().slice(0, 200)
+  const role: AgentRole = opts?.role ?? roleFor(clean)
+  const division: AgentDivision = opts?.division ?? divisionFor(role)
+  const desc = (opts?.description || `${clean} — ${role}, divisi ${division}`).trim().slice(0, 200)
   const args = ['profile', 'create', clean, '--no-alias', '--description', desc]
   try {
     await run(HERMES_BIN, args, { env: cleanEnv(), timeout: 60_000, maxBuffer: 8 * 1024 * 1024 })
@@ -579,7 +622,16 @@ export async function createProfile(
     }
     throw new Error(`hermes profile create ${clean} failed: ${(e.stderr || e.message || '').trim()}`)
   }
-  return { name: clean, description: desc }
+  // Soul: 1 prompt dari form → SOUL.md profil. Kosong → template per role.
+  const soulText = (opts?.soul || '').trim() || soulFor(role, clean, division)
+  const soulWithMarker = /office:\s*role=/i.test(soulText)
+    ? soulText
+    : `${soulText}\n<!-- office: role=${role} division=${division} -->`
+  const dir = path.join(hermesHome(), 'profiles', clean)
+  await writeFile(path.join(dir, 'SOUL.md'), soulWithMarker, 'utf8')
+  // describe: catat role/divisi supaya terbaca tanpa buka SOUL.md
+  await hermesWrite(['profile', 'describe', clean, `${desc} [${role}/${division}]`]).catch(() => {})
+  return { name: clean, description: desc, role, division }
 }
 
 /**
@@ -668,6 +720,20 @@ export async function deleteProfile(name: string): Promise<void> {
   }
 }
 
+/**
+ * Baca SOUL.md satu profil. Null bila tidak ada (profil lama / default).
+ * `default` tinggal di root Hermes, bukan di profiles/.
+ */
+async function readSoul(name: string): Promise<string | null> {
+  const home = hermesHome()
+  const p = name === 'default' ? path.join(home, 'SOUL.md') : path.join(home, 'profiles', name, 'SOUL.md')
+  try {
+    return await readFile(p, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: string; onDisk: boolean; total: number }[]): Promise<Agent[]> {
   const raw = prefetchedAssignees ?? (await listAssignees())
   // Profiles AND assignees. Reading only `assignees` meant a freshly created
@@ -681,14 +747,39 @@ export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: st
     if (t.status === 'running' || t.status === 'review') active.set(t.assignee, t)
   }
 
-  // Working agents first so they hold the desks nearest the Kanban board.
-  const ordered = [...names].sort((a, b) => {
-    const av = active.has(a) ? 0 : 1
-    const bv = active.has(b) ? 0 : 1
-    return av - bv || a.localeCompare(b)
+  // Soul per agent: baca marker office (role/divisi). Fallback ke keyword nama.
+  const souls = await Promise.all(names.map((n) => readSoul(n)))
+  const meta = names.map((name, i) => {
+    const soul = souls[i]
+    const parsed = soul ? parseSoulMarker(soul) : {}
+    const role = parsed.role ?? roleFor(name)
+    const division = parsed.division ?? divisionFor(role)
+    return { name, soul, role, division }
   })
 
-  return names.map((name) => {
+  // Meja PER DIVISI: working dulu, lalu abjad. Tiap divisi punya pool meja
+  // sendiri (lihat desksForDivision); yang tak kebagian → deskIndex null
+  // (standby di lounge, tidak error).
+  const { desksForDivision } = await import('../office/layout')
+  const taken = new Map<number, string>()
+  const seatOf = new Map<string, number | null>()
+  for (const div of ['exec', 'tech', 'growth', 'content'] as AgentDivision[]) {
+    const pool = desksForDivision(div).map((d) => d.index)
+    const members = meta
+      .filter((m) => m.division === div)
+      .sort((a, b) => {
+        const av = active.has(a.name) ? 0 : 1
+        const bv = active.has(b.name) ? 0 : 1
+        return av - bv || a.name.localeCompare(b.name)
+      })
+    members.forEach((m, k) => {
+      const seat = k < pool.length ? pool[k] : null
+      seatOf.set(m.name, seat)
+      if (seat != null) taken.set(seat, m.name)
+    })
+  }
+
+  return meta.map(({ name, soul, role, division }) => {
     const task = active.get(name)
     const status: Agent['status'] = task
       ? task.status === 'review'
@@ -698,8 +789,10 @@ export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: st
     return {
       name,
       displayName: name,
-      role: roleFor(name),
-      deskIndex: ordered.indexOf(name) < 8 ? ordered.indexOf(name) : null,
+      role,
+      division,
+      soulExists: soul != null,
+      deskIndex: seatOf.get(name) ?? null,
       status,
       currentTaskId: task?.id ?? null,
     }

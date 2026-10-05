@@ -952,12 +952,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   // Kolam renang ORGANIK (ginjal) di area santai SE dalam gedung (9,6).
-  // 3 lobus oval + air ginjal: aproksimasi kurva, selaras footprint pool-*.
+  // Kolam ginjal + DINDING AIR (waterfall wall, ala referensi): batu gelap +
+  // air transmisi + dinding air terjun di sisi utara + deck kayu + kursi.
   {
-    const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(POOL.deckW, 0.05, POOL.deckD),
-      stdMat(0xd8d2c2, { rough: 0.9 }),
-    )
+    const deck = new THREE.Mesh(rbox(POOL.deckW, 0.05, POOL.deckD, 0.01), track(woodWarm()))
     deck.position.set(POOL.x, 0.025, POOL.z)
     group.add(deck)
     const lobe = (x: number, z: number, w: number, d: number, mat: THREE.Material, y = 0.05) => {
@@ -966,39 +964,56 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       m.position.set(x, y, z)
       group.add(m)
     }
-    const basinMat = stdMat(0x9fc4d4, { rough: 0.5 })
+    const basinMat = track(stoneDark())
     lobe(7.6, 6.0, 2.6, 3.4, basinMat)
     lobe(9.2, 6.2, 3.0, 2.8, basinMat)
     lobe(10.8, 5.6, 2.2, 2.4, basinMat)
-    const waterMat = new THREE.MeshStandardMaterial({
-      color: 0x2fa8c8, transparent: true, opacity: 0.85,
-      emissive: 0x1a7fa0, emissiveIntensity: 0.55, roughness: 0.15, metalness: 0.1,
+    const waterMat = new THREE.MeshPhysicalMaterial({
+      color: 0x2fa8c8, transparent: true, opacity: 0.75,
+      transmission: 0.6, roughness: 0.08, metalness: 0,
+      emissive: 0x1a7fa0, emissiveIntensity: 0.4,
     })
     lobe(7.6, 6.0, 2.3, 3.1, waterMat, POOL.waterY + 0.25)
     lobe(9.2, 6.2, 2.7, 2.5, waterMat, POOL.waterY + 0.25)
     lobe(10.8, 5.6, 1.9, 2.1, waterMat, POOL.waterY + 0.25)
-    const fenceMat = stdMat(0x5b6a75, { metal: 0.5, rough: 0.4 })
+    // dinding air terjun: batu gelap vertikal + selimut air mengalir
+    const fallWall = new THREE.Mesh(rbox(4.6, 2.2, 0.3, 0.02), track(stoneDark()))
+    fallWall.position.set(9.2, 1.1, 3.9)
+    group.add(fallWall)
+    const fallWater = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.2, 2.0),
+      new THREE.MeshPhysicalMaterial({
+        color: 0x9fd8e8, transparent: true, opacity: 0.55,
+        transmission: 0.5, roughness: 0.1,
+        emissive: 0x6fb8d0, emissiveIntensity: 0.5,
+        side: THREE.DoubleSide,
+      }),
+    )
+    fallWater.position.set(9.2, 1.05, 3.73)
+    fallWater.rotation.y = Math.PI
+    group.add(fallWater)
+    const fenceMat = stdMat(0x2b3236, { metal: 0.7, rough: 0.3 })
     const fence = (w: number, d: number, x: number, z: number) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.0, d), fenceMat)
+      const m = new THREE.Mesh(rbox(w, 1.0, d, 0.01), fenceMat)
       m.position.set(x, 0.5, z)
       group.add(m)
     }
     fence(4.0, 0.08, 8.4, 4.0)
     fence(5.2, 0.08, 9.0, 8.0)
-    // kursi santai di deck (menghadap air) — posisi dari POOL_LOUNGERS
+    // kursi santai beveled di deck (menghadap air) — posisi dari POOL_LOUNGERS
     for (const l of POOL_LOUNGERS) {
       const g = new THREE.Group()
       g.position.set(l.x, 0, l.z)
       g.rotation.y = l.facing
-      const bed = box(0.7, 0.12, 1.7, 0xe8ddc4, { rough: 0.9 })
+      const bed = new THREE.Mesh(rbox(0.7, 0.12, 1.7, 0.02), track(woodWarm()))
       bed.position.y = 0.35
       g.add(bed)
-      const back = box(0.7, 0.5, 0.12, 0xe8ddc4, { rough: 0.9 })
+      const back = new THREE.Mesh(rbox(0.7, 0.5, 0.12, 0.02), track(woodWarm()))
       back.position.set(0, 0.6, -0.8)
       back.rotation.x = -0.5
       g.add(back)
       for (const [dx, dz] of [[-0.3, -0.7], [0.3, -0.7], [-0.3, 0.7], [0.3, 0.7]]) {
-        const leg = cyl(0.03, 0.035, 0.32, 0x5b666e, 8, 0.5)
+        const leg = cyl(0.025, 0.03, 0.32, 0x5b666e, 8, 0.5)
         leg.position.set(dx, 0.16, dz)
         g.add(leg)
       }
@@ -1590,9 +1605,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const mouse = box(0.07, 0.02, 0.11, 0x2d3338)
     mouse.position.set(0.38, 0.765, 0.14)
     d.add(mouse)
-    const mug = cyl(0.05, 0.045, 0.09, 0xeae4d8, 10)
-    mug.position.set(-0.72, 0.8, 0.1)
-    d.add(mug)
 
     const lamp = new THREE.PointLight(0xffc98a, hour >= 18 || hour < 6 ? 0.8 : 0, 4)
     lamp.position.set(desk.x + Math.sin(desk.facing) * 0.5, 1.5, desk.z + Math.cos(desk.facing) * 0.5)
@@ -1751,9 +1763,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     cl.position.set(LOUNGE.x + Math.cos(a) * 0.4, 0.21, LOUNGE.z - 2.9 + Math.sin(a) * 0.4)
     group.add(cl)
   }
-  const magazine = box(0.32, 0.015, 0.24, 0xd8cfc0)
-  magazine.position.set(LOUNGE.x + 0.16, 0.47, LOUNGE.z - 2.85)
-  group.add(magazine)
 
   const armchair = new THREE.Group()
   armchair.position.set(LOUNGE.x - 2.3, 0, LOUNGE.z - 0.6)

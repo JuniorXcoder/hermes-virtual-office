@@ -11,10 +11,13 @@
  */
 import { readFileSync } from 'node:fs'
 import {
+  AULA,
   BOARD_COLUMNS,
   CEILING_Y,
   DESKS,
   deskByIndex,
+  desksForDivision,
+  DIV_ROOMS,
   FOOTPRINTS,
   HALF_D,
   ROOM_DOORS,
@@ -24,6 +27,7 @@ import {
   ROOMS,
   DOOR,
   blockingFootprints,
+  layoutConflicts,
   WALL_H,
   WALL_T,
   WINDOW_H,
@@ -34,7 +38,7 @@ import {
   paintingPlacement,
   windowPlan,
 } from '../src/lib/office/layout'
-import { BODY_R, blocked } from '../src/lib/office/nav'
+import { BODY_R, blocked, route } from '../src/lib/office/nav'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
@@ -76,16 +80,18 @@ console.log('geometry')
   check('all task states fit a rendered 3D kanban column', invalid.length === 0, invalid.join(', '))
 }
 
-// The board must fit the surface it hangs on AND the room it is in.
+// Board melengkung: chord di sisi utara aula, di dalam radius + di bawah plafon.
 {
   const left = KANBAN_BOARD.x - KANBAN_BOARD.w / 2
   const right = KANBAN_BOARD.x + KANBAN_BOARD.w / 2
   const bottom = KANBAN_BOARD.y - KANBAN_BOARD.h / 2
   const top = KANBAN_BOARD.y + KANBAN_BOARD.h / 2
+  const corners = [[left, KANBAN_BOARD.z], [right, KANBAN_BOARD.z]]
+  const inside = corners.every(([x, z]) => Math.hypot(x - AULA.x, z - AULA.z) < AULA.r + 0.6)
   check(
-    'kanban board is inside the work bay (not through the partitions)',
-    left > ROOMS.work.x1 && right < ROOMS.work.x2,
-    `x ${f2(left)}..${f2(right)} vs room ${ROOMS.work.x1}..${ROOMS.work.x2}`,
+    'curved kanban board sits inside the aula oval',
+    inside,
+    `x ${f2(left)}..${f2(right)} z ${f2(KANBAN_BOARD.z)} vs aula r ${AULA.r}`,
   )
   check(
     'kanban board is above the floor and below the ceiling',
@@ -125,10 +131,8 @@ console.log('geometry')
 // WORLD coordinates against the ROOM, which is what actually exists.
 {
   const rooms: Record<string, { lo: number; hi: number }> = {
-    '-6': { lo: -13 + 0.3, hi: 3.4 }, // west partition, world z
-    '6': { lo: -13 + 0.3, hi: 3.4 },
-    '-17': { lo: 3.4, hi: 13 - 0.3 }, // lobby side wall, world z
-    '17': { lo: 3.4, hi: 13 - 0.3 },
+    '-17': { lo: -13 + 0.3, hi: 13 - 0.3 }, // dinding luar barat, world z
+    '17': { lo: -13 + 0.3, hi: 13 - 0.3 }, // dinding luar timur, world z
   }
   const off: string[] = []
   for (const [i, p] of PAINTINGS.entries()) {
@@ -161,25 +165,11 @@ console.log('geometry')
   check('no painting covers a side window', onGlass.length === 0, onGlass.join(' | '))
 }
 
-// Footprints must not sit on top of one another (corners of walls excepted).
+// Footprints must not sit on top of one another — via layoutConflicts(), the
+// single source of truth (tahu lobus kolam organik boleh bersinggungan).
 {
-  const bad: string[] = []
-  for (let i = 0; i < FOOTPRINTS.length; i++) {
-    for (let j = i + 1; j < FOOTPRINTS.length; j++) {
-      const a = FOOTPRINTS[i]
-      const b = FOOTPRINTS[j]
-      const ox = Math.min(a.x + a.hw, b.x + b.hw) - Math.max(a.x - a.hw, b.x - b.hw)
-      const oz = Math.min(a.z + a.hd, b.z + b.hd) - Math.max(a.z - a.hd, b.z - b.hd)
-      if (ox <= 0.02 || oz <= 0.02) continue
-      // walls meeting at a corner, and a chair tucked under its own desk, are fine
-      const bothWall = a.kind === 'wall' && b.kind === 'wall'
-      const seatAndDesk =
-        (a.kind === 'seat' && b.kind === 'desk') || (b.kind === 'seat' && a.kind === 'desk')
-      const plantOnWall = a.id.startsWith('plant-') || b.id.startsWith('plant-')
-      if (!bothWall && !seatAndDesk && !plantOnWall) bad.push(`${a.id}<->${b.id}`)
-    }
-  }
-  check('no furniture overlaps furniture', bad.length === 0, bad.slice(0, 4).join(', '))
+  const bad = layoutConflicts()
+  check('no furniture overlaps furniture', bad.length === 0, bad.slice(0, 4).map((c) => `${c.a}<->${c.b}`).join(', '))
 }
 
 // A desk is addressed by its LABEL. `DESKS` is flat-mapped column by column, so
@@ -193,21 +183,26 @@ console.log('geometry')
   check('deskByIndex(n) returns the desk labelled n', wrong.length === 0, wrong.join(', '))
 }
 
-// Doorways must stay clear. Three pieces of the old book nook sat in front of the
-// work bay's door, which is what read as "a sofa parked in the walkway".
+// Celah aula + pintu luar/lounge wajib bebas furniture (koridor cincin jalan).
 {
-  const blocked: string[] = []
-  for (const [room, door] of Object.entries(ROOM_DOORS)) {
-    const z = room === 'lobby' ? 0 : (ROOMS as Record<string, { z2: number }>)[room].z2
-    const half = door.width / 2
+  const gaps = [
+    { x: AULA.x, z: AULA.z - AULA.r, hw: 1.4, hd: 0.8 }, // N
+    { x: AULA.x + AULA.r, z: AULA.z, hw: 0.8, hd: 1.4 }, // E
+    { x: AULA.x, z: AULA.z + AULA.r, hw: 1.4, hd: 0.8 }, // S
+    { x: AULA.x - AULA.r, z: AULA.z, hw: 0.8, hd: 1.4 }, // W
+    { x: DOOR.x, z: DOOR.z, hw: 1.7, hd: 1.2 },
+    { x: ROOM_DOORS.lounge.x, z: ROOMS.lobby.z1, hw: 1.1, hd: 1.2 },
+  ]
+  const blockedDoor: string[] = []
+  for (const g of gaps) {
     for (const f of FOOTPRINTS) {
-      if (f.kind === 'wall' || f.h <= 0.4) continue
-      const overlapsX = f.x + f.hw > door.x - half && f.x - f.hw < door.x + half
-      const nearDoor = Math.abs(f.z - z) < 1.6
-      if (overlapsX && nearDoor) blocked.push(`${f.id} @ ${f.x},${f.z}`)
+      if (f.kind === 'wall' || f.kind === 'seat' || f.h <= 0.4) continue
+      const ox = f.x + f.hw > g.x - g.hw && f.x - f.hw < g.x + g.hw
+      const oz = f.z + f.hd > g.z - g.hd && f.z - f.hd < g.z + g.hd
+      if (ox && oz) blockedDoor.push(`${f.id} @ gap ${g.x},${g.z}`)
     }
   }
-  check('no furniture blocks a doorway', blocked.length === 0, blocked.join(' | '))
+  check('no furniture blocks an aula gap or entrance', blockedDoor.length === 0, blockedDoor.join(' | '))
 }
 
 // Every destination that has a direction must express it the same way, and the
@@ -457,12 +452,12 @@ console.log('geometry')
     const gap = rec.z - rec.hd - (chair.z + chair.hd)
     if (gap < 0.2) problems.push(`only ${gap.toFixed(2)}m between chair and counter`)
   }
-  // The waiting sofa must clear the counter it sits beside.
-  const sofa = FOOTPRINTS.find((f) => f.id === 'wait-sofa-a')
+  // Sofa lounge (3 segmen 유기) tak boleh sentuh counter.
+  const sofa = FOOTPRINTS.find((f) => f.id === 'sofa-b')
   if (rec && sofa) {
     const dx = Math.abs(sofa.x - rec.x) - (sofa.hw + rec.hw)
     const dz = Math.abs(sofa.z - rec.z) - (sofa.hd + rec.hd)
-    if (dx < 0 && dz < 0) problems.push('waiting sofa overlaps the reception counter')
+    if (dx < 0 && dz < 0) problems.push('lounge sofa overlaps the reception counter')
   }
   check('lobby seating is placed where it can be used', problems.length === 0, problems.join(' | '))
 }
@@ -484,39 +479,56 @@ console.log('geometry')
   check('listProfiles includes the default profile', problems.length === 0, problems.join(' | '))
 }
 
-// The lobby is laid out as zones, and two properties make it usable rather than just
-// non-overlapping: the centre axis from the entrance to the work door stays clear, and
-// every room door has an open approach. The layout was rebuilt after the furniture
-// accumulated one piece at a time into a stack of unrelated objects.
+// Denah organik: sumbu tengah pintu->aula jalan, koridor cincin sekeliling aula
+// jalan (8 titik mata angin di r 6.2), tiap divisi punya >=1 meja terjangkau.
 {
   const problems: string[] = []
   const lobbyZ = ROOMS.lobby.z1
 
-  // 1. The centre axis must be walkable end to end.
+  // 1. Sumbu tengah pintu masuk -> celah selatan aula wajib jalan.
   const laneBlocked: string[] = []
-  for (let z = HALF_D - WALL_T - 0.4; z >= lobbyZ + 0.3; z -= 0.2) {
+  for (let z = HALF_D - WALL_T - 0.4; z >= AULA.z + AULA.r - 0.3; z -= 0.2) {
     if (blocked(0, z, BODY_R)) laneBlocked.push(z.toFixed(1))
   }
   if (laneBlocked.length) {
     problems.push(`centre axis blocked at z ${laneBlocked.join(', ')}`)
   }
 
-  // 2. Each room door must have a clear approach inside the lobby.
-  for (const [room, d] of Object.entries(ROOM_DOORS)) {
-    for (const z of [3.9, 4.4, 4.9]) {
-      if (blocked(d.x, z, BODY_R)) {
-        problems.push(`${room} door approach blocked at z ${z}`)
-        break
-      }
-    }
+  // 2. Koridor cincin (r 5.2: antara dinding aula r4.5 dan pods) wajib bebas.
+  const ringBad: string[] = []
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2 + Math.PI / 8
+    const x = AULA.x + Math.cos(a) * (AULA.r + 0.7)
+    const z = AULA.z + Math.sin(a) * (AULA.r + 0.7)
+    if (Math.abs(x) > HALF_W - 1 || Math.abs(z) > HALF_D - 1) continue
+    if (blocked(x, z, BODY_R)) ringBad.push(`(${x.toFixed(1)},${z.toFixed(1)})`)
   }
+  if (ringBad.length) problems.push(`ring corridor blocked at ${ringBad.join(', ')}`)
 
-  // 3. The entrance itself.
+  // 3. Pintu masuk + pintu lounge.
   if (blocked(DOOR.x, HALF_D - WALL_T - 0.8, BODY_R)) {
     problems.push('entrance approach blocked')
   }
+  if (blocked(ROOM_DOORS.lounge.x, ROOMS.lobby.z1 + 0.6, BODY_R)) {
+    problems.push('lounge door approach blocked')
+  }
 
-  // 4. No two solid lobby props may overlap.
+  // 4. Tiap divisi punya >=1 meja; visitor spot-nya bebas & bisa di-route dari pintu.
+  // (Titik meja MEMANG blocked — itu buktinya collision jalan.)
+  for (const div of ['exec', 'tech', 'growth', 'content'] as const) {
+    const desks = desksForDivision(div)
+    if (!desks.length) { problems.push(`${div} has no desks`); continue }
+    const vs = desks.map((d) => {
+      const s = Math.sin(d.facing), c = Math.cos(d.facing)
+      return { d, x: d.x + s * 1.6, z: d.z + c * 1.6 }
+    })
+    const free = vs.filter((v) => !blocked(v.x, v.z, BODY_R))
+    if (!free.length) { problems.push(`${div}: all visitor spots blocked`); continue }
+    const legs = free.map((v) => route({ x: DOOR.x, z: DOOR.z - 1 }, { x: v.x, z: v.z }))
+    if (!legs.some((l) => l.length > 0)) problems.push(`${div}: no route door->desk`)
+  }
+
+  // 5. Tak ada dua solid selatan (z>lobbyZ-0.5) yg overlap.
   const solid = blockingFootprints().filter((f) => f.z > lobbyZ - 0.5)
   for (let i = 0; i < solid.length; i++) {
     for (let j = i + 1; j < solid.length; j++) {
@@ -528,7 +540,7 @@ console.log('geometry')
     }
   }
 
-  check('lobby keeps a clear axis and open doorways', problems.length === 0, problems.join(' | '))
+  check('organic plan: axis, ring corridor, division desks reachable', problems.length === 0, problems.join(' | '))
 }
 
 

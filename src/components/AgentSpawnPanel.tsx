@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react'
 import { fetchJson } from '@/lib/api'
 import ModelPicker, { type ModelChoice } from './ModelPicker'
+import type { AgentDivision, AgentRole } from '@/types/hermes'
+import { DIVISION_LABEL } from '@/types/hermes'
+import { ROLE_LABEL } from '@/lib/hermes/soul'
 
 /**
  * Spawn / hide / kill control.
@@ -23,8 +26,16 @@ type Row = {
   reason: string | null
   /** The profile's default model, when it has one. */
   model?: string | null
+  /** Role dari route agents GET; null/undefined bila backend lama. */
+  role?: AgentRole | string | null
+  /** Divisi dari route agents GET; null/undefined bila backend lama. */
+  division?: AgentDivision | string | null
+  /** True bila profil punya SOUL.md sendiri. */
+  soulExists?: boolean | null
 }
 
+const ROLE_OPTIONS = Object.entries(ROLE_LABEL) as [AgentRole, string][]
+const DIVISION_OPTIONS = Object.entries(DIVISION_LABEL) as [AgentDivision, string][]
 
 export default function AgentSpawnPanel({
   open,
@@ -41,6 +52,11 @@ export default function AgentSpawnPanel({
   const [loading, setLoading] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [newRole, setNewRole] = useState<AgentRole>('backend')
+  const [newDivision, setNewDivision] = useState<AgentDivision>('tech')
+  const [newSoul, setNewSoul] = useState('')
+  const [soulPreview, setSoulPreview] = useState<string | null>(null)
+  const [divFilter, setDivFilter] = useState<'all' | AgentDivision>('all')
   const [creating, setCreating] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   /** id awaiting the second click before a destructive delete. */
@@ -148,15 +164,25 @@ export default function AgentSpawnPanel({
     setCreating(true)
     setErr(null)
     setNote(null)
+    setSoulPreview(null)
     try {
-      const res = await fetchJson<{ name: string }>('/api/hermes/agents', {
+      const res = await fetchJson<{ name: string; soulPreview?: string }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create', name, description: newDesc.trim() }),
+        body: JSON.stringify({
+          action: 'create',
+          name,
+          description: newDesc.trim(),
+          role: newRole,
+          division: newDivision,
+          soul: newSoul.trim(),
+        }),
       })
       if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuat profil')
       setNewName('')
       setNewDesc('')
+      setNewSoul('')
+      setSoulPreview(res.data.soulPreview ?? null)
       setNote(`profil "${res.data.name}" dibuat — agent berjalan masuk lewat pintu utama`)
       await load()
       onChanged()
@@ -169,8 +195,35 @@ export default function AgentSpawnPanel({
 
   if (!open) return null
 
-  const inOffice = rows.filter((r) => r.inOffice)
-  const out = rows.filter((r) => !r.inOffice)
+  const matchDiv = (r: Row) => divFilter === 'all' || r.division === divFilter
+  const inOffice = rows.filter((r) => r.inOffice && matchDiv(r))
+  const out = rows.filter((r) => !r.inOffice && matchDiv(r))
+
+  /** Badge role + divisi + indikator soul. Aman bila field null (backend lama). */
+  function badges(r: Row) {
+    const roleLabel = r.role ? (ROLE_LABEL as Record<string, string>)[r.role] ?? r.role : null
+    const divLabel = r.division ? (DIVISION_LABEL as Record<string, string>)[r.division] ?? null : null
+    return (
+      <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+        {roleLabel && (
+          <span className="vp-chip" title={`role: ${r.role}`}>
+            {roleLabel}
+          </span>
+        )}
+        {divLabel && (
+          <span className="vp-chip" title={`divisi: ${r.division}`}>
+            {divLabel}
+          </span>
+        )}
+        {r.soulExists === true && (
+          <span className="vp-chip" title="Profil ini punya SOUL.md sendiri">
+            soul ✓
+          </span>
+        )}
+        {r.soulExists === false && <span className="vp-tag-warn">tanpa soul</span>}
+      </span>
+    )
+  }
 
   return (
     <aside className="vp-panel right-0">
@@ -193,6 +246,12 @@ export default function AgentSpawnPanel({
 
         {err && <div className="vp-err">{err}</div>}
         {note && <div className="vp-ok">{note}</div>}
+        {soulPreview && (
+          <div className="vp-ok">
+            <b>Soul tersimpan:</b>
+            <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 11 }}>{soulPreview}</pre>
+          </div>
+        )}
         {loading && <div className="vp-muted">memuat…</div>}
 
         <div className="vp-sub">BUAT PROFIL BARU</div>
@@ -211,6 +270,39 @@ export default function AgentSpawnPanel({
           onChange={(e) => setNewDesc(e.target.value)}
           placeholder="deskripsi"
         />
+        <div className="flex gap-2">
+          <select
+            className="vp-input"
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value as AgentRole)}
+            title="Role agent"
+          >
+            {ROLE_OPTIONS.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="vp-input"
+            value={newDivision}
+            onChange={(e) => setNewDivision(e.target.value as AgentDivision)}
+            title="Divisi agent"
+          >
+            {DIVISION_OPTIONS.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <textarea
+          className="vp-input"
+          value={newSoul}
+          onChange={(e) => setNewSoul(e.target.value)}
+          placeholder="cth: Budi adalah CEO visioner — ambil keputusan akhir, bagi tugas ke tiap divisi, jaga visi perusahaan. Gaya: tegas, ringkas, eksekusi langsung. (opsional)"
+          rows={3}
+        />
         <button
           className="vp-btn"
           disabled={creating || !newName.trim()}
@@ -223,6 +315,21 @@ export default function AgentSpawnPanel({
           Segarkan
         </button>
 
+        <div className="vp-sub">FILTER DIVISI</div>
+        <select
+          className="vp-input"
+          value={divFilter}
+          onChange={(e) => setDivFilter(e.target.value as 'all' | AgentDivision)}
+          title="Filter daftar agent per divisi"
+        >
+          <option value="all">Semua</option>
+          {DIVISION_OPTIONS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
+
         <div className="vp-sub">DI KANTOR ({inOffice.length})</div>
         <div className="flex flex-col gap-2">
           {inOffice.map((r) => (
@@ -233,6 +340,7 @@ export default function AgentSpawnPanel({
                   {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
                 </b>
                 <i>{r.total} tugas</i>
+                {badges(r)}
               </div>
               {/* The profile's default model: what its workers and chats run.
                   Saving here writes `model.default` for that profile, so it
@@ -325,6 +433,7 @@ export default function AgentSpawnPanel({
                           ? 'tanpa profil di disk'
                           : 'tanpa tugas'}
                     </i>
+                    {badges(r)}
                   </div>
                   <button
                     className="vp-btn"

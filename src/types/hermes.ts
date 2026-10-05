@@ -84,7 +84,11 @@ export type Agent = {
   name: string
   displayName: string
   role: AgentRole
-  /** Desk slot 0-7, or null when the agent has no station. */
+  /** Division the agent belongs to; null when unknown (old profile, no soul). */
+  division: AgentDivision | null
+  /** True when the profile has its own SOUL.md on disk. */
+  soulExists?: boolean
+  /** Desk slot, or null when the agent has no station. */
   deskIndex: number | null
   status: AgentStatus
   currentTaskId?: string | null
@@ -92,13 +96,34 @@ export type Agent = {
   model?: string | null
 }
 
+/**
+ * Division grouping above roles:
+ * - exec: CEO/orchestrator — keputusan & orkestrasi
+ * - tech: Developer & Infrastructure — backend/frontend/qa/researcher/devops
+ * - growth: Marketing & SEO
+ * - content: Content Creator & Affiliator
+ */
+export type AgentDivision = 'exec' | 'tech' | 'growth' | 'content'
+
+export const DIVISION_LABEL: Record<AgentDivision, string> = {
+  exec: 'Eksekutif',
+  tech: 'Developer & Infrastructure',
+  growth: 'Marketing & SEO',
+  content: 'Content Creator & Affiliator',
+}
+
 export type AgentRole =
+  | 'ceo'
   | 'orchestrator'
   | 'backend'
   | 'frontend'
   | 'qa'
   | 'researcher'
   | 'devops'
+  | 'marketing'
+  | 'seo'
+  | 'content'
+  | 'affiliator'
 
 export type AgentStatus =
   | 'idle'

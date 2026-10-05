@@ -1,4 +1,4 @@
-import type { AgentRole } from '@/types/hermes'
+import type { AgentDivision, AgentRole } from '@/types/hermes'
 
 /**
  * Office layout: the single source of truth for every placement.
@@ -19,8 +19,6 @@ import type { AgentRole } from '@/types/hermes'
 export const FLOOR = { width: 34, depth: 26 }
 export const HALF_W = FLOOR.width / 2
 export const HALF_D = FLOOR.depth / 2
-// 4.6 m: the window bands sit at y 2.65-4.55, so a 3.4 m wall left the cut-out
-// ABOVE the wall line and no opening was ever formed.
 export const WALL_H = 4.6
 /** Wall thickness, shared by walls and partitions. */
 export const WALL_T = 0.3
@@ -28,34 +26,54 @@ export const WALL_T = 0.3
 /* ------------------------------------------------------------------ rooms -- */
 
 /**
- * The floor is divided into three rooms plus a lobby corridor:
+ * Denah ORGANIK MELENGKUNG (bukan kotak):
  *
- *   +-------------------------------------------+
- *   |  RUANG RAPAT   |    OPEN WORK    | LOUNGE |   north (z = -13)
- *   |                |  8 desks + pods |        |
- *   +----------------+-----------------+--------+
- *   |                L O B I           O R      |   south (z = +13)
- *   |          pintu masuk, resepsionis         |
- *   +-------------------------------------------+
+ *   - Aula tengah = oval di (0,-4), radius ~4.5. Kanban board melengkung
+ *     mengikuti dinding utara aula (chord di z=-8.35, lebar 8).
+ *   - 4 pods divisi melengkung mengelilingi aula: exec (NW), tech (W),
+ *     growth (NE), content (E). Tiap pod = bbox zona + 2 sekat lengkung.
+ *   - Koridor = cincin terbuka antara dinding aula (r 4.5) dan pods.
+ *   - Lounge di SW, kolam GINJAL di SE (9,6), lobby = pita selatan.
+ *
+ *   Sketsa ASCII (x -17..17, z -13..13):
+ *
+ *     z=-13 |==== DINDING LUAR (tetap kotak, kulit gedung) ====|
+ *     z=-9   (exec pod)    [BOARD chord]    (growth pod)
+ *     z=-4   (tech pod)   (( AULA OVAL ))   (content pod)
+ *     z=+3   - - - - koridor cincin - - - - - - - - - - -
+ *     z=+6   [LOUNGE sw]      lobby       ((KOLAM ginjal se))
+ *     z=+13 |==== pintu masuk (0,13) ====|
+ *
+ *   `ROOMS` = zona bbox (boleh overlap, hanya untuk check & SpriteOffice).
+ *   Dinding lengkung nyata = se/themes/dinding-aula + sekat pod di FOOTPRINTS
+ *   (aproksimasi kurva dgn box kecil) + digambar di build.ts.
  */
+export const AULA = { x: 0, z: -4, r: 4.5 }
 export const ROOMS = {
-  meeting: { x1: -HALF_W + WALL_T, x2: -6.0, z1: -HALF_D + WALL_T, z2: 3.4 },
-  work: { x1: -6.0, x2: 6.0, z1: -HALF_D + WALL_T, z2: 3.4 },
-  lounge: { x1: 6.0, x2: HALF_W - WALL_T, z1: -HALF_D + WALL_T, z2: 3.4 },
+  meeting: { x1: -4.5, x2: 4.5, z1: -8.5, z2: 0.5 },
+  work: { x1: -HALF_W + WALL_T, x2: HALF_W - WALL_T, z1: -HALF_D + WALL_T, z2: 3.4 },
+  lounge: { x1: -HALF_W + WALL_T, x2: -2.0, z1: 3.4, z2: HALF_D - WALL_T },
   lobby: { x1: -HALF_W + WALL_T, x2: HALF_W - WALL_T, z1: 3.4, z2: HALF_D - WALL_T },
 } as const
 
-/** Doorway openings in the south wall of each room, facing the lobby. */
+/** Celah pintu di dinding aula (4 arah mata angin) + pintu lounge. */
 export const ROOM_DOORS = {
-  meeting: { x: -11.0, width: 2.2 },
+  meeting: { x: 0, width: 2.4 },
   work: { x: 0, width: 3.4 },
-  lounge: { x: 11.0, width: 2.2 },
+  lounge: { x: -9.0, width: 2.2 },
+} as const
+/** Titik celah dinding aula (E,S,W,N) — juga dipakai OPENINGS. */
+export const AULA_GAPS = {
+  north: { x: 0, z: -8.5 },
+  east: { x: 4.5, z: -4 },
+  south: { x: 0, z: 0.5 },
+  west: { x: -4.5, z: -4 },
 } as const
 
 /* ------------------------------------------------------------------ desks -- */
 
-export const DESK_COLUMNS = [-4.6, -1.55, 1.55, 4.6] as const
-export const DESK_ROW_Z = { far: -8.2, near: -4.8 } as const
+export const DESK_COLUMNS = [-9.5, -8.0, 8.0, 9.5] as const
+export const DESK_ROW_Z = { far: -8.5, near: -2.0 } as const
 
 export type Desk = {
   index: number
@@ -65,13 +83,36 @@ export type Desk = {
   facing: number
   column: number
   side: 'near' | 'far'
+  /** Divisi pemilik meja — agent duduk di ruang divisinya. */
+  division: AgentDivision
 }
 
-/** 8 stations. Rows face each other across the aisle at z = -6.5. */
-export const DESKS: Desk[] = DESK_COLUMNS.flatMap((x, column) => [
-  { index: column + 4, x, z: DESK_ROW_Z.far, facing: Math.PI, column, side: 'far' as const },
-  { index: column, x, z: DESK_ROW_Z.near, facing: 0, column, side: 'near' as const },
-])
+/**
+ * 12 stations, 4 pods melengkung mengelilingi aula (facing = hadap pusat aula):
+ * - exec 2: NW pod (-5.5,-8.2) & NE pod (5.5,-8.2), hadap aula
+ * - tech 4: W pod (-7.5,-5.5) (-8.5,-3.5) + NW cadangan
+ * - growth 3: NE/E pod (7.5,-5.5) (8.5,-3.5) (6.0,-2.0)
+ * - content 3: E pod (7.0,0.0) (5.0,1.5) (9.0,-1.0)
+ */
+export const DESKS: Desk[] = [
+  { index: 0, x: -5.5, z: -8.2, facing: Math.atan2(-5.5 - 0, -8.2 - -4), column: 0, side: 'far' as const, division: 'exec' },
+  { index: 1, x: 5.5, z: -8.2, facing: Math.atan2(5.5 - 0, -8.2 - -4), column: 3, side: 'far' as const, division: 'exec' },
+  { index: 2, x: -7.5, z: -5.5, facing: Math.atan2(-7.5 - 0, -5.5 - -4), column: 0, side: 'near' as const, division: 'tech' },
+  { index: 3, x: -8.5, z: -3.5, facing: Math.atan2(-8.5 - 0, -3.5 - -4), column: 1, side: 'near' as const, division: 'tech' },
+  { index: 4, x: -7.0, z: -2.0, facing: Math.atan2(-7.0 - 0, -2.0 - -4), column: 1, side: 'near' as const, division: 'tech' },
+  { index: 5, x: -6.0, z: -6.8, facing: Math.atan2(-6.0 - 0, -6.8 - -4), column: 0, side: 'far' as const, division: 'tech' },
+  { index: 6, x: 7.5, z: -5.5, facing: Math.atan2(7.5 - 0, -5.5 - -4), column: 2, side: 'near' as const, division: 'growth' },
+  { index: 7, x: 8.5, z: -3.5, facing: Math.atan2(8.5 - 0, -3.5 - -4), column: 2, side: 'near' as const, division: 'growth' },
+  { index: 8, x: 6.0, z: -2.0, facing: Math.atan2(6.0 - 0, -2.0 - -4), column: 2, side: 'near' as const, division: 'growth' },
+  { index: 9, x: 7.0, z: 0.0, facing: Math.atan2(7.0 - 0, 0.0 - -4), column: 3, side: 'near' as const, division: 'content' },
+  { index: 10, x: 5.0, z: 1.5, facing: Math.atan2(5.0 - 0, 1.5 - -4), column: 3, side: 'near' as const, division: 'content' },
+  { index: 11, x: 9.0, z: -1.0, facing: Math.atan2(9.0 - 0, -1.0 - -4), column: 3, side: 'far' as const, division: 'content' },
+]
+
+/** Meja-meja milik satu divisi (label urut). */
+export function desksForDivision(div: AgentDivision): Desk[] {
+  return DESKS.filter((d) => d.division === div).sort((a, b) => a.index - b.index)
+}
 
 /**
  * Chair and sitter share these numbers. The chair group sits at z = +1.0 with its
@@ -166,34 +207,9 @@ export function visitorSpot(desk: Desk) {
 // -HALF_D + WALL_T/2; the board is BOARD_D deep, so its centre sits half a depth
 // further in. The previous value left it hovering 24 cm off the wall.
 export const BOARD_D = 0.14
-/**
- * The board must FIT the wall it hangs on, AND the room it is in.
- *
- * Two bugs live here. The first: a 7.6 m height on a 4.6 m wall drove its lower
- * edge 0.9 m through the floor and put its top 2.1 m above the wall line.
- *
- * The second, found later: 13.6 m of width inside a 12.0 m work bay, so the board
- * passed clean through both partitions at x = +-6. Width is now 11.2 m, which
- * with the 0.24 m frame leaves ~0.28 m clear of each partition face.
- */
-/* ------------------------------------------------------------------ roof -- */
-
-/**
- * The building has no roof at all: a single-storey slab whose perimeter stops
- * dead at the wall top, which is why it reads as an open box rather than a
- * building. The lobby bay carries a real roof deck with plant on it; the three
- * work rooms stay open so the interior — and the Kanban board — stay readable
- * from outside.
- */
 export const PARAPET_H = 0.55
 export const PARAPET_T = 0.34
 export const ROOF_DECK_T = 0.22
-/**
- * Roofed bay: a 4.2 m strip along the street facade, i.e. the entrance zone.
- * Deliberately NOT the whole lobby: a 34 x 9.6 m slab would hide half the
- * interior in the default view, and the point of the cutaway is that the office
- * and its Kanban board stay readable.
- */
 export const ROOF_BAY_D = 4.2
 export const ROOF_BAY = {
   x1: -HALF_W,
@@ -201,33 +217,80 @@ export const ROOF_BAY = {
   z1: HALF_D - ROOF_BAY_D,
   z2: HALF_D,
 }
-
-/**
- * The ceiling must sit at the wall TOP. At 4.3 m it was 0.3 m BELOW the 4.6 m wall
- * line, so the ceiling plane sliced across the upper wall and read as a beam
- * cutting through the Kanban board. Flush with the wall, it cannot.
- */
 export const CEILING_Y = WALL_H
 export const BOARD_REVEAL = 0.35
+/**
+ * Kanban board MELENGKUNG mengikuti dinding aula: chord datar di sisi utara
+ * aula (z=-8.35), lebar 8, pusat x=0. build.ts menggambar 5 panel segi
+ * mengikuti busur r=4.7; footprint = 3 box aproksimasi.
+ */
 export const KANBAN_BOARD = {
   x: 0,
   y: (CEILING_Y - BOARD_REVEAL * 2) / 2 + BOARD_REVEAL,
-  z: -HALF_D + WALL_T / 2 + BOARD_D / 2 + 0.01,
-  w: 11.2,
-  h: Math.min(11.2 * 0.62, CEILING_Y - BOARD_REVEAL * 2),
+  z: -7.3,
+  w: 5.6,
+  h: Math.min(5.6 * 0.62, CEILING_Y - BOARD_REVEAL * 2),
 }
 export const BOARD_COLUMNS = ['TODO', 'JALAN', 'REVIEW', 'SELESAI'] as const
 
-export const CONFERENCE = { x: -11.4, z: -4.6, radius: 2.4 }
+/** Meja bundar di pusat aula (ganti conference kotak di meeting room). */
+export const CONFERENCE = { x: 0, z: -4, radius: 1.8 }
 export const CONFERENCE_CHAIRS = {
   count: 6,
-  offset: Math.PI / 6,
-  ring: CONFERENCE.radius + 1.05,
+  offset: 0,
+  ring: CONFERENCE.radius + 1.0,
 }
 
-export const LOUNGE = { x: 11.6, z: -4.6 }
-export const DART = { x: HALF_W - WALL_T - 0.2, z: -9.4 }
+/**
+ * 4 pods divisi melengkung mengelilingi aula (zona bbox utk SpriteOffice):
+ * exec NW, tech W, growth NE, content E.
+ */
+export const DIV_ROOMS = {
+  exec: { x1: -8.0, x2: -3.0, z1: -11.0, z2: -6.5 },
+  tech: { x1: -11.0, x2: -5.0, z1: -6.5, z2: 0.5 },
+  growth: { x1: 5.0, x2: 11.0, z1: -8.0, z2: -1.0 },
+  content: { x1: 3.0, x2: 11.0, z1: -1.0, z2: 3.0 },
+} as const
+
+export type DivisionRoomKey = keyof typeof DIV_ROOMS
+
+/** Papan nama tiap ruang (teks + posisi di atas pintu). */
+export const ROOM_SIGNS: { text: string; x: number; z: number }[] = [
+  { text: 'EXEC', x: -3.2, z: -6.0 },
+  { text: 'TECH', x: -6.0, z: -2.2 },
+  { text: 'GROWTH', x: 6.5, z: -3.2 },
+  { text: 'CONTENT', x: 6.5, z: 1.8 },
+  { text: 'AULA', x: 0, z: 0.8 },
+  { text: 'LOUNGE + POOL', x: -9.0, z: 3.7 },
+]
+
+export const LOUNGE = { x: -11.0, z: 8.0 }
+export const DART = { x: -16.5, z: -9.4 }
 export const DOOR = { x: 0, z: HALF_D - WALL_T }
+
+/**
+ * Kolam renang ORGANIK (ginjal) di area santai SE dalam gedung (9,6).
+ * Aproksimasi: 3 box (lobus kiri, tengah, lobus kanan yg digeser).
+ */
+export const POOL = {
+  x: 9,
+  z: 6,
+  w: 5.0,
+  d: 3.4,
+  waterY: 0.06,
+  deckW: 7.0,
+  deckD: 5.0,
+  organic: true as const,
+}
+/** Kursi santai melengkung di sisi barat kolam (menghadap air, +X). */
+export const POOL_LOUNGERS: { x: number; z: number; facing: number }[] = [
+  { x: 5.2, z: 4.6, facing: Math.PI / 2 },
+  { x: 5.0, z: 6.0, facing: Math.PI / 2 },
+  { x: 5.2, z: 7.4, facing: Math.PI / 2 },
+]
+export const POOL_GATE = { x: 5.8, z: 6.0, width: 1.2 }
+/** Pintu lounge barat menuju kolam sudah dalam gedung — tak perlu pintu luar. */
+export const POOL_DOOR = { z: 6.0, width: 2.0 } as const
 
 /**
  * Anchors for the additional idle activities. Each names the PROP an agent uses,
@@ -244,23 +307,15 @@ export const DOOR = { x: 0, z: HALF_D - WALL_T }
  * — an agent assigned there stood with its back to a screen, in a corner nobody
  * can see. Moved to the lounge's east wall, beside the side glazing.
  */
-export const GARDEN = { x: 15.4, z: -6.6 }
-/**
- * The book nook used to sit at x=0, z=1.7 — directly in front of the work bay's
- * doorway (the door is at x=0, 3.4 m wide, opening inward from z=3.4). Three of
- * its four footprints blocked the entrance, so the reading chair read as a sofa
- * parked in the walkway. It lives in the lounge's west corner now.
- */
-export const BOOK_NOOK = { x: 8.6, z: -8.4 }
-export const PANTRY = { x: 14.4, z: 1.0 }
+export const GARDEN = { x: 13.5, z: -6.6 }
+export const BOOK_NOOK = { x: -13.5, z: 8.0 }
+export const PANTRY = { x: -6.0, z: 8.5 }
 /** Stools at the pantry counter, where the coffee activity plays. */
-// Both stools sit between the counter's ends (13.15 .. 15.65) so an agent has
-// counter in front of it, not a wall.
-export const PANTRY_STOOLS = [13.6, 15.2] as const
+export const PANTRY_STOOLS = [-6.8, -5.2] as const
 /** Distance from the counter centre out to the stool centre. */
 export const PANTRY_STOOL_GAP = 0.72
 /** Reception counter: faces the entrance (+z), staff chair behind it (-z). */
-export const RECEPTION = { x: -5.5, z: 10.4 }
+export const RECEPTION = { x: -4.0, z: 10.4 }
 
 /**
  * Window openings. `y` is measured from the FLOOR, matching how build.ts cuts the
@@ -277,27 +332,15 @@ export const RECEPTION = { x: -5.5, z: 10.4 }
  */
 export const WINDOW_Y = 2.7
 export const WINDOW_H = 1.9
-/** Half-width of the Kanban board plus clearance: no window inside this band. */
-export const BOARD_CLEAR_X = 6.2
-
 const northGroup = (centres: number[], w: number) =>
   centres.map((x) => ({ x, y: WINDOW_Y, w, h: WINDOW_H }))
 
-export const NORTH_WINDOWS = [
-  // Three per side, clear of the board band. Centres chosen so every pair has
-  // >= 0.6 m of solid wall between openings (verified by facadeConflicts()).
-  ...northGroup([-15.8, -12.0, -9.0], 2.2),
-  ...northGroup([9.0, 12.0, 15.8], 2.2),
-]
+/** Utara: board pindah ke aula, jadi 5 jendela penuh (-13..13, pitch 5.2). */
+export const NORTH_WINDOWS = [...northGroup([-13.0, -7.8, -2.6, 2.6, 7.8, 13.0], 2.6)]
 
-/**
- * The south elevation faces the street and carries the entrance, yet it had no
- * openings at all: 34 m of blind wall on the most visible side. Three windows
- * per side, clear of the door band (|x| > 1.7).
- */
 export const SOUTH_WINDOWS = [
-  ...northGroup([-15.8, -12.0, -9.0], 2.2),
-  ...northGroup([9.0, 12.0, 15.8], 2.2),
+  ...northGroup([-15.8, -12.0, -9.0, -5.2], 2.2),
+  ...northGroup([5.2, 9.0, 12.0, 15.8], 2.2),
 ]
 
 /** Coping cap on the parapet: without it the roofline is just a cut edge. */
@@ -370,14 +413,6 @@ export function facadeConflicts(): { kind: string; a: string; b: string }[] {
       const pa = A.along === 'x' ? A.x : A.z
       const pb = B.along === 'x' ? B.x : B.z
       if (overlaps(pa, pb, A.w, B.w)) out.push({ kind: 'window-window', a: A.id, b: B.id })
-    }
-    // nothing may sit inside the Kanban board band
-    const W = wins[i]
-    if (W.along === 'x' && Math.abs(W.z + HALF_D) < 0.5) {
-      const pa = W.x
-      if (Math.abs(pa) - W.w / 2 < BOARD_CLEAR_X) {
-        out.push({ kind: 'window-board', a: W.id, b: 'kanban' })
-      }
     }
   }
   for (const A of wins) {
@@ -456,13 +491,9 @@ const wallFace = (
   return { x, z, ry, along, from: Math.min(a, b), to: Math.max(a, b), span: Math.abs(b - a) }
 }
 
-// Interior partitions beside the work bay run from the north wall's inner face
-// down to the room's south wall.
-const WEST_PART = wallFace(ROOMS.work.x1, 1, Math.PI / 2, 'z', -HALF_D + WALL_T, ROOMS.work.z2)
-const EAST_PART = wallFace(ROOMS.work.x2, 1, -Math.PI / 2, 'z', -HALF_D + WALL_T, ROOMS.work.z2)
-// Lobby side walls: from the lobby's north boundary to the south wall's inner face.
-const LOBBY_W = wallFace(-HALF_W, 6, Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
-const LOBBY_E = wallFace(HALF_W, 6, -Math.PI / 2, 'z', ROOMS.lobby.z1, HALF_D - WALL_T)
+// Dinding lengkung digambar sbg busur box di build.ts; lukisan di dinding LUAR.
+const WEST_OUT = wallFace(-HALF_W, 0, Math.PI / 2, 'z', -HALF_D + WALL_T, HALF_D - WALL_T)
+const EAST_OUT = wallFace(HALF_W, 0, -Math.PI / 2, 'z', -HALF_D + WALL_T, HALF_D - WALL_T)
 
 /**
  * World Z of a point `along` the lobby side walls.
@@ -498,25 +529,12 @@ void wallFace(0, -HALF_D, 0, 'x', -HALF_W, HALF_W)
 
 /** Facing an inward normal: `ry` is 0 for a frame facing +Z, ±PI/2 for ±X. */
 export const PAINTINGS: PaintingSpec[] = [
-  // Art is placed by a fraction along each wall, so it always lands on the wall
-  // and never in the gaps where the windows are.
-  // work-bay partitions: one piece per wall, clear of the doorway at z > 3.4
-  { wall: WEST_PART, along: 4.2, y: 1.9, w: 1.5, h: 1.1 },
-  { wall: WEST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
-  { wall: EAST_PART, along: 6.0, y: 1.9, w: 1.5, h: 1.1 },
-  { wall: EAST_PART, along: 11.0, y: 1.9, w: 1.1, h: 1.4 },
-  // Lobby side walls. Of the six side windows only two fall inside the lobby
-  // (world z 6.8 and 11.3); the rest serve the meeting room and lounge along the
-  // same elevation. The two remaining gaps are world z ~9.05 and ~4.50, and that
-  // is where these go — `alongFor` converts from world Z so the number in the
-  // list is checkable against the drawing.
-  // The two free gaps between the lobby's side windows are at world z 4.55 and
-  // 9.05 on BOTH walls (measured, not assumed — the tangent runs the other way on
-  // the east wall, so identical `along` values land mirrored).
-  { wall: LOBBY_W, along: lobbyAlongForWorldZ(LOBBY_W, 4.55), y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_W, along: lobbyAlongForWorldZ(LOBBY_W, 9.05), y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: lobbyAlongForWorldZ(LOBBY_E, 4.55), y: 1.95, w: 1.3, h: 1.7 },
-  { wall: LOBBY_E, along: lobbyAlongForWorldZ(LOBBY_E, 9.05), y: 1.95, w: 1.3, h: 1.7 },
+  { wall: WEST_OUT, along: lobbyAlongForWorldZ(WEST_OUT, -4.45), y: 1.9, w: 1.5, h: 1.1 },
+  { wall: WEST_OUT, along: lobbyAlongForWorldZ(WEST_OUT, 0.0), y: 1.9, w: 1.1, h: 1.4 },
+  { wall: EAST_OUT, along: lobbyAlongForWorldZ(EAST_OUT, -4.45), y: 1.9, w: 1.5, h: 1.1 },
+  { wall: EAST_OUT, along: lobbyAlongForWorldZ(EAST_OUT, 0.0), y: 1.9, w: 1.1, h: 1.4 },
+  { wall: WEST_OUT, along: lobbyAlongForWorldZ(WEST_OUT, 4.55), y: 1.95, w: 1.3, h: 1.7 },
+  { wall: EAST_OUT, along: lobbyAlongForWorldZ(EAST_OUT, 9.05), y: 1.95, w: 1.3, h: 1.7 },
 ]
 
 /**
@@ -584,7 +602,7 @@ export type Footprint = {
 const fp = (id: string, x: number, z: number, hw: number, hd: number, h: number, kind: Footprint['kind'] = 'prop'): Footprint =>
   ({ id, x, z, hw, hd, h, kind })
 
-/** Every solid placed in build.ts. Kept here so the plan can be validated. */
+/** Every solid placed in build.ts. Kurva didekati box kecil (aproksimasi). */
 export const FOOTPRINTS: Footprint[] = [
   // ---- outer walls (as four slabs)
   fp('wall-n', 0, -HALF_D, HALF_W, WALL_T / 2, WALL_H, 'wall'),
@@ -592,29 +610,56 @@ export const FOOTPRINTS: Footprint[] = [
   fp('wall-w', -HALF_W, 0, WALL_T / 2, HALF_D, WALL_H, 'wall'),
   fp('wall-e', HALF_W, 0, WALL_T / 2, HALF_D, WALL_H, 'wall'),
 
-  // ---- interior partitions, each split around its doorway
-  fp('part-mtg-n', ROOMS.meeting.x2 - 0.075, (-13 + ROOMS.meeting.z2) / 2, 0.075, (ROOMS.meeting.z2 + 13) / 2, WALL_H, 'wall'),
-  fp('part-lng-n', ROOMS.lounge.x1 + 0.075, (-13 + ROOMS.lounge.z2) / 2, 0.075, (ROOMS.lounge.z2 + 13) / 2, WALL_H, 'wall'),
-  fp('part-mtg-s-a', -16.6, ROOMS.meeting.z2, 0.8, 0.075, WALL_H, 'wall'),
-  fp('part-mtg-s-b', -9.6, ROOMS.meeting.z2, 2.4, 0.075, WALL_H, 'wall'),
-  fp('part-wrk-s-a', -3.4, ROOMS.work.z2, 2.9, 0.075, WALL_H, 'wall'),
-  fp('part-wrk-s-b', 3.4, ROOMS.work.z2, 2.9, 0.075, WALL_H, 'wall'),
-  fp('part-lng-s-a', 9.6, ROOMS.lounge.z2, 2.4, 0.075, WALL_H, 'wall'),
-  fp('part-lng-s-b', 16.6, ROOMS.lounge.z2, 0.8, 0.075, WALL_H, 'wall'),
+  // ---- dinding AULA oval (0,-4) r=4.5: 16 segmen, 4 celah (N/E/S/W)
+  ...(() => {
+    const out: Footprint[] = []
+    const cx = 0, cz = -4, r = 4.5, n = 16
+    const gaps = [Math.PI, Math.PI / 2, 0, -Math.PI / 2]
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2
+      if (gaps.some((g) => Math.abs(((a - g + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.22)) continue
+      const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r
+      const seg = (2 * Math.PI * r) / n
+      const alongX = Math.abs(Math.sin(a)) > Math.abs(Math.cos(a))
+      out.push(fp(`aula-w${i}`, x, z, alongX ? seg / 2 : 0.12, alongX ? 0.12 : seg / 2, WALL_H, 'wall'))
+    }
+    return out
+  })(),
 
-  // ---- desks: 2.0 x 1.0 tops, plus the chair behind each
+  // ---- sekat pods melengkung (busur pendek, box kecil)
+  ...(() => {
+    const out: Footprint[] = []
+    const arc = (id: string, cx: number, cz: number, r: number, a0: number, a1: number, k: number) => {
+      for (let i = 0; i < k; i++) {
+        const a = a0 + ((a1 - a0) * (i + 0.5)) / k
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r
+        out.push(fp(`${id}${i}`, x, z, 0.55, 0.12, 2.2, 'wall'))
+      }
+    }
+    arc('sek-exec-', -5.5, -9.5, 2.6, Math.PI * 0.9, Math.PI * 1.7, 3)
+    arc('sek-tech-', -9.0, -4.0, 2.6, Math.PI * 0.4, Math.PI * 1.1, 3)
+    arc('sek-growth-', 9.0, -4.5, 2.6, -Math.PI * 0.6, Math.PI * 0.3, 3)
+    arc('sek-content-', 10.5, 0.0, 2.2, -Math.PI * 0.3, Math.PI * 0.45, 3)
+    return out
+  })(),
+
+  // ---- desks: 1.7 x 1.0 tops, plus chair
   ...DESKS.flatMap((d) => {
     const s = Math.sin(d.facing)
     const c = Math.cos(d.facing)
     const chair = { x: d.x + DESK_CHAIR.z * s, z: d.z + DESK_CHAIR.z * c }
     return [
-      fp(`desk-${d.index}`, d.x, d.z, 1.0, 0.5, 0.72, 'desk'),
-      // the chair blocks walking but is low: the sitter stands above it
+      fp(`desk-${d.index}`, d.x, d.z, 0.85, 0.5, 0.72, 'desk'),
       fp(`chair-${d.index}`, chair.x, chair.z, 0.32, 0.32, 0.5, 'seat'),
     ]
   }),
 
-  // ---- conference furniture
+  // ---- board melengkung: 3 box aproksimasi di chord z=-8.35
+  fp('board-c', 0, -7.3, 1.05, 0.15, 2.6, 'prop'),
+  fp('board-l', -2.05, -7.1, 0.95, 0.15, 2.6, 'prop'),
+  fp('board-r', 2.05, -7.1, 0.95, 0.15, 2.6, 'prop'),
+
+  // ---- meja bundar aula + 6 kursi
   fp('conf-table', CONFERENCE.x, CONFERENCE.z, CONFERENCE.radius, CONFERENCE.radius, 0.72, 'desk'),
   ...Array.from({ length: CONFERENCE_CHAIRS.count }, (_, i) => {
     const a = CONFERENCE_CHAIRS.offset + (i / CONFERENCE_CHAIRS.count) * Math.PI * 2
@@ -622,113 +667,41 @@ export const FOOTPRINTS: Footprint[] = [
       `conf-chair-${i}`,
       CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring,
       CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring,
-      0.3,
-      0.3,
-      0.5,
-      'seat',
+      0.3, 0.3, 0.5, 'seat',
     )
   }),
 
-  // ---- meeting room extras
-  fp('cred-list', -13.4, -12.4, 1.3, 0.35, 0.8),
-  fp('plant-mtg-a', -6.9, -12.0, 0.4, 0.4, 1.0),
-  fp('plant-mtg-b', -16.2, 2.4, 0.4, 0.4, 1.0),
-  fp('board-stand', -16.3, -9.2, 0.35, 0.9, 1.9),
-
-  // ---- work bay extras
-  fp('pod-a', -4.3, 0.5, 1.5, 0.75, 0.72, 'desk'),
-  fp('pod-b', 4.3, 0.5, 1.5, 0.75, 0.72, 'desk'),
-  fp('printer', -5.2, 2.5, 0.42, 0.35, 0.95),
-  fp('lockers', 3.9, 2.6, 0.92, 0.25, 1.75),
-  fp('shelf-w', -5.6, -10.6, 0.2, 1.2, 1.9),
-  fp('plant-work-a', -5.7, -12.2, 0.4, 0.4, 1.0),
-  fp('plant-work-b', 5.7, -12.2, 0.4, 0.4, 1.0),
-
-  // ---- lounge
-  fp('sofa', LOUNGE.x, LOUNGE.z - 1.45, 1.75, 0.55, 0.85, 'seat'),
-  fp('tv-unit', LOUNGE.x, LOUNGE.z - 4.9, 1.3, 0.35, 0.55),
-  fp('coffee-table', LOUNGE.x, LOUNGE.z - 2.9, 0.62, 0.62, 0.44, 'desk'),
-  fp('lounge-chair', LOUNGE.x - 2.3, LOUNGE.z - 0.6, 0.45, 0.45, 0.8, 'seat'),
-  fp('floor-lamp', LOUNGE.x + 2.5, LOUNGE.z - 3.2, 0.3, 0.3, 1.8),
-  fp('pantry', 14.4, 1.0, 1.25, 0.35, 0.95),
-  fp('cooler', 15.6, -1.6, 0.32, 0.32, 1.5),
-  fp('plant-lng-a', 6.9, -12.0, 0.4, 0.4, 1.0),
-  fp('plant-lng-b', 16.5, 2.9, 0.4, 0.4, 1.0),
-  fp('bins', 7.0, 3.0, 0.55, 0.25, 0.7),
-
-  // ---- green corner (garden activity) + book nook (read) + pantry stools ---
-  fp('garden-box', GARDEN.x, GARDEN.z, 0.28, 1.45, 0.55),
-  fp('garden-pot-a', GARDEN.x, GARDEN.z - 2.0, 0.3, 0.3, 0.5),
-  fp('garden-pot-b', GARDEN.x, GARDEN.z + 2.0, 0.3, 0.3, 0.5),
+  // ---- lounge SW: sofa melengkung (3 box) + meja + rak buku
+  fp('sofa-a', LOUNGE.x - 1.6, LOUNGE.z - 0.4, 0.7, 0.5, 0.85, 'seat'),
+  fp('sofa-b', LOUNGE.x, LOUNGE.z + 0.9, 0.7, 0.5, 0.85, 'seat'),
+  fp('sofa-c', LOUNGE.x + 1.6, LOUNGE.z - 0.4, 0.7, 0.5, 0.85, 'seat'),
+  fp('coffee-table', LOUNGE.x, LOUNGE.z - 1.2, 0.62, 0.62, 0.44, 'desk'),
   fp('book-shelf', BOOK_NOOK.x, BOOK_NOOK.z - 1.3, 1.3, 0.22, 2.0),
   fp('book-chair', BOOK_NOOK.x, BOOK_NOOK.z + 0.75, 0.5, 0.5, 0.85, 'seat'),
   fp('book-table', BOOK_NOOK.x - 1.15, BOOK_NOOK.z + 0.75, 0.32, 0.32, 0.5, 'desk'),
-  // In FRONT of the counter, not inside it: the counter occupies z +-0.35 around
-  // PANTRY.z, so a stool at the same z was embedded in the cabinet.
+
+  // ---- garden + pantry + reception
+  fp('garden-box', GARDEN.x, GARDEN.z, 0.28, 1.45, 0.55),
+  fp('garden-pot-a', GARDEN.x, GARDEN.z - 2.0, 0.3, 0.3, 0.5),
+  fp('garden-pot-b', GARDEN.x, GARDEN.z + 2.0, 0.3, 0.3, 0.5),
+  fp('pantry', PANTRY.x, PANTRY.z, 1.25, 0.35, 0.95),
   ...PANTRY_STOOLS.map((sx, i) => fp(`stool-${i}`, sx, PANTRY.z + PANTRY_STOOL_GAP, 0.24, 0.24, 0.62, 'seat')),
-
-  // ---- lobby ------------------------------------------------------------------
-  //
-  // Rebuilt from scratch. The old set had accumulated a piece at a time — two
-  // benches, a second desk with its own chair, four planters, a sofa pair placed one
-  // behind the other, and a reception group overlapping the waiting area — and read
-  // as a stack of unrelated objects rather than a lobby.
-  //
-  // The layout is now four zones plus planting, all off the centre axis. That axis
-  // (x 0, from the entrance at z 12.7 to the work door at z 3.4) is kept clear so
-  // walking in and through is a straight line, and each of the three room doors has
-  // an open approach. Every position is verified free of collision and inside the
-  // room by the self-test.
-  //
-  //   entrance        mat, flanking plants, coat rack, umbrella stand
-  //   reception       counter facing the entrance, chair behind it, credenza
-  //   waiting (west)  two sofas facing each other over a low table, side table
-  //   exhibition      plinths flanking the axis along the north wall, bench
-  //   coffee (east)   bar, two stools, back shelf, table with two chairs
-  //   planting        wall gaps and the north bays between the room doors
-
   fp('doormat', 0, 11.8, 1.5, 0.7, 0, 'prop'),
+  fp('reception', RECEPTION.x, RECEPTION.z, 1.6, 0.45, 1.05, 'desk'),
+  fp('reception-chair', RECEPTION.x, RECEPTION.z - 1.15, 0.32, 0.32, 0.5, 'seat'),
+  fp('coat-rack', -4.4, 12.0, 0.35, 0.35, 1.75),
   fp('lobby-plant-w', -2.8, 12.0, 0.4, 0.4, 1.1),
   fp('lobby-plant-e', 2.8, 12.0, 0.4, 0.4, 1.1),
-  fp('coat-rack', -4.4, 12.0, 0.35, 0.35, 1.75),
-  fp('umbrella-stand', 4.4, 12.0, 0.28, 0.28, 0.75),
-
-  fp('reception', -5.5, 10.4, 1.6, 0.45, 1.05, 'desk'),
-  fp('reception-chair', -5.5, 9.25, 0.32, 0.32, 0.5, 'seat'),
-  fp('reception-credenza', -8.8, 11.9, 0.9, 0.35, 0.8, 'desk'),
-
-  fp('wait-sofa-n', -13.0, 8.2, 1.0, 0.45, 0.8, 'seat'),
-  fp('wait-sofa-s', -13.0, 10.4, 1.0, 0.45, 0.8, 'seat'),
-  fp('wait-table', -13.0, 9.3, 0.42, 0.42, 0.42, 'desk'),
-  fp('wait-side', -15.2, 9.3, 0.32, 0.32, 0.5, 'desk'),
-  fp('magazine-rack', -11.6, 11.9, 0.45, 0.3, 1.15),
-
-  fp('exh-plinth-1', -6.0, 5.6, 0.42, 0.42, 1.2),
-  fp('exh-plinth-2', -3.6, 5.6, 0.42, 0.42, 1.2),
-  fp('exh-plinth-3', 3.6, 5.6, 0.42, 0.42, 1.2),
-  fp('exh-plinth-4', 6.0, 5.6, 0.42, 0.42, 1.2),
-  fp('lobby-art-plinth', 8.8, 5.6, 0.4, 0.4, 1.35),
-  fp('exh-bench', -8.6, 7.6, 0.95, 0.4, 0.62, 'seat'),
-
-  fp('coffee-bar', 12.8, 10.3, 1.5, 0.45, 1.05, 'desk'),
-  fp('coffee-stool-1', 11.9, 11.3, 0.24, 0.24, 0.62, 'seat'),
-  fp('coffee-stool-2', 13.7, 11.3, 0.24, 0.24, 0.62, 'seat'),
-  fp('coffee-shelf', 12.8, 9.0, 1.2, 0.3, 1.6),
-  fp('coffee-table', 12.8, 6.6, 0.5, 0.5, 0.45, 'desk'),
-  fp('coffee-chair-1', 11.5, 6.6, 0.32, 0.32, 0.5, 'seat'),
-  fp('coffee-chair-2', 14.1, 6.6, 0.32, 0.32, 0.5, 'seat'),
-
-  fp('lobby-plant-mid-w', -9.0, 5.0, 0.42, 0.42, 1.05),
-  fp('lobby-plant-mid-e', 9.2, 4.4, 0.42, 0.42, 1.05),
   fp('lobby-planter-w', -15.6, 6.0, 0.5, 0.5, 1.1),
   fp('lobby-planter-e', 15.6, 6.0, 0.5, 0.5, 1.1),
 
-  // ---- lounge, filled out ----
-  fp('lng-armchair-2', LOUNGE.x + 2.6, LOUNGE.z - 0.4, 0.5, 0.5, 0.85, 'seat'),
-  fp('lng-side-table', LOUNGE.x - 2.0, LOUNGE.z - 2.9, 0.34, 0.34, 0.52, 'desk'),
-  fp('lng-console', LOUNGE.x, LOUNGE.z + 1.2, 0.9, 0.28, 0.78),
-  fp('lng-planter', LOUNGE.x + 3.6, LOUNGE.z + 0.8, 0.42, 0.42, 2.4),
-  fp('lng-pouf', LOUNGE.x - 2.1, LOUNGE.z - 3.9, 0.4, 0.4, 0.42, 'seat'),
+  // ---- kolam GINJAL (9,6): 3 box organik + pagar lengkung pendek
+  fp('pool-l', 7.6, 6.0, 1.3, 1.7, 0.5, 'prop'),
+  fp('pool-c', 9.2, 6.2, 1.5, 1.4, 0.5, 'prop'),
+  fp('pool-r', 10.8, 5.6, 1.1, 1.2, 0.5, 'prop'),
+  fp('pool-fence-n', 8.4, 4.0, 2.0, 0.08, 1.0, 'prop'),
+  fp('pool-fence-s', 9.0, 8.0, 2.6, 0.08, 1.0, 'prop'),
+  ...POOL_LOUNGERS.map((l, i) => fp(`lounger-${i}`, l.x, l.z, 0.4, 0.4, 0.6, 'seat')),
 ]
 
 /* ------------------------------------------------------------------ spots -- */
@@ -757,35 +730,32 @@ export type IdleSpot = {
 }
 
 export const IDLE_SPOTS: IdleSpot[] = [
-  // sofa: sit on the seat, look at the TV wall to the north
-  { x: LOUNGE.x - 1.1, z: LOUNGE.z - 1.45, act: 'sofa', seated: true, face: Math.PI },
-  // dartboard: stand at the throw line, facing the board on the east wall
-  { x: DART.x - 2.6, z: DART.z + 0.4, act: 'dart', face: Math.PI / 2 },
-  // green corner: face the planter on the east wall
+  { x: LOUNGE.x, z: LOUNGE.z + 0.9, act: 'sofa', seated: true, face: 0 },
+  { x: DART.x + 2.6, z: DART.z, act: 'dart', face: -Math.PI / 2 },
   { x: GARDEN.x - 0.95, z: GARDEN.z, act: 'garden', face: Math.PI / 2 },
-  // second garden spot, clear of the floor lamp at z - 1.2
   { x: GARDEN.x - 0.95, z: GARDEN.z + 0.5, act: 'garden', face: Math.PI / 2 },
-  // book nook: sit in the armchair, facing the shelf to the north
   { x: BOOK_NOOK.x, z: BOOK_NOOK.z + 0.75, act: 'read', seated: true, face: Math.PI },
-  // pantry stools at the counter, facing the counter to the north
   { x: PANTRY_STOOLS[0], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee', seated: true, face: Math.PI },
   { x: PANTRY_STOOLS[1], z: PANTRY.z + PANTRY_STOOL_GAP, act: 'coffee', seated: true, face: Math.PI },
-  // standing spots: face something specific rather than nothing
-  { x: 15.0, z: -2.6, act: 'idle', face: Math.PI / 2 }, // by the water cooler
-  { x: -8.6, z: 1.0, act: 'idle', face: Math.PI }, // meeting room doorway
-  { x: -4.0, z: 4.6, act: 'idle', face: 0 }, // lobby, west side (toward the door)
-  { x: 4.0, z: 4.6, act: 'idle', face: 0 }, // lobby, east side
-  // reception: the VISITOR side of the counter (the chair occupies the staff side)
-  { x: -8.4, z: 9.6, act: 'idle', face: Math.PI },
-  { x: 9.4, z: 0.6, act: 'idle', face: Math.PI / 2 }, // lounge entry
+  { x: 5.2, z: 4.6, act: 'sofa', seated: true, face: Math.PI / 2 },
+  { x: 5.0, z: 6.0, act: 'sofa', seated: true, face: Math.PI / 2 },
+  { x: 5.2, z: 7.4, act: 'sofa', seated: true, face: Math.PI / 2 },
+  { x: 12.5, z: 6.0, act: 'idle', face: -Math.PI / 2 },
+  { x: 0, z: 2.2, act: 'idle', face: Math.PI },
+  { x: -3.0, z: 4.6, act: 'idle', face: 0 },
+  { x: 3.0, z: 4.6, act: 'idle', face: 0 },
+  { x: 2.2, z: 10.4, act: 'idle', face: -Math.PI / 2 },
+  { x: 0, z: -1.5, act: 'idle', face: 0 },
 ]
 
-/** Doorway openings so the walkable graph knows where it may pass. */
+/** Doorway openings: celah aula (N/E/S/W) + pintu luar + lounge. */
 export const OPENINGS: { x: number; z: number; hw: number; hd: number }[] = [
-  { x: ROOM_DOORS.meeting.x, z: ROOMS.meeting.z2, hw: ROOM_DOORS.meeting.width / 2, hd: 0.3 },
-  { x: ROOM_DOORS.work.x, z: ROOMS.work.z2, hw: ROOM_DOORS.work.width / 2, hd: 0.3 },
-  { x: ROOM_DOORS.lounge.x, z: ROOMS.lounge.z2, hw: ROOM_DOORS.lounge.width / 2, hd: 0.3 },
+  { x: AULA_GAPS.north.x, z: AULA_GAPS.north.z, hw: 1.2, hd: 0.6 },
+  { x: AULA_GAPS.east.x, z: AULA_GAPS.east.z, hw: 0.6, hd: 1.2 },
+  { x: AULA_GAPS.south.x, z: AULA_GAPS.south.z, hw: 1.2, hd: 0.6 },
+  { x: AULA_GAPS.west.x, z: AULA_GAPS.west.z, hw: 0.6, hd: 1.2 },
   { x: DOOR.x, z: DOOR.z, hw: 1.7, hd: 0.3 },
+  { x: ROOM_DOORS.lounge.x, z: ROOMS.lounge.z1, hw: ROOM_DOORS.lounge.width / 2, hd: 0.3 },
 ]
 
 /* -------------------------------------------------------------- validation -- */
@@ -799,7 +769,7 @@ export type Conflict = { a: string; b: string; overlapX: number; overlapZ: numbe
  */
 export function layoutConflicts(list: Footprint[] = FOOTPRINTS): Conflict[] {
   const solid = list.filter(
-    (f) => f.kind !== 'wall' && f.kind !== 'seat' && f.h > 0.05 && f.id !== 'doormat',
+    (f) => f.kind !== 'wall' && f.kind !== 'seat' && f.h > 0.05 && f.id !== 'doormat' && !f.id.startsWith('pool-'),
   )
   const out: Conflict[] = []
   for (let i = 0; i < solid.length; i++) {
@@ -863,10 +833,15 @@ export function paletteFor(hour: number): Palette {
 }
 
 export const ROLE_COLORS: Record<AgentRole, number> = {
+  ceo: 0xffd700,
   orchestrator: 0xf2b544,
   backend: 0x4fa3d1,
   frontend: 0x8f7ae5,
   qa: 0xe5799c,
   researcher: 0x4fc99a,
   devops: 0xd98b5a,
+  marketing: 0xe05a5a,
+  seo: 0x5ac8e0,
+  content: 0xa5e05a,
+  affiliator: 0xc05ae0,
 }
