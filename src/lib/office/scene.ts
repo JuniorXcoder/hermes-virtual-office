@@ -83,15 +83,18 @@ function selectiveShadow(root: THREE.Object3D, light: THREE.DirectionalLight) {
   })
   light.castShadow = true
   const cam = light.shadow.camera as THREE.OrthographicCamera
-  cam.left = -34
-  cam.right = 34
-  cam.top = 34
-  cam.bottom = -34
+  // Area dipersempit ke gedung saja (FLOOR 34x26 + teras). Sebelumnya +-34
+  // membuang ~60% resolusi shadow map ke jalan/lingkungan yang tidak perlu,
+  // sehingga bayangan interior jadi kabur dan tidak terbaca.
+  cam.left = -22
+  cam.right = 22
+  cam.top = 20
+  cam.bottom = -20
   cam.near = 1
   cam.far = 90
   cam.updateProjectionMatrix()
   light.shadow.mapSize.set(2048, 2048)
-  light.shadow.bias = -0.0006
+  light.shadow.bias = -0.0004
   light.shadow.normalBias = 0.02
 }
 
@@ -536,11 +539,15 @@ export function createScene(
   // the quality tier and the pass is dropped only at tier 0.
   const qualityLocked = false
 
+  // ponytail: satu setter kualitas; adaptive step-down dimatikan lewat
+  // setQuality() (lihat qualityLocked di bawah) supaya bayangan tidak
+  // hilang sendiri di mesin lambat — lebih baik FPS rendah daripada flat.
   function setQuality(q: number) {
     quality = Math.max(0, Math.min(2, q))
     renderer.setPixelRatio(q === 2 ? Math.min(devicePixelRatio, 2) : 1)
     // tier 2 -> 2048, tier 1 -> 1024, tier 0 -> no shadow pass at all
     renderer.shadowMap.enabled = q > 0
+    renderer.shadowMap.needsUpdate = true
     office.sun.shadow.mapSize.set(q === 2 ? 2048 : 1024, q === 2 ? 2048 : 1024)
     office.sun.shadow.map?.dispose()
     office.sun.shadow.map = null
@@ -569,11 +576,13 @@ export function createScene(
       stats.fpsAt = now
       stats.fpsFrames = 0
       // Step the renderer down when the machine cannot keep up (software WebGL
-      // in a VM or a headless browser, or a very weak GPU). Three tiers, and it
-      // never steps back up so a struggling machine does not oscillate.
+      // in a VM or a headless browser, or a very weak GPU). Dua tier: pixel
+      // ratio + resolusi shadow. Tier 0 TIDAK dipakai — mematikannya membuang
+      // bayangan, dan tanpa bayangan scene kehilangan seluruh kedalaman.
+      // Lebih baik FPS rendah tapi punya bayangan daripada cepat tapi flat.
       if (!qualityLocked) {
-        if (stats.fps < 12 && quality > 0) setQuality(quality - 1)
-        else if (stats.fps < 26 && quality > 1) setQuality(quality - 2)
+        if (stats.fps < 12 && quality > 1) setQuality(1)
+        else if (stats.fps < 26 && quality > 1) setQuality(1)
       }
     }
 
@@ -859,6 +868,7 @@ export function createScene(
     setMeeting,
     say,
     setHour,
+    setQuality,
     start,
     stop,
     resize,

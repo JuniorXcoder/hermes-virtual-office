@@ -2531,11 +2531,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   group.add(numPlate)
 
   /* ----------------------------------------------------------- lighting --- */
-  scene.add(new THREE.AmbientLight(0xffffff, 1.15))
-  const sun = new THREE.DirectionalLight(0xfff6e5, 1.85)
-  sun.position.set(28, 34, 22)
+  // REALISTIS: ambient RENDAH + sun KUAT = ada bayangan + kontras.
+  // Sebelumnya AmbientLight 1.15 + Hemisphere 1.0 + env 1.0 mencuci seluruh
+  // scene jadi rata: sun 1.85 tidak menghasilkan bayangan terlihat sama sekali,
+  // dan tanpa bayangan tidak ada satupun highlight yang terbaca.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.22))
+  const sun = new THREE.DirectionalLight(0xfff4e2, 2.6)
+  // Sudut lebih rendah (bukan 34 tinggi): matahari tinggi memproyeksikan
+  // bayangan tepat di bawah objek sehingga tidak terlihat. Sudut ~35° memberi
+  // bayangan memanjang yang terbaca, seperti sinar pagi/sore.
+  sun.position.set(26, 20, 16)
   scene.add(sun)
-  const fill = new THREE.HemisphereLight(0xeaf4ff, 0xcfc0a4, 1.0)
+  const fill = new THREE.HemisphereLight(0xdfeaf7, 0x8a7a5f, 0.45)
   scene.add(fill)
 
   // recessed ceiling panels in a grid, each with a fixture and a point light
@@ -2964,9 +2971,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     pal = paletteFor(h)
     const night = h >= 18 || h < 6
     wallMat.color.setHex(pal.wall)
-    sun.intensity = night ? 1.1 : 1.85
-    sun.color.setHex(night ? 0xc9d8ee : 0xfff6e5)
-    fill.intensity = night ? 0.9 : 1.0
+    sun.intensity = night ? 1.2 : 2.6
+    sun.color.setHex(night ? 0xc9d8ee : 0xfff4e2)
+    fill.intensity = night ? 0.35 : 0.45
     // lampu meja selalu menyala (premium warm), lebih kuat malam
     for (const l of lamps) l.intensity = night ? 0.85 : 0.25
     for (const s of streaks) (s.material as THREE.MeshStandardMaterial).emissiveIntensity = night ? 1.5 : 0.85
