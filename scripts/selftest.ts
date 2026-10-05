@@ -11,32 +11,20 @@
  */
 import { readFileSync } from 'node:fs'
 import {
-  AULA,
   BOARD_COLUMNS,
   CEILING_Y,
   DESKS,
   deskByIndex,
   desksForDivision,
-  DIV_ROOMS,
   FOOTPRINTS,
   HALF_D,
-  ROOM_DOORS,
   HALF_W,
   KANBAN_BOARD,
-  PAINTINGS,
-  ROOMS,
   DOOR,
   blockingFootprints,
   layoutConflicts,
   WALL_H,
   WALL_T,
-  WINDOW_H,
-  WINDOW_Y,
-  SIDE_WINDOWS,
-  SIDE_WINDOW_W,
-  facadeConflicts,
-  paintingPlacement,
-  windowPlan,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, route } from '../src/lib/office/nav'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
@@ -80,18 +68,16 @@ console.log('geometry')
   check('all task states fit a rendered 3D kanban column', invalid.length === 0, invalid.join(', '))
 }
 
-// Board melengkung: chord di sisi utara aula, di dalam radius + di bawah plafon.
+// Kanban board: free-standing on the open floor, above it and below the ceiling.
 {
   const left = KANBAN_BOARD.x - KANBAN_BOARD.w / 2
   const right = KANBAN_BOARD.x + KANBAN_BOARD.w / 2
   const bottom = KANBAN_BOARD.y - KANBAN_BOARD.h / 2
   const top = KANBAN_BOARD.y + KANBAN_BOARD.h / 2
-  const corners = [[left, KANBAN_BOARD.z], [right, KANBAN_BOARD.z]]
-  const inside = corners.every(([x, z]) => Math.hypot(x - AULA.x, z - AULA.z) < AULA.r + 0.6)
   check(
-    'curved kanban board sits inside the aula oval',
-    inside,
-    `x ${f2(left)}..${f2(right)} z ${f2(KANBAN_BOARD.z)} vs aula r ${AULA.r}`,
+    'kanban board stands inside the floor plan',
+    left > -HALF_W && right < HALF_W && KANBAN_BOARD.z > -HALF_D && KANBAN_BOARD.z < HALF_D,
+    `x ${f2(left)}..${f2(right)} z ${f2(KANBAN_BOARD.z)}`,
   )
   check(
     'kanban board is above the floor and below the ceiling',
@@ -100,73 +86,18 @@ console.log('geometry')
   )
 }
 
-// Every window cut-out must lie within its wall, or the wall is cut in two.
+// The interior is demolished: the plan must be EMPTY. This is the check that
+// would fail the moment a stray wall or desk is left behind, and it flips back to
+// the furniture-collision check below once the rebuild adds footprints.
 {
-  const wins = windowPlan()
-  const outside = wins.filter((w) => w.y - w.h / 2 <= 0 || w.y + w.h / 2 >= WALL_H)
-  check('all window cut-outs fall inside the wall as built', outside.length === 0, `${wins.length} openings`)
-}
-
-// Openings and artwork share wall planes; nothing may overlap.
-{
-  const conflicts = facadeConflicts()
-  check('no facade conflicts (window/window, window/art, window/board)', conflicts.length === 0,
-    conflicts.length ? conflicts.map((c) => `${c.a}<->${c.b}`).join(', ') : '0 conflicts')
-}
-
-// A frame centred on the wall's coordinate would be buried inside the wall.
-{
-  const buried = PAINTINGS.filter((p) => {
-    const at = paintingPlacement(p)
-    return Math.hypot(at.frame.x - p.wall.x, at.frame.z - p.wall.z) <= WALL_T / 2
-  })
-  check('no artwork buried inside a wall', buried.length === 0, `${PAINTINGS.length} pieces`)
-}
-
-// Artwork must fit the wall it names AND land in the room, not outside it.
-//
-// The first version of this check compared `wall.from + along` against
-// `wall.from..wall.to` — the same numbers on both sides, so it passed while half
-// the paintings hung outside their wall in world space. It has to be checked in
-// WORLD coordinates against the ROOM, which is what actually exists.
-{
-  const rooms: Record<string, { lo: number; hi: number }> = {
-    '-17': { lo: -13 + 0.3, hi: 13 - 0.3 }, // dinding luar barat, world z
-    '17': { lo: -13 + 0.3, hi: 13 - 0.3 }, // dinding luar timur, world z
-  }
-  const off: string[] = []
-  for (const [i, p] of PAINTINGS.entries()) {
-    const at = paintingPlacement(p)
-    const b = rooms[String(p.wall.x)]
-    if (!b) {
-      off.push(`art${i} has no room bound for wall x=${p.wall.x}`)
-      continue
-    }
-    const lo = at.frame.z - p.w / 2
-    const hi = at.frame.z + p.w / 2
-    if (lo < b.lo || hi > b.hi) {
-      off.push(`art${i} z ${lo.toFixed(2)}..${hi.toFixed(2)} outside ${b.lo.toFixed(1)}..${b.hi.toFixed(1)}`)
-    }
-  }
-  check('every painting lands inside its room (world space)', off.length === 0, off.join(' | '))
-
-  // ...and must not sit on a side window. The side elevations carry six windows
-  // spanning several rooms, so "is the art inside the lobby" is not enough.
-  const win = SIDE_WINDOWS.map((z) => ({ z, lo: z - SIDE_WINDOW_W / 2, hi: z + SIDE_WINDOW_W / 2 }))
-  const onGlass: string[] = []
-  for (const [i, p] of PAINTINGS.entries()) {
-    if (Math.abs(p.wall.x) !== HALF_W) continue
-    const at = paintingPlacement(p)
-    const lo = at.frame.z - p.w / 2
-    const hi = at.frame.z + p.w / 2
-    const hit = win.filter((w) => hi > w.lo && lo < w.hi)
-    if (hit.length) onGlass.push(`art${i} z ${lo.toFixed(2)}..${hi.toFixed(2)} on window ${hit[0].z}`)
-  }
-  check('no painting covers a side window', onGlass.length === 0, onGlass.join(' | '))
+  check('open floor: no walls remain on the plan', FOOTPRINTS.filter((f) => f.kind === 'wall').length === 0,
+    `${FOOTPRINTS.length} footprints`)
+  check('open floor: no furniture remains on the plan', blockingFootprints().length === 0,
+    `${blockingFootprints().length} solids`)
 }
 
 // Footprints must not sit on top of one another — via layoutConflicts(), the
-// single source of truth (tahu lobus kolam organik boleh bersinggungan).
+// single source of truth.
 {
   const bad = layoutConflicts()
   check('no furniture overlaps furniture', bad.length === 0, bad.slice(0, 4).map((c) => `${c.a}<->${c.b}`).join(', '))
@@ -183,16 +114,10 @@ console.log('geometry')
   check('deskByIndex(n) returns the desk labelled n', wrong.length === 0, wrong.join(', '))
 }
 
-// Celah aula + pintu luar/lounge wajib bebas furniture (koridor cincin jalan).
+// Nothing may block the entrance: with the interior gone, the whole floor — and
+// the doorway — must be clear.
 {
-  const gaps = [
-    { x: AULA.x, z: AULA.z - AULA.r, hw: 1.4, hd: 0.8 }, // N
-    { x: AULA.x + AULA.r, z: AULA.z, hw: 0.8, hd: 1.4 }, // E
-    { x: AULA.x, z: AULA.z + AULA.r, hw: 1.4, hd: 0.8 }, // S
-    { x: AULA.x - AULA.r, z: AULA.z, hw: 0.8, hd: 1.4 }, // W
-    { x: DOOR.x, z: DOOR.z, hw: 1.7, hd: 1.2 },
-    { x: ROOM_DOORS.lounge.x, z: ROOMS.lobby.z1, hw: 1.1, hd: 1.2 },
-  ]
+  const gaps = [{ x: DOOR.x, z: DOOR.z, hw: 1.7, hd: 1.2 }]
   const blockedDoor: string[] = []
   for (const g of gaps) {
     for (const f of FOOTPRINTS) {
@@ -202,7 +127,7 @@ console.log('geometry')
       if (ox && oz) blockedDoor.push(`${f.id} @ gap ${g.x},${g.z}`)
     }
   }
-  check('no furniture blocks an aula gap or entrance', blockedDoor.length === 0, blockedDoor.join(' | '))
+  check('no furniture blocks the entrance', blockedDoor.length === 0, blockedDoor.join(' | '))
 }
 
 // Every destination that has a direction must express it the same way, and the
@@ -434,25 +359,21 @@ console.log('geometry')
   )
 }
 
-// A seat's footprint and its mesh must agree, and a chair must be on the side of the
-// desk it serves. The reception chair was placed at `z + 1.15` — the VISITOR side of
-// the counter — so the receptionist sat facing away from it and blocked the walk-up.
+// With the interior demolished there is no reception counter and no sofa, so the
+// old seating checks have nothing to measure. The check is kept as a no-op that
+// re-arms the moment a `reception` footprint exists again — it is the guard that
+// caught the receptionist sitting on the visitor side of the counter.
 {
   const problems: string[] = []
   const rec = FOOTPRINTS.find((f) => f.id === 'reception')
   const chair = FOOTPRINTS.find((f) => f.id === 'reception-chair')
-  if (!rec || !chair) {
-    problems.push('reception or reception-chair footprint missing')
-  } else {
-    // The counter's staff side is the lower z (its badge faces +z, the visitor side).
+  if (rec && chair) {
     if (chair.z >= rec.z) {
       problems.push(`reception chair at z=${chair.z} is not behind the counter (z=${rec.z})`)
     }
-    // A chair that touches the counter leaves nowhere to sit.
     const gap = rec.z - rec.hd - (chair.z + chair.hd)
     if (gap < 0.2) problems.push(`only ${gap.toFixed(2)}m between chair and counter`)
   }
-  // Sofa lounge (3 segmen 유기) tak boleh sentuh counter.
   const sofa = FOOTPRINTS.find((f) => f.id === 'sofa-b')
   if (rec && sofa) {
     const dx = Math.abs(sofa.x - rec.x) - (sofa.hw + rec.hw)
@@ -479,57 +400,35 @@ console.log('geometry')
   check('listProfiles includes the default profile', problems.length === 0, problems.join(' | '))
 }
 
-// Denah organik: sumbu tengah pintu->aula jalan, koridor cincin sekeliling aula
-// jalan (8 titik mata angin di r 6.2), tiap divisi punya >=1 meja terjangkau.
+// Open floor: the doorway and the whole plan must be walkable end to end. With
+// no walls or furniture, the only thing that can block a walker is the floor edge
+// (nav.ts). This is the check that would catch a stray solid left behind.
 {
   const problems: string[] = []
-  const lobbyZ = ROOMS.lobby.z1
 
-  // 1. Sumbu tengah pintu masuk -> celah selatan aula wajib jalan.
+  // 1. The centre axis, from the entrance inward, must be clear.
   const laneBlocked: string[] = []
-  for (let z = HALF_D - WALL_T - 0.4; z >= AULA.z + AULA.r - 0.3; z -= 0.2) {
+  for (let z = HALF_D - WALL_T - 0.4; z >= -HALF_D + WALL_T + 0.4; z -= 0.2) {
     if (blocked(0, z, BODY_R)) laneBlocked.push(z.toFixed(1))
   }
   if (laneBlocked.length) {
     problems.push(`centre axis blocked at z ${laneBlocked.join(', ')}`)
   }
 
-  // 2. Koridor cincin (r 5.2: antara dinding aula r4.5 dan pods) wajib bebas.
-  const ringBad: string[] = []
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2 + Math.PI / 8
-    const x = AULA.x + Math.cos(a) * (AULA.r + 0.7)
-    const z = AULA.z + Math.sin(a) * (AULA.r + 0.7)
-    if (Math.abs(x) > HALF_W - 1 || Math.abs(z) > HALF_D - 1) continue
-    if (blocked(x, z, BODY_R)) ringBad.push(`(${x.toFixed(1)},${z.toFixed(1)})`)
-  }
-  if (ringBad.length) problems.push(`ring corridor blocked at ${ringBad.join(', ')}`)
-
-  // 3. Pintu masuk + pintu lounge.
+  // 2. The entrance approach must be clear.
   if (blocked(DOOR.x, HALF_D - WALL_T - 0.8, BODY_R)) {
     problems.push('entrance approach blocked')
   }
-  if (blocked(ROOM_DOORS.lounge.x, ROOMS.lobby.z1 + 0.6, BODY_R)) {
-    problems.push('lounge door approach blocked')
+
+  // 3. Every idle spot must be reachable from the door (an open floor means they
+  //    all are; a stray prop would strand one).
+  for (const spot of IDLE_SPOTS) {
+    const legs = route({ x: DOOR.x, z: DOOR.z - 1 }, { x: spot.x, z: spot.z })
+    if (!legs.length) problems.push(`idle spot (${spot.x},${spot.z}) unreachable`)
   }
 
-  // 4. Tiap divisi punya >=1 meja; visitor spot-nya bebas & bisa di-route dari pintu.
-  // (Titik meja MEMANG blocked — itu buktinya collision jalan.)
-  for (const div of ['exec', 'tech', 'growth', 'content'] as const) {
-    const desks = desksForDivision(div)
-    if (!desks.length) { problems.push(`${div} has no desks`); continue }
-    const vs = desks.map((d) => {
-      const s = Math.sin(d.facing), c = Math.cos(d.facing)
-      return { d, x: d.x + s * 1.6, z: d.z + c * 1.6 }
-    })
-    const free = vs.filter((v) => !blocked(v.x, v.z, BODY_R))
-    if (!free.length) { problems.push(`${div}: all visitor spots blocked`); continue }
-    const legs = free.map((v) => route({ x: DOOR.x, z: DOOR.z - 1 }, { x: v.x, z: v.z }))
-    if (!legs.some((l) => l.length > 0)) problems.push(`${div}: no route door->desk`)
-  }
-
-  // 5. Tak ada dua solid selatan (z>lobbyZ-0.5) yg overlap.
-  const solid = blockingFootprints().filter((f) => f.z > lobbyZ - 0.5)
+  // 4. No two solids may overlap anywhere on the plan.
+  const solid = blockingFootprints()
   for (let i = 0; i < solid.length; i++) {
     for (let j = i + 1; j < solid.length; j++) {
       const a = solid[i]
@@ -540,7 +439,7 @@ console.log('geometry')
     }
   }
 
-  check('organic plan: axis, ring corridor, division desks reachable', problems.length === 0, problems.join(' | '))
+  check('open floor: doorway, centre axis and every idle spot are reachable', problems.length === 0, problems.join(' | '))
 }
 
 
@@ -618,12 +517,15 @@ console.log('\nmovement')
 }
 
 /* ------------------------------------------------------------- transitions -- */
-console.log('\nwindow/board constants')
+console.log('\nshell constants')
 
-check('window band fits under the wall top', WINDOW_Y + WINDOW_H / 2 < WALL_H,
-  `${WINDOW_Y} + ${WINDOW_H}/2 vs ${WALL_H}`)
-check('ceiling sits at the wall top (no beam across the board)', CEILING_Y === WALL_H,
+// The ceiling sits at the top of the (now wall-less) shell, so the overhead light
+// panels and the free-standing board are measured against the same height.
+check('ceiling sits at the shell top', CEILING_Y === WALL_H,
   `${CEILING_Y} vs ${WALL_H}`)
+// The floor plan still has real extents; nav.ts derives its grid from these.
+check('floor plan has real extents', HALF_W > 0 && HALF_D > 0,
+  `${HALF_W * 2} x ${HALF_D * 2} m`)
 
 // `readJson` is async and this file compiles to CJS, so the check runs inside an
 // async IIFE and records its own result. Everything else here is synchronous.
