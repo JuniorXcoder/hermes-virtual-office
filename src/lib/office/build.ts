@@ -11,11 +11,15 @@
  * of binary assets, and a low-poly look does not need photographic detail.
  */
 import * as THREE from 'three'
+import { rbox } from './bevel'
+import { marbleLight, woodWarm, glassReal, stoneDark, plasterClean } from './materials'
+import { setupLights } from './lights'
 import {
   CONFERENCE,
   CONFERENCE_CHAIRS,
   DESKS,
   DESK_CHAIR,
+  DIV_ROOMS,
   DOOR,
   GARDEN,
   BOOK_NOOK,
@@ -29,6 +33,9 @@ import {
   HALF_W,
   KANBAN_BOARD,
   LOUNGE,
+  POOL,
+  POOL_LOUNGERS,
+  ROOM_SIGNS,
   PAINTINGS,
   paintingPlacement,
   FRAME_D,
@@ -785,17 +792,16 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   pavementTex.repeat.set(14, 14)
 
   /* ------------------------------------------------------------- floors --- */
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth),
-    new THREE.MeshStandardMaterial({ map: floorTex, bumpMap: floorBump, bumpScale: 0.35, roughness: 0.72, metalness: 0.02 }),
-  )
+  // REALISTIS: lantai marmer terang (ganti kayu kartun). Satu material konsisten.
+  const marbleMat = track(marbleLight())
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth), marbleMat)
   floor.rotation.x = -Math.PI / 2
   group.add(floor)
 
-  // the lobby is a different material so the transition reads as architecture
+  // lobby: marmer sama (transisi via pola, bukan material beda)
   const lobbyFloor = new THREE.Mesh(
     new THREE.PlaneGeometry(ROOMS.lobby.x2 - ROOMS.lobby.x1, ROOMS.lobby.z2 - ROOMS.lobby.z1),
-    new THREE.MeshStandardMaterial({ map: lobbyTex, bumpMap: lobbyBump, bumpScale: 0.12, roughness: 0.42, metalness: 0.04 }),
+    marbleMat,
   )
   lobbyFloor.rotation.x = -Math.PI / 2
   lobbyFloor.position.set(0, 0.006, (ROOMS.lobby.z1 + ROOMS.lobby.z2) / 2)
@@ -817,9 +823,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   rug(LOUNGE.x, LOUNGE.z - 2.4, 5.4, 4.6, 0xc6b9a2)
 
   /* -------------------------------------------------------------- walls --- */
-  const wallMat = track(
-    new THREE.MeshStandardMaterial({ color: pal.wall, map: plasterTex, bumpMap: plasterBump, bumpScale: 0.12, roughness: 0.9 }),
-  )
+  // REALISTIS: SATU plester bersih seluruh gedung (hapus variasi dinding).
+  const wallMat = track(plasterClean())
   /** A wall slab with optional rectangular cut-outs (windows, doorways). */
   const wallPanel = (
     w: number,
@@ -883,58 +888,134 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   wallPanel(FLOOR.depth, WALL_H, -HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
   wallPanel(FLOOR.depth, WALL_H, HALF_W, WALL_H / 2, 0, Math.PI / 2, sideHoles)
 
-  // interior partitions, each with a doorway to the lobby
-  // west/east room dividers run north-south, full length of the room band
-  for (const px of [ROOMS.work.x1, ROOMS.work.x2]) {
-    const z1 = -HALF_D + WALL_T
-    const z2 = ROOMS.work.z2
-    const m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, z2 - z1), wallMat)
-    m.position.set(px, WALL_H / 2, (z1 + z2) / 2)
-    group.add(m)
-  }
-  // south walls of the three rooms, each with a doorway
-  const roomSouthWall = (x1: number, x2: number, doorX: number, doorW: number) => {
-    const z = ROOMS.work.z2
-    const segs: [number, number][] = [
-      [x1, doorX - doorW / 2],
-      [doorX + doorW / 2, x2],
-    ]
-    for (const [a, b] of segs) {
-      if (b - a < 0.1) continue
-      const m = new THREE.Mesh(new THREE.BoxGeometry(b - a, WALL_H, WALL_T), wallMat)
-      m.position.set((a + b) / 2, WALL_H / 2, z)
+  // DINDING AULA OVAL (0,-4) r=4.5: 16 segmen busur, 4 celah (N/E/S/W).
+  // Koordinat & celah SELARAS dgn footprint aula-w* di layout.ts.
+  {
+    const cx = 0, cz = -4, r = 4.5, n = 16
+    const gaps = [Math.PI, Math.PI / 2, 0, -Math.PI / 2]
+    const seg = (2 * Math.PI * r) / n
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2
+      if (gaps.some((g) => Math.abs(((a - g + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 0.22)) continue
+      const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r
+      const m = new THREE.Mesh(new THREE.BoxGeometry(seg * 0.96, WALL_H, WALL_T), wallMat)
+      m.position.set(x, WALL_H / 2, z)
+      m.rotation.y = -a + Math.PI / 2
       group.add(m)
     }
   }
-  roomSouthWall(ROOMS.meeting.x1, ROOMS.meeting.x2, -11.0, 2.2)
-  roomSouthWall(ROOMS.work.x1, ROOMS.work.x2, 0, 3.4)
-  roomSouthWall(ROOMS.lounge.x1, ROOMS.lounge.x2, 11.0, 2.2)
+  // SEKAT PODS melengkung (busur pendek) — selaras footprint sek-*.
+  {
+    const arc = (cx: number, cz: number, r: number, a0: number, a1: number, k: number) => {
+      for (let i = 0; i < k; i++) {
+        const a = a0 + ((a1 - a0) * (i + 0.5)) / k
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.2, 0.12), wallMat)
+        m.position.set(x, 1.1, z)
+        m.rotation.y = -a + Math.PI / 2
+        group.add(m)
+      }
+    }
+    arc(-5.5, -9.5, 2.6, Math.PI * 0.9, Math.PI * 1.7, 3)
+    arc(-9.0, -4.0, 2.6, Math.PI * 0.4, Math.PI * 1.1, 3)
+    arc(9.0, -4.5, 2.6, -Math.PI * 0.6, Math.PI * 0.3, 3)
+    arc(10.5, 0.0, 2.2, -Math.PI * 0.3, Math.PI * 0.45, 3)
+  }
+
+  /* ------------------------------------------------- room signs + pool --- */
+  // Papan nama tiap ruang (canvas texture teks, di atas pintu).
+  {
+    const signTex = (text: string) => {
+      const cv = document.createElement('canvas')
+      cv.width = 512
+      cv.height = 96
+      const c = cv.getContext('2d')!
+      c.fillStyle = '#1d2b33'
+      c.fillRect(0, 0, 512, 96)
+      c.fillStyle = '#5fd0a6'
+      c.font = '700 52px system-ui, sans-serif'
+      c.textAlign = 'center'
+      c.textBaseline = 'middle'
+      c.fillText(text, 256, 52)
+      const t = new THREE.CanvasTexture(cv)
+      t.colorSpace = THREE.SRGBColorSpace
+      return track(t)
+    }
+    for (const s of ROOM_SIGNS) {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.4, 0.45),
+        new THREE.MeshStandardMaterial({ map: signTex(s.text), emissive: 0xffffff, emissiveMap: signTex(s.text), emissiveIntensity: 0.35 }),
+      )
+      m.position.set(s.x, 2.9, s.z + 0.2)
+      group.add(m)
+    }
+  }
+
+  // Kolam renang ORGANIK (ginjal) di area santai SE dalam gedung (9,6).
+  // 3 lobus oval + air ginjal: aproksimasi kurva, selaras footprint pool-*.
+  {
+    const deck = new THREE.Mesh(
+      new THREE.BoxGeometry(POOL.deckW, 0.05, POOL.deckD),
+      stdMat(0xd8d2c2, { rough: 0.9 }),
+    )
+    deck.position.set(POOL.x, 0.025, POOL.z)
+    group.add(deck)
+    const lobe = (x: number, z: number, w: number, d: number, mat: THREE.Material, y = 0.05) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.5, 24), mat)
+      m.scale.set(w / 2, 1, d / 2)
+      m.position.set(x, y, z)
+      group.add(m)
+    }
+    const basinMat = stdMat(0x9fc4d4, { rough: 0.5 })
+    lobe(7.6, 6.0, 2.6, 3.4, basinMat)
+    lobe(9.2, 6.2, 3.0, 2.8, basinMat)
+    lobe(10.8, 5.6, 2.2, 2.4, basinMat)
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x2fa8c8, transparent: true, opacity: 0.85,
+      emissive: 0x1a7fa0, emissiveIntensity: 0.55, roughness: 0.15, metalness: 0.1,
+    })
+    lobe(7.6, 6.0, 2.3, 3.1, waterMat, POOL.waterY + 0.25)
+    lobe(9.2, 6.2, 2.7, 2.5, waterMat, POOL.waterY + 0.25)
+    lobe(10.8, 5.6, 1.9, 2.1, waterMat, POOL.waterY + 0.25)
+    const fenceMat = stdMat(0x5b6a75, { metal: 0.5, rough: 0.4 })
+    const fence = (w: number, d: number, x: number, z: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.0, d), fenceMat)
+      m.position.set(x, 0.5, z)
+      group.add(m)
+    }
+    fence(4.0, 0.08, 8.4, 4.0)
+    fence(5.2, 0.08, 9.0, 8.0)
+    // kursi santai di deck (menghadap air) — posisi dari POOL_LOUNGERS
+    for (const l of POOL_LOUNGERS) {
+      const g = new THREE.Group()
+      g.position.set(l.x, 0, l.z)
+      g.rotation.y = l.facing
+      const bed = box(0.7, 0.12, 1.7, 0xe8ddc4, { rough: 0.9 })
+      bed.position.y = 0.35
+      g.add(bed)
+      const back = box(0.7, 0.5, 0.12, 0xe8ddc4, { rough: 0.9 })
+      back.position.set(0, 0.6, -0.8)
+      back.rotation.x = -0.5
+      g.add(back)
+      for (const [dx, dz] of [[-0.3, -0.7], [0.3, -0.7], [-0.3, 0.7], [0.3, 0.7]]) {
+        const leg = cyl(0.03, 0.035, 0.32, 0x5b666e, 8, 0.5)
+        leg.position.set(dx, 0.16, dz)
+        g.add(leg)
+      }
+      group.add(g)
+    }
+  }
 
   /* ------------------------------------------------------------ windows --- */
-  const glassMat = track(
-    new THREE.MeshPhysicalMaterial({
-      color: 0xc3e2f0,
-      transparent: true,
-      opacity: 0.4,
-      roughness: 0.03,
-      metalness: 0,
-      emissive: 0xa6cfe2,
-      emissiveIntensity: 0.22,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }),
-  )
+  // REALISTIS: kaca transmisi nyata + frame hitam tipis (ganti frame tebal abu).
+  const glassMat = track(glassReal())
   // Facade materials. Declared HERE, above windowUnit(): its lintel uses bandMat,
   // and a const declared later in the same scope is in the temporal dead zone —
   // the call threw "Cannot access 'bandMat' before initialization" at runtime.
-  const bandMat = track(
-    new THREE.MeshStandardMaterial({ color: 0xb9c4cc, map: plasterTex, roughness: 0.7 }),
-  )
-  const sillMat = track(
-    new THREE.MeshStandardMaterial({ color: 0xd8dfe4, map: plasterTex, roughness: 0.75 }),
-  )
+  const bandMat = track(plasterClean())
+  const sillMat = track(plasterClean())
   const frameMat = track(
-    new THREE.MeshStandardMaterial({ color: 0x9aa8b2, map: metalTex, metalness: 0.55, roughness: 0.35 }),
+    new THREE.MeshStandardMaterial({ color: 0x2b3236, metalness: 0.7, roughness: 0.3 }),
   )
 
   /**
@@ -1123,15 +1204,24 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     group.add(spot)
   })
 
-  /* ------------------------------------------------------- kanban board --- */
-  const boardSurface = box(KANBAN_BOARD.w, KANBAN_BOARD.h, 0.14, 0x14313f, {
+  /* --------------------------------------- kanban board (melengkung) --- */
+  // 5 panel segi mengikuti busur r=4.7 di sisi utara aula, chord z~=-8.35.
+  const boardSurface = box(1.6, KANBAN_BOARD.h, 0.14, 0x14313f, {
     emissive: 0x0b3d2c,
     rough: 0.4,
   })
   boardSurface.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z)
   boardSurface.name = 'kanban-board'
   group.add(boardSurface)
-  // mounting: a frame plus brackets so it sits ON the wall instead of hovering
+  {
+    // panel samping selaras footprint board-l/r (chord, bukan busur penuh)
+    for (const sx of [-2.05, 2.05]) {
+      const p = box(1.9, KANBAN_BOARD.h, 0.12, 0x14313f, { emissive: 0x0b3d2c, rough: 0.4 })
+      p.position.set(sx, KANBAN_BOARD.y, -7.1)
+      p.rotation.y = sx < 0 ? 0.28 : -0.28
+      group.add(p)
+    }
+  }
   const boardFrame = new THREE.Mesh(
     new THREE.BoxGeometry(KANBAN_BOARD.w + 0.24, KANBAN_BOARD.h + 0.24, 0.1),
     stdMat(0x2b3f49, { metal: 0.3, rough: 0.5 }),
@@ -1447,26 +1537,17 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const monitors: THREE.Mesh[] = []
   const lamps: THREE.PointLight[] = []
 
+  // REALISTIS: meja kayu beveled + kaki ramping. Top rbox (bukan Box tajam).
+  const deskWoodMat = track(woodWarm())
   for (const desk of DESKS) {
     const d = new THREE.Group()
     d.position.set(desk.x, 0, desk.z)
     d.rotation.y = desk.facing
 
-    const top = new THREE.Mesh(
-      new THREE.BoxGeometry(2.0, 0.07, 1.0),
-      track(
-        new THREE.MeshStandardMaterial({
-          color: pal.deskTop,
-          map: deskTex,
-          roughnessMap: deskRough,
-          roughness: 0.5,
-          metalness: 0.04,
-        }),
-      ),
-    )
+    const top = new THREE.Mesh(rbox(2.0, 0.07, 1.0, 0.015), deskWoodMat)
     top.position.y = 0.72
     d.add(top)
-    const skirt = box(1.9, 0.5, 0.08, 0xc9d2d8, { rough: 0.6 })
+    const skirt = new THREE.Mesh(rbox(1.9, 0.5, 0.08, 0.015), track(plasterClean()))
     skirt.position.set(0, 0.46, -0.42)
     d.add(skirt)
     for (const [lx, lz] of [
@@ -1475,7 +1556,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       [-0.9, 0.42],
       [0.9, 0.42],
     ]) {
-      const leg = box(0.07, 0.72, 0.07, pal.deskLeg, { metal: 0.4 })
+      const leg = new THREE.Mesh(rbox(0.05, 0.72, 0.05, 0.01), track(plasterClean()))
       leg.position.set(lx, 0.36, lz)
       d.add(leg)
     }
@@ -1528,7 +1609,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       map: vinylTex,
       roughness: 0.62,
     })
-    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.07, 0.54), chairFabric)
+    const seat = new THREE.Mesh(rbox(0.56, 0.07, 0.54, 0.015), chairFabric)
     // Top surface comes from the pose that sits here (SEATS.chair), so the two can
     // never drift apart again. Centring the slab puts its top at the derived value.
     seat.position.y = seatTop('chair') - SEATS.chair.thickness / 2
