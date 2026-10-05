@@ -12,7 +12,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
  * Box dengan sudut membulat mikro.
  * radius dijepit agar tidak melebihi setengah sisi terkecil (meledak bila over).
  */
-export function rbox(w: number, h: number, d: number, radius = 0.02) {
+export function rbox(w: number, h: number, d: number, radius = 0.04) {
   const r = Math.min(radius, Math.min(w, h, d) / 2.1)
   return new RoundedBoxGeometry(w, h, d, 2, Math.max(0.005, r))
 }

@@ -132,7 +132,7 @@ export function createScene(
   // Without an explicit tone mapping + exposure the standard materials render
   // flat and muddy, which is what made the office look dim and lifeless.
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.25
+  renderer.toneMappingExposure = 1.1
   renderer.outputColorSpace = THREE.SRGBColorSpace
 
   // Image-based lighting. Without an environment map every metal and glass surface
@@ -161,6 +161,9 @@ export function createScene(
       .format(new Date()),
   )
   const office: OfficeProps = buildOffice(scene, hour)
+  // REALISTIS: bayangan lembut radius 4 (shadow.radius) + exposure filmic 1.1
+  // supaya highlight material (marmer/kayu) kelihatan, bukan flat.
+  office.sun.shadow.radius = 4
   selectiveShadow(office.group, office.sun)
   selectiveShadow(office.streetGroup, office.sun)
 
