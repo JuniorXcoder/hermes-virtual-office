@@ -366,92 +366,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup.add(dash)
   }
 
+  // No trees and no neighbouring buildings: the plot stands on its own until the
+  // new office is built. `foliage` stays (animateStreet sways it) but is empty.
   const foliage: { group: THREE.Group; phase: number }[] = []
-  const tree = (x: number, z: number, scale = 1) => {
-    const t = new THREE.Group()
-    t.position.set(x, 0, z)
-    const trunk = cyl(0.14 * scale, 0.2 * scale, 2.0 * scale, 0x6b5138, 8)
-    trunk.position.y = 1.0 * scale
-    t.add(trunk)
-    const canopyMat = stdMat(0x4f8b55, { rough: 0.9 })
-    for (const [ox, oy, oz, r] of [
-      [0, 2.4, 0, 1.05],
-      [0.5, 2.0, 0.3, 0.75],
-      [-0.45, 2.1, -0.3, 0.7],
-    ]) {
-      const leafM = new THREE.Mesh(new THREE.IcosahedronGeometry(r * scale, 0), canopyMat)
-      leafM.position.set(ox * scale, oy * scale, oz * scale)
-      t.add(leafM)
-    }
-    streetGroup.add(t)
-    const phase = Math.abs(x * 0.17 + z * 0.11)
-    foliage.push({ group: t, phase })
-  }
-  for (const [tx, tz] of [
-    [-20, 10],
-    [-20, 2],
-    [20, 10],
-    [20, 2],
-    [-13, 16.5],
-    [13, 16.5],
-    [-22, -6],
-    [22, -6],
-  ]) {
-    tree(tx, tz, 1.2)
-  }
 
-  const building = (x: number, z: number, w: number, d: number, h: number, color: number) => {
-    const b = box(w, h, d, color, { rough: 0.9 })
-    b.position.set(x, h / 2, z)
-    streetGroup.add(b)
-
-    // Window grid on ALL FOUR faces, so neighbours do not read as blank slabs.
-    const winMat = stdMat(0x8fb6cf, { emissive: 0x6f9cbb, ei: 0.5 })
-    const frameMat2 = stdMat(0x6b7681, { metal: 0.2, rough: 0.6 })
-    const rows = Math.max(2, Math.floor(h / 3))
-    const colsX = Math.max(2, Math.floor(w / 2.6))
-    const colsZ = Math.max(2, Math.floor(d / 2.6))
-
-    const pane = (px: number, py: number, pz: number, alongX: boolean) => {
-      const frame = new THREE.Mesh(
-        new THREE.BoxGeometry(alongX ? 1.3 : 0.08, 1.6, alongX ? 0.08 : 1.3),
-        frameMat2,
-      )
-      frame.position.set(px, py, pz)
-      streetGroup.add(frame)
-      const glass = new THREE.Mesh(
-        new THREE.BoxGeometry(alongX ? 1.1 : 0.05, 1.4, alongX ? 0.05 : 1.1),
-        winMat,
-      )
-      glass.position.set(px, py, pz)
-      streetGroup.add(glass)
-    }
-
-    for (let r = 1; r < rows; r++) {
-      const py = 1.6 + r * (h / rows)
-      for (let c = 0; c < colsX; c++) {
-        const px = x - w / 2 + (w / colsX) * (c + 0.5)
-        pane(px, py, z - d / 2 - 0.06, true)
-        pane(px, py, z + d / 2 + 0.06, true)
-      }
-      for (let c = 0; c < colsZ; c++) {
-        const pz = z - d / 2 + (d / colsZ) * (c + 0.5)
-        pane(x - w / 2 - 0.06, py, pz, false)
-        pane(x + w / 2 + 0.06, py, pz, false)
-      }
-    }
-    // roof parapet so the skyline is not a bare box
-    const parapet = box(w + 0.4, 0.5, d + 0.4, 0x76808a, { rough: 0.9 })
-    parapet.position.set(x, h + 0.25, z)
-    streetGroup.add(parapet)
-  }
-
-  building(-26, -14, 12, 10, 13, 0x8e9aa6)
-  building(27, -12, 14, 10, 9, 0x9aa39c)
-  building(-30, 38, 10, 8, 7, 0xa39d94)
-  building(30, 39, 12, 9, 11, 0x8f9aa0)
-  building(-6, -24, 16, 10, 16, 0x9299a8)
-  building(14, -25, 12, 9, 12, 0x9d9a92)
 
   // kerb and street lamps
   const kerb = box(FLOOR.width + 26, 0.12, 0.3, 0xb9bec2, { rough: 0.9 })
