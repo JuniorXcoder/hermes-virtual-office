@@ -61,8 +61,9 @@ export function marbleLight() {
     c.stroke()
   })
   map.repeat.set(10, 8)
-  // roughness rendah + sedikit metalness = pantulan glossy (premium, bukan matte kartun)
-  return new THREE.MeshStandardMaterial({ map, roughness: 0.12, metalness: 0.15, envMapIntensity: 1.2 })
+  // REALISTIS: roughness sangat rendah + metalness tinggi = pantulan env jelas.
+  // (0.28/0.02 sebelumnya membuat marmer render seperti beton matte.)
+  return new THREE.MeshStandardMaterial({ map, roughness: 0.08, metalness: 0.35, envMapIntensity: 1.6 })
 }
 
 /** Kayu hangat berserat — meja, deck, kusen. */

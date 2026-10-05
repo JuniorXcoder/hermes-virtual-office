@@ -149,7 +149,9 @@ export function createScene(
 
   const scene = new THREE.Scene()
   scene.environment = envRT.texture
-  scene.environmentIntensity = 0.55 // fill the shadows, do not wash the scene out
+  // REALISTIS: env lebih kuat supaya marmer/kaca/metal benar-benar memantul.
+  // 0.55 membuat semua permukaan glossy render seperti matte.
+  scene.environmentIntensity = 1.0
   pmrem.dispose()
   // A vertical gradient reads as atmosphere; a flat colour reads as paper.
   scene.background = skyGradientTexture()
