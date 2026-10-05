@@ -17,12 +17,9 @@
  * The rebuild re-populates `FOOTPRINTS` and draws the matching meshes here.
  */
 import * as THREE from 'three'
-import { marbleLight } from './materials'
 import {
-  CEILING_Y,
   FLOOR,
   HALF_D,
-  HALF_W,
   KANBAN_BOARD,
   paletteFor,
   type Palette,
@@ -251,14 +248,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
   pavementTex.repeat.set(14, 14)
 
-  /* ------------------------------------------------------------- floor --- */
-  // Open marble floor. There is no lobby, no rooms and no rug — one surface.
-  const marbleMat = track(marbleLight())
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR.width, FLOOR.depth), marbleMat)
-  floor.rotation.x = -Math.PI / 2
-  floor.receiveShadow = true
-  group.add(floor)
-
   /* ------------------------------------------------------- kanban board --- */
   // Free-standing display board on the open floor (the walls it used to hang on
   // are gone). Held up by two posts; the card grid is pinned to `boardSurface`.
@@ -315,21 +304,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const fill = new THREE.HemisphereLight(0xdfeaf7, 0x8a7a5f, 0.45)
   scene.add(fill)
 
-  // Recessed ceiling panels: overhead fixtures, not furniture. They keep the open
-  // floor lit and are the `streaks` the palette dims at night.
+  // No ceiling and no ceiling fixtures: the building is a bare open plot now.
+  // `streaks` stays in the contract (applyPalette dims it at night) but is empty.
   const streaks: THREE.Mesh[] = []
-  for (const cz of [-5.5, -1, 6.5, 10.5]) {
-    const housing = box(FLOOR.width - 1.6, 0.12, 0.42, 0xd9dfe4, { metal: 0.25, rough: 0.5 })
-    housing.position.set(0, CEILING_Y, cz)
-    group.add(housing)
-    const panel = box(FLOOR.width - 2.0, 0.04, 0.3, 0xffffff, { emissive: 0xfff4e0, ei: 1 })
-    panel.position.set(0, CEILING_Y - 0.07, cz)
-    group.add(panel)
-    streaks.push(panel)
-    const l = new THREE.PointLight(0xfff6e6, 0.55, 22)
-    l.position.set(0, CEILING_Y - 0.3, cz)
-    group.add(l)
-  }
 
   /* -------------------------------------------------- outside environment -- */
   // The office sits in a street: pavement, road, trees and neighbouring blocks,

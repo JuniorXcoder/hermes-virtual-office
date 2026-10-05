@@ -6,27 +6,32 @@ import type { AgentDivision, AgentRole } from '@/types/hermes'
  * The interior that used to live here (outer walls, the oval aula, the four
  * division pods, every desk and chair, the conference table, the lounge, the
  * pantry, reception, the pool, the garden, the book nook, the windows, the
- * artwork, the roof) has been removed ON PURPOSE. The office is being rebuilt
- * from scratch, so this file now describes an EMPTY OPEN FLOOR.
+ * artwork, the roof) has been removed ON PURPOSE — and so have the floor and the
+ * ceiling. What is left is an EMPTY OPEN PLOT with nothing but a Kanban board
+ * standing on it. The office is being rebuilt from scratch.
  *
  * What survives is only the CONTRACT the rest of the app reads:
  *
- *   - the floor extents and the ceiling height (nav, the camera, the sprite map),
+ *   - the plot extents (nav.ts derives its walkable grid from these, and the
+ *     self-test asserts them),
  *   - the seat heights the avatar rig is solved against (anim.ts, self-test),
  *   - the Kanban board (the task wall, a core feature — not furniture),
- *   - the division seat pools (now empty → agents simply idle on the floor),
+ *   - the division seat pools (now empty → agents simply idle on the plot),
  *   - the palette.
  *
  * No walls are drawn, but `WALL_T` stays: nav.ts uses it as the inset from the
- * floor edge that keeps walkers inside, and the self-test asserts that inset.
+ * plot edge that keeps walkers inside, and the self-test asserts that inset.
  *
- * Units: 1 = 1 metre. +X east, +Z south, +Y up. Origin at the office centre.
+ * Units: 1 = 1 metre. +X east, +Z south, +Y up. Origin at the plot centre.
  */
 
 export const FLOOR = { width: 34, depth: 26 }
 export const HALF_W = FLOOR.width / 2
 export const HALF_D = FLOOR.depth / 2
-/** Wall height is kept as the CEILING height: there are no walls, only a roof plane. */
+/**
+ * Kept as the notional shell height. Nothing is drawn at it any more — there is
+ * no ceiling — but the Kanban board and the camera are measured against it.
+ */
 export const WALL_H = 4.6
 /** Wall thickness. Nothing is drawn with it, but nav/selftest still use it as the inset. */
 export const WALL_T = 0.3
@@ -126,6 +131,7 @@ export function visitorSpot(desk: Desk) {
 /* ------------------------------------------------------- board / landmarks -- */
 
 export const BOARD_D = 0.14
+/** Notional shell top — there is no ceiling drawn; the board is measured against it. */
 export const CEILING_Y = WALL_H
 export const BOARD_REVEAL = 0.35
 

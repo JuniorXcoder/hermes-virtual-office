@@ -6,8 +6,8 @@ import { useOffice } from '@/lib/store'
 import { columnOf } from '@/lib/office/board'
 import { NIGHT_PALETTE, paletteFor } from '@/lib/office/layout'
 import {
-  CONFERENCE, CONFERENCE_CHAIRS, DESKS, DOOR, FLOOR, HALF_D, HALF_W,
-  IDLE_SPOTS, KANBAN_BOARD, ROLE_COLORS, WALL_H, WALL_T, deskSeatWorld, visitorSpot,
+  CONFERENCE, CONFERENCE_CHAIRS, DESKS, DOOR,
+  IDLE_SPOTS, KANBAN_BOARD, ROLE_COLORS, deskSeatWorld, visitorSpot,
 } from '@/lib/office/layout'
 import { route } from '@/lib/office/nav'
 
@@ -94,12 +94,8 @@ function buildStatic(): HTMLCanvasElement {
   ctx.fillStyle = '#141d24'
   ctx.fillRect(0, 0, W, H)
 
-  // Open marble floor — no walls, no rooms, no furniture.
-  for (let x = -HALF_W; x < HALF_W; x++) {
-    for (let z = -HALF_D; z < HALF_D; z++) {
-      flat(ctx, x + 0.5, z + 0.5, 1, 1, ((x + z) & 1) ? C.floorA : C.floorB)
-    }
-  }
+  // No floor, no walls, no furniture — an empty plot. Only the kanban board (a
+  // feature, not furniture) and the meeting ring stand on it.
 
   // Painter's order: everything is sorted by depth (x + z), so near props cover far ones.
   const items: { d: number; f: () => void }[] = []
