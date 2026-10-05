@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three'
 import { rbox } from './bevel'
-import { marbleLight, woodWarm, glassReal, stoneDark, plasterClean } from './materials'
+import { marbleLight, woodWarm, glassReal, stoneDark, plasterClean, goldAccent, carpetGrey, woodPanelDark } from './materials'
 import { setupLights } from './lights'
 import {
   CONFERENCE,
@@ -923,17 +923,20 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   /* ------------------------------------------------- room signs + pool --- */
-  // Papan nama tiap ruang (canvas texture teks, di atas pintu).
+  // Papan nama tiap ruang: panel kayu gelap + teks emas (premium, bukan neon).
   {
     const signTex = (text: string) => {
       const cv = document.createElement('canvas')
       cv.width = 512
       cv.height = 96
       const c = cv.getContext('2d')!
-      c.fillStyle = '#1d2b33'
+      c.fillStyle = '#2a1e14'
       c.fillRect(0, 0, 512, 96)
-      c.fillStyle = '#5fd0a6'
-      c.font = '700 52px system-ui, sans-serif'
+      c.strokeStyle = '#c9a24a'
+      c.lineWidth = 3
+      c.strokeRect(6, 6, 500, 84)
+      c.fillStyle = '#c9a24a'
+      c.font = '700 46px system-ui, sans-serif'
       c.textAlign = 'center'
       c.textBaseline = 'middle'
       c.fillText(text, 256, 52)
@@ -941,13 +944,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       t.colorSpace = THREE.SRGBColorSpace
       return track(t)
     }
+    const gold = track(goldAccent())
     for (const s of ROOM_SIGNS) {
       const m = new THREE.Mesh(
         new THREE.PlaneGeometry(2.4, 0.45),
-        new THREE.MeshStandardMaterial({ map: signTex(s.text), emissive: 0xffffff, emissiveMap: signTex(s.text), emissiveIntensity: 0.35 }),
+        new THREE.MeshStandardMaterial({ map: signTex(s.text), emissive: 0x3a2b1e, emissiveIntensity: 0.15 }),
       )
       m.position.set(s.x, 2.9, s.z + 0.2)
       group.add(m)
+      // frame emas tipis di keliling papan
+      const fr = new THREE.Mesh(rbox(2.46, 0.51, 0.03, 0.01), gold)
+      fr.position.set(s.x, 2.9, s.z + 0.17)
+      group.add(fr)
     }
   }
 
@@ -1554,6 +1562,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   // REALISTIS: meja kayu beveled + kaki ramping. Top rbox (bukan Box tajam).
   const deskWoodMat = track(woodWarm())
+  // Karpet abu di area kerja (zonasi premium): satu bidang besar di bawah meja.
+  {
+    const carpet = new THREE.Mesh(new THREE.PlaneGeometry(20, 12), track(carpetGrey()))
+    carpet.rotation.x = -Math.PI / 2
+    carpet.position.set(0, 0.01, -6.5)
+    group.add(carpet)
+  }
   for (const desk of DESKS) {
     const d = new THREE.Group()
     d.position.set(desk.x, 0, desk.z)
@@ -1606,10 +1621,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     mouse.position.set(0.38, 0.765, 0.14)
     d.add(mouse)
 
-    const lamp = new THREE.PointLight(0xffc98a, hour >= 18 || hour < 6 ? 0.8 : 0, 4)
+    // lampu meja hangat (premium): lebih terang + selalu ada (bukan hanya malam)
+    const lamp = new THREE.PointLight(0xffc98a, hour >= 18 || hour < 6 ? 0.8 : 0.25, 4)
     lamp.position.set(desk.x + Math.sin(desk.facing) * 0.5, 1.5, desk.z + Math.cos(desk.facing) * 0.5)
     group.add(lamp)
     lamps.push(lamp)
+    // lampu meja fisik: batang + shade
+    const lampPole = cyl(0.015, 0.02, 0.32, 0x2b3236, 8, 0.6)
+    lampPole.position.set(0.72, 0.9, -0.1)
+    d.add(lampPole)
+    const lampShade = cyl(0.11, 0.07, 0.12, 0xc9a24a, 12, 0.6)
+    lampShade.position.set(0.72, 1.06, -0.1)
+    d.add(lampShade)
 
     // task chair — child of the desk group so it inherits the desk rotation and
     // faces the monitor by construction
@@ -2944,7 +2967,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     sun.intensity = night ? 1.1 : 1.85
     sun.color.setHex(night ? 0xc9d8ee : 0xfff6e5)
     fill.intensity = night ? 0.9 : 1.0
-    for (const l of lamps) l.intensity = night ? 0.85 : 0
+    // lampu meja selalu menyala (premium warm), lebih kuat malam
+    for (const l of lamps) l.intensity = night ? 0.85 : 0.25
     for (const s of streaks) (s.material as THREE.MeshStandardMaterial).emissiveIntensity = night ? 1.5 : 0.85
   }
 
