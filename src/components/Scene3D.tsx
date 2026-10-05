@@ -14,6 +14,7 @@ export default function Scene3D({ onScene }: Props) {
   const agents = useOffice((s) => s.agents)
   const tasks = useOffice((s) => s.tasks)
   const meeting = useOffice((s) => s.meeting)
+  const view = useOffice((s) => s.view)
   const setPeek = useOffice((s) => s.setPeek)
   const select = useOffice((s) => s.select)
   const openTask = useOffice((s) => s.openTask)
@@ -61,6 +62,11 @@ export default function Scene3D({ onScene }: Props) {
   useEffect(() => {
     sceneRef.current?.setMeeting(meeting)
   }, [meeting])
+
+  useEffect(() => {
+    if (view === '3d') sceneRef.current?.start()
+    else sceneRef.current?.stop()
+  }, [view])
 
   // relay new meeting turns into speech bubbles
   const said = useRef(0)

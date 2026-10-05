@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { commentOnTask, getTask, listRuns, releaseWorker, taskLog } from '@/lib/hermes/kanban'
+import {
+  commentOnTask,
+  dispatchTask,
+  getTask,
+  listRuns,
+  listTasks,
+  promoteTask,
+  releaseWorker,
+  setTaskModel,
+  taskLog,
+  unblockTask,
+} from '@/lib/hermes/kanban'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,8 +38,19 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   }
 }
 
-/** Desk intervention: steer (comment) or reclaim (release the worker claim). */
+/**
+ * Desk intervention: steer (comment), reclaim (release the worker claim), run
+ * (wake the dispatcher), promote (unblock), or set the worker's model.
+ *
+ * `run` and `promote` exist because the board has no runner of its own. A task
+ * sits in `ready` until the gateway's dispatcher spawns a worker for it, so with
+ * the gateway down a task is stranded with no visible reason and no way out from
+ * the UI. `run` does one dispatch pass (the worker it spawns is detached and
+ * outlives this request) and `promote` returns a blocked task to `ready`.
+ */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const { id } = await ctx.params
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action || '')
@@ -65,8 +88,74 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         )
       }
     }
+    if (action === 'run') {
+      // One button that does the right thing: a parked task is lifted first (the
+      // dispatcher ignores blocked/scheduled rows entirely), then one dispatch
+      // pass runs. Reported honestly when the board still refuses to move it —
+      // e.g. a `todo` task whose parent dependencies are not done yet.
+      const parked = task.status === 'blocked' || task.status === 'scheduled'
+      if (parked) await unblockTask(id, 'dijalankan dari kantor')
+
+      const { spawned } = await dispatchTask()
+      const mine = spawned.includes(id)
+      if (mine) {
+        return NextResponse.json({
+          success: true,
+          spawned,
+          mine,
+          note: 'Worker dijalankan — pantau lewat Intip layar.',
+        })
+      }
+      const after = await getTask(id)
+      // Name the prerequisites. "menunggu prasyarat" without the ids leaves the
+      // reader with nothing to open, which is exactly the question it raises.
+      const waiting = after?.parents ?? []
+      // One board read, not one `show` per parent: the board already carries every
+      // status, and six CLI spawns to answer a status question is the kind of thing
+      // that turns a 3 s button into a 20 s one.
+      const board = new Map((await listTasks()).map((row) => [row.id, row.status]))
+      const open = waiting.filter((pid) => !['done', 'archived'].includes(board.get(pid) ?? ''))
+      const list = open.length ? open : waiting
+      return NextResponse.json({
+        success: true,
+        spawned,
+        mine,
+        parents: after?.parents ?? [],
+        note:
+          after?.status === 'todo' && list.length
+            ? `Tugas ini diparkir menunggu ${list.length} subtugas selesai dulu: ${list.join(', ')}.`
+            : after?.status === 'todo'
+              ? 'Tugas masih menunggu subtugas prasyaratnya selesai.'
+              : spawned.length
+                ? 'Dispatcher menjalankan tugas lain lebih dulu; coba lagi.'
+                : 'Belum ada yang bisa dijalankan sekarang.',
+      })
+    }
+    if (action === 'promote') {
+      const reason = String(body?.message || '').trim() || 'dijalankan dari kantor'
+      // `promote` refuses `scheduled`; `unblock` refuses nothing in that pair.
+      const promoted =
+        task.status === 'scheduled'
+          ? await unblockTask(id, reason)
+          : await promoteTask(id, reason)
+      return NextResponse.json({ success: true, promoted })
+    }
+    if (action === 'set-model') {
+      const model = body?.model == null ? null : String(body.model).trim() || null
+      const provider = body?.provider == null ? null : String(body.provider).trim() || null
+      return NextResponse.json({
+        success: true,
+        model: await setTaskModel(id, model, provider),
+      })
+    }
     return NextResponse.json(
-      { error: { code: 'invalid_request', message: "action must be 'steer' or 'cancel'", status: 400 } },
+      {
+        error: {
+          code: 'invalid_request',
+          message: "action must be 'steer', 'cancel', 'run', 'promote' or 'set-model'",
+          status: 400,
+        },
+      },
       { status: 400 },
     )
   } catch (err) {

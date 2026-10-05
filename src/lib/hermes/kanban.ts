@@ -23,6 +23,22 @@ const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const BOARD = process.env.HERMES_KANBAN_BOARD || ''
 const TIMEOUT_MS = Number(process.env.KANBAN_TIMEOUT_MS || 20_000)
 
+/**
+ * Short TTL memo for CLI READS.
+ *
+ * Each CLI call is a fresh Python process: measured ~1.4 s here, and the UI polls
+ * every 4 s with two endpoints, so a small laptop spent most of a core spawning
+ * `hermes`. Reads repeat constantly and change slowly, so they are memoised for a
+ * few seconds; any WRITE clears the whole memo, so the next poll cannot show a
+ * board older than the write that changed it.
+ *
+ * ponytail: one global memo, 3 s. Upgrade path: per-key TTLs or an event-driven
+ * push if the board ever grows past a few hundred tasks.
+ */
+const READ_VERBS = new Set(['list', 'show', 'runs', 'log', 'assignees'])
+const READ_TTL_MS = 3000
+const readCache = new Map<string, { at: number; out: string }>()
+
 /** Env without the agent-session markers the CLI treats as "inside a worker". */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }
@@ -41,12 +57,22 @@ function cleanEnv(): NodeJS.ProcessEnv {
 
 async function kanban(args: string[]): Promise<string> {
   const full = BOARD ? ['kanban', '--board', BOARD, ...args] : ['kanban', ...args]
+  const cacheable = READ_VERBS.has(args[0])
+  const key = full.join(' ')
+  if (cacheable) {
+    const hit = readCache.get(key)
+    if (hit && Date.now() - hit.at < READ_TTL_MS) return hit.out
+  } else {
+    // A write invalidates every memo: the next read must see it.
+    readCache.clear()
+  }
   try {
     const { stdout } = await run(HERMES_BIN, full, {
       env: cleanEnv(),
       timeout: TIMEOUT_MS,
       maxBuffer: 8 * 1024 * 1024,
     })
+    if (cacheable) readCache.set(key, { at: Date.now(), out: stdout })
     return stdout
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string }
@@ -79,6 +105,8 @@ type RawTask = {
   created_by?: string | null
   created_at?: number | null
   updated_at?: number | null
+  model_override?: string | null
+  provider_override?: string | null
 }
 
 /**
@@ -117,6 +145,8 @@ function toTask(r: RawTask): Task {
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
     origin: parseOrigin(r.created_by),
+    model: r.model_override ?? null,
+    provider: r.provider_override ?? null,
   }
 }
 
@@ -143,9 +173,14 @@ export async function getTask(id: string): Promise<Task | null> {
   const out = await kanban(['show', id, '--json']).catch(() => '')
   const start = out.search(/[[{]/)
   if (start < 0) return null
-  const parsed = JSON.parse(out.slice(start)) as RawTask | { task?: RawTask }
+  const parsed = JSON.parse(out.slice(start)) as RawTask | { task?: RawTask; parents?: unknown }
   const raw = 'task' in parsed && parsed.task ? parsed.task : (parsed as RawTask)
-  return raw?.id ? toTask(raw) : null
+  if (!raw?.id) return null
+  // `show --json` carries the dependency edges; `list --json` does not.
+  const parents = 'parents' in parsed && Array.isArray(parsed.parents)
+    ? parsed.parents.filter((p): p is string => typeof p === 'string')
+    : []
+  return { ...toTask(raw), parents }
 }
 
 export async function createTask(input: NewTaskInput): Promise<Task> {
@@ -219,6 +254,190 @@ export async function releaseWorker(taskId: string): Promise<boolean> {
   return true
 }
 
+/* ------------------------------------------------------------------ runner -- */
+
+/**
+ * Wake the dispatcher now.
+ *
+ * The board has no runner of its own: `ready` only means "a worker may take
+ * this". Spawning is done by the dispatcher, which lives in the gateway — so on a
+ * host whose gateway is stopped a task sits in `ready` forever and the UI has no
+ * way to say why. This runs ONE dispatch pass, which spawns a detached worker and
+ * returns immediately, so the office can offer a "Jalankan" button that works
+ * whether or not a gateway happens to be up.
+ *
+ * `--max 1` keeps one click from spawning the whole backlog. The write path also
+ * clears the read memo, so the next poll shows the task as `running`.
+ */
+export async function dispatchTask(): Promise<{ spawned: string[] }> {
+  const out = await kanban(['dispatch', '--max', '1', '--json'])
+  const start = out.search(/[[{]/)
+  const parsed = start >= 0 ? (JSON.parse(out.slice(start)) as { spawned?: unknown }) : {}
+  const spawned = Array.isArray(parsed.spawned)
+    ? parsed.spawned.map((s) => (typeof s === 'string' ? s : String((s as { task_id?: string })?.task_id || '')))
+    : []
+  return { spawned: spawned.filter(Boolean) }
+}
+
+/** Move a blocked/scheduled task back to `ready` so the dispatcher will take it. */
+export async function promoteTask(taskId: string, reason: string): Promise<boolean> {
+  await kanban(['promote', taskId, reason])
+  return true
+}
+
+/**
+ * Return a blocked/scheduled task to the board.
+ *
+ * `promote` and `unblock` are NOT interchangeable: promote only accepts `todo` or
+ * `blocked` and refuses `scheduled` outright, while unblock accepts
+ * `blocked`/`scheduled` and lands in `todo` when a parent is still open. The UI
+ * has one button, so the caller picks by status.
+ */
+export async function unblockTask(taskId: string, reason: string): Promise<boolean> {
+  await kanban(['unblock', taskId, '--reason', reason])
+  return true
+}
+
+/** Pin (or clear) the model a task's worker is spawned with. */
+export async function setTaskModel(
+  taskId: string,
+  model: string | null,
+  provider?: string | null,
+): Promise<boolean> {
+  const args = ['set-model', taskId, model || 'none']
+  if (model && provider) args.push('--provider', provider)
+  await kanban(args)
+  return true
+}
+
+/**
+ * Model catalogue for the picker: every configured provider with its known model
+ * ids, read from `hermes config get custom_providers --json` (the CLI masks
+ * api_key, so no credential reaches the browser).
+ *
+ * A provider entry's `models` map is written by the model picker when it probes
+ * /v1/models; an entry with none still appears with its default model so it can
+ * be picked at all. Deduped by model id, first provider wins.
+ */
+export type ModelChoice = { model: string; provider: string; label: string }
+
+/**
+ * Pure half of the catalogue, split out so it can be tested without spawning the
+ * CLI: providers -> deduped model choices.
+ */
+export function providersToModels(raw: RawProvider[]): ModelChoice[] {
+  const out: ModelChoice[] = []
+  const seen = new Set<string>()
+  for (const p of raw) {
+    const name = String(p?.name || '').trim()
+    const base = String(p?.base_url || '').trim()
+    if (!name || !base) continue
+    const ids = [...new Set([...(p?.model ? [p.model] : []), ...Object.keys(p?.models || {})])]
+    for (const id of ids) {
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      out.push({ model: id, provider: name, label: `${id} · ${name}` })
+    }
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+export async function listModels(): Promise<ModelChoice[]> {
+  return providersToModels(await kanbanConfig<RawProvider[]>('custom_providers'))
+}
+
+type RawProvider = {
+  name?: string
+  base_url?: string
+  model?: string
+  models?: Record<string, unknown>
+}
+
+/** `hermes config get <key> --json` — a TOP-LEVEL command, so it cannot go through
+ * `kanban()` (which prefixes the `kanban` subcommand). It shares the read memo
+ * under its own key: the provider list changes when the operator edits
+ * config.yaml, not between polls.
+ */
+async function hermesJson<T>(args: string[]): Promise<T> {
+  const cacheKey = args.join(' ')
+  const hit = readCache.get(cacheKey)
+  const out =
+    hit && Date.now() - hit.at < READ_TTL_MS
+      ? hit.out
+      : await run(HERMES_BIN, args, { env: cleanEnv(), timeout: TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 })
+          .then(({ stdout }) => {
+            readCache.set(cacheKey, { at: Date.now(), out: stdout })
+            return stdout
+          })
+  const start = out.search(/[[{]/)
+  if (start < 0) return [] as unknown as T
+  return JSON.parse(out.slice(start)) as T
+}
+
+async function kanbanConfig<T>(key: string): Promise<T> {
+  return hermesJson<T>(['config', 'get', key, '--json'])
+}
+
+/* --------------------------------------------------------- agent (profile) -- */
+
+/**
+ * The model a profile runs by default.
+ *
+ * This is the model a worker is spawned with when its task carries no override
+ * (`hermes kanban set-model`), and the one its chat turns use. Read per profile
+ * through `-p <name>`, memoised like every other read.
+ */
+export async function profileModel(name: string): Promise<{ model: string | null; provider: string | null }> {
+  try {
+    const raw = await hermesJson<{ default?: string; provider?: string } | string>([
+      '-p',
+      name,
+      'config',
+      'get',
+      'model',
+      '--json',
+    ])
+    if (typeof raw === 'string') return { model: raw || null, provider: null }
+    return { model: raw?.default || null, provider: raw?.provider || null }
+  } catch {
+    return { model: null, provider: null }
+  }
+}
+
+/** Set a profile's default model (and provider). Affects its next spawn/chat turn. */
+export async function setProfileModel(
+  name: string,
+  model: string | null,
+  provider?: string | null,
+): Promise<void> {
+  if (!model) throw new Error('model wajib diisi')
+  await hermesWrite(['-p', name, 'config', 'set', 'model.default', model])
+  if (provider) {
+    // The picker's providers all come from `custom_providers`, and a profile's
+    // `model.provider` has to be the QUALIFIED slug (`custom:9router`) — that is
+    // what `hermes model` itself writes. A bare name is accepted by
+    // `kanban set-model` (its own resolver) but not here, so qualify it.
+    const qualified = provider.includes(':') ? provider : `custom:${provider.trim().toLowerCase()}`
+    await hermesWrite(['-p', name, 'config', 'set', 'model.provider', qualified])
+  }
+}
+
+/** A TOP-LEVEL write: same cleanEnv contract, no `kanban` prefix. */
+async function hermesWrite(args: string[]): Promise<string> {
+  readCache.clear()
+  try {
+    const { stdout } = await run(HERMES_BIN, args, {
+      env: cleanEnv(),
+      timeout: TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+    })
+    return stdout
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { stderr?: string }
+    throw new Error(`hermes ${args.join(' ')} failed: ${(e.stderr || e.message || '').trim()}`)
+  }
+}
+
 /* ----------------------------------------------------------------- agents -- */
 
 type RawAssignee = { name: string; on_disk?: boolean; counts?: Record<string, number> }
@@ -235,7 +454,8 @@ type RawAssignee = { name: string; on_disk?: boolean; counts?: Record<string, nu
  * which was one install's roster hardcoded into a program meant to ship to anyone;
  * an operator here would get roles assigned by somebody else's naming.
  *
- * `default` is special-cased because it is the install's own profile, not a person.
+ * `default` is special-cased because it is the install's own orchestrator profile,
+ * and is included in the office roster like the Hermes assignee list.
  */
 const ROLE_KEYWORDS: [RegExp, AgentRole][] = [
   [/qa|test|verif/i, 'qa'],
@@ -448,8 +668,8 @@ export async function deleteProfile(name: string): Promise<void> {
   }
 }
 
-export async function listAgents(tasks: Task[]): Promise<Agent[]> {
-  const raw = await kanbanJson<RawAssignee[]>(['assignees'])
+export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: string; onDisk: boolean; total: number }[]): Promise<Agent[]> {
+  const raw = prefetchedAssignees ?? (await listAssignees())
   // Profiles AND assignees. Reading only `assignees` meant a freshly created
   // profile stayed invisible until it was given a task, so "create a profile"
   // looked like it had done nothing.

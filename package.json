@@ -8,9 +8,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_ENV=development next dev --hostname 127.0.0.1 --port 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "selftest": "tsx scripts/selftest.ts"
   },

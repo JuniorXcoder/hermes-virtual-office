@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createTask, listAgents, listTasks } from '@/lib/hermes/kanban'
+import { createTask, listAgents, listAssignees, listTasks } from '@/lib/hermes/kanban'
 import { visible } from '@/lib/hermes/office-membership'
 import type { TaskOrigin } from '@/types/hermes'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** The board: tasks plus the agents staffing them. */
 export async function GET() {
   try {
-    const tasks = await listTasks()
-    // Apply the spawn/kill list: a killed profile is absent from the office but its
+    // `--archived` is inclusive, so this is the live board PLUS the archive: the
+    // 2D view has an ARSIP column that stayed permanently empty without it.
+    // The two CLI reads are independent, so they run together — sequentially
+    // they cost ~2.8 s per poll on a small machine.
+    const [tasks, assignees] = await Promise.all([
+      listTasks({ includeArchived: true }),
+      listAssignees(),
+    ])
+    // Apply the hide list: a hidden profile is absent from the office but its
     // tasks stay on the board, so the work is never hidden, only the avatar.
-    const agents = visible(await listAgents(tasks))
+    const agents = visible(await listAgents(tasks, assignees))
     return NextResponse.json({ tasks, agents })
   } catch (err) {
     return NextResponse.json(
@@ -37,6 +45,8 @@ export async function GET() {
  * panel can list what it produced. It is written to `created_by` as a marker.
  */
 export async function POST(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const body = await req.json().catch(() => null)
   if (!body || typeof body !== 'object') {
     return bad('body harus JSON')

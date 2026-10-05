@@ -699,7 +699,7 @@ export type OfficeProps = {
   streetGroup: THREE.Group
   /** The single shadow-casting light; the scene configures its shadow camera. */
   sun: THREE.DirectionalLight
-  /** Advance pedestrians and traffic. */
+  /** Advance pedestrians, traffic and street foliage. */
   animateStreet: (dt: number, t: number) => void
   applyPalette: (hour: number) => void
   dispose: () => void
@@ -2514,6 +2514,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup.add(dash)
   }
 
+  const foliage: { group: THREE.Group; phase: number }[] = []
   const tree = (x: number, z: number, scale = 1) => {
     const t = new THREE.Group()
     t.position.set(x, 0, z)
@@ -2531,6 +2532,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       t.add(leafM)
     }
     streetGroup.add(t)
+    const phase = Math.abs(x * 0.17 + z * 0.11)
+    foliage.push({ group: t, phase })
   }
   for (const [tx, tz] of [
     [-20, 10],
@@ -2779,6 +2782,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   /** Advance the street. Called from the scene tick with the frame delta. */
   function animateStreet(dt: number, t: number) {
+    for (const { group, phase } of foliage) {
+      group.rotation.z = Math.sin(t * 0.8 + phase) * 0.018
+      group.rotation.x = Math.sin(t * 0.55 + phase) * 0.012
+    }
+
     // ---- pedestrians: lane discipline ----
     // Two walkers must not occupy the same stretch of the same row. Sorted by x,
     // each walker is held back to PED_GAP behind the one ahead of it in its own

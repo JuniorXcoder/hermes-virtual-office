@@ -6,50 +6,66 @@ import {
   listAssignees,
   listProfiles,
   listTasks,
+  profileModel,
   purgeTasks,
+  setProfileModel,
   tasksForAssignee,
 } from '@/lib/hermes/kanban'
-import { isKilled, killedNames, spawn } from '@/lib/hermes/office-membership'
+import { hiddenNames, isHidden, hide, show } from '@/lib/hermes/office-membership'
+import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * The spawn/kill menu.
+ * The spawn/hide/kill menu.
  *
  * `available` is every Hermes profile; `inOffice` is the subset currently shown
- * in the 3D room. A profile can be spawned (brought back) or killed (walked out)
- * without touching its tasks — this changes office membership only.
+ * in the 3D room. `hide` and `spawn` toggle office membership only — they never
+ * touch the profile or its tasks. `kill` is the destructive one: it deletes the
+ * profile and purges its tasks.
  */
 export async function GET() {
   try {
     const [assignees, tasks, profiles] = await Promise.all([
       listAssignees(),
-      listTasks(),
+      listTasks({ includeArchived: true }),
       listProfiles(),
     ])
-    const agents = await listAgents(tasks)
-    const inOffice = new Set(agents.filter((a) => !isKilled(a.name)).map((a) => a.name))
+    // Pass the assignees already fetched: listAgents() would spawn the same CLI
+    // read a second time.
+    const agents = await listAgents(tasks, assignees)
+    const inOffice = new Set(agents.filter((a) => !isHidden(a.name)).map((a) => a.name))
     // Union of assignees and on-disk profiles: a profile with no tasks is still a
     // profile, and must be listed or creating one looks like it failed.
     const counts = new Map(assignees.map((a) => [a.name, a.total]))
     const roster = [...new Set([...counts.keys(), ...profiles])].sort()
+    // Each profile's default model costs one CLI read (`-p <name> config get
+    // model`), so they run in parallel and only for profiles that exist on disk —
+    // an assignee left over from a deleted profile has no config to read.
+    const models = await Promise.all(
+      roster.map(async (name) =>
+        profiles.includes(name) ? (await profileModel(name)).model : null,
+      ),
+    )
     return NextResponse.json({
-      available: roster.map((name) => ({
+      available: roster.map((name, i) => ({
         name,
         total: counts.get(name) ?? 0,
         /** True when the profile exists on disk (not just as a task assignee). */
         profile: profiles.includes(name),
         inOffice: inOffice.has(name),
+        /** The profile's default model, when it has one. */
+        model: models[i],
         /** Why it is absent, when it is. */
         reason: inOffice.has(name)
           ? null
-          : isKilled(name)
-            ? 'killed'
+          : isHidden(name)
+            ? 'hidden'
             : profiles.includes(name)
               ? 'unknown'
               : 'no_profile',
       })),
-      killed: killedNames(),
+      hidden: hiddenNames(),
     })
   } catch (err) {
     return NextResponse.json(
@@ -67,16 +83,24 @@ export async function GET() {
  * despawns on arrival, rather than vanishing at its desk.
  */
 export async function POST(req: NextRequest) {
+  const denied = assertLocalWriteRequest(req)
+  if (denied) return denied
   const body = await req.json().catch(() => ({}))
   const action = String(body?.action || '')
   const name = String(body?.name || '').trim()
 
-  if (action !== 'spawn' && action !== 'kill' && action !== 'create') {
+  if (
+    action !== 'spawn' &&
+    action !== 'hide' &&
+    action !== 'kill' &&
+    action !== 'create' &&
+    action !== 'set-model'
+  ) {
     return NextResponse.json(
       {
         error: {
           code: 'invalid_request',
-          message: "action must be 'spawn', 'kill' or 'create'",
+          message: "action must be 'spawn', 'hide', 'kill', 'create' or 'set-model'",
           status: 400,
         },
       },
@@ -88,6 +112,28 @@ export async function POST(req: NextRequest) {
       { error: { code: 'invalid_request', message: 'name is required', status: 400 } },
       { status: 400 },
     )
+  }
+
+  // The profile's default model: what its workers and chat turns run unless a task
+  // pins its own (`hermes kanban set-model`).
+  if (action === 'set-model') {
+    const model = body?.model == null ? '' : String(body.model).trim()
+    const provider = body?.provider == null ? null : String(body.provider).trim() || null
+    if (!model) {
+      return NextResponse.json(
+        { error: { code: 'invalid_request', message: 'model is required', status: 400 } },
+        { status: 400 },
+      )
+    }
+    try {
+      await setProfileModel(name, model, provider)
+      return NextResponse.json({ success: true, action, name, model, provider })
+    } catch (err) {
+      return NextResponse.json(
+        { error: { code: 'action_failed', message: (err as Error).message, status: 502 } },
+        { status: 502 },
+      )
+    }
   }
 
   // Creating a profile is a different operation: it makes the profile, walks the
@@ -119,11 +165,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // `spawn` accepts anything the install knows, otherwise a typo would create a
-    // kill-list entry matching nothing. `kill` must NOT go through this check: a
-    // name with tasks but no profile is exactly the case it needs to handle (the
-    // tasks still have to be removed), and the guard rejected it as "tidak dikenal".
-    if (action === 'spawn') {
+    // `spawn` and `hide` accept anything the install knows, otherwise a typo would
+    // create a hide-list entry matching nothing. `kill` must NOT go through this
+    // check: a name with tasks but no profile is exactly the case it needs to
+    // handle (the tasks still have to be removed), and the guard rejected it as
+    // "tidak dikenal".
+    if (action === 'spawn' || action === 'hide') {
       const known = new Set([
         ...(await listAssignees()).map((a) => a.name),
         ...(await listProfiles()),
@@ -142,9 +189,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    /* -------------------------------------------------------------- hide --- */
+    // Membership only: the avatar leaves, the profile and its tasks are untouched.
+    // This is the safe path, and the ONLY one offered for a name that has no
+    // profile on disk but still owns tasks.
+    if (action === 'hide') {
+      const changed = hide(name)
+      return NextResponse.json({
+        success: true,
+        action,
+        name,
+        /** false when the name was already hidden. */
+        changed,
+        hidden: hiddenNames(),
+      })
+    }
+
     /* -------------------------------------------------------------- kill --- */
-    // `kill` DELETES the profile. It used to only hide it from the office; that
-    // is now `spawn`/membership, and this is the destructive one.
+    // `kill` DELETES the profile and purges its tasks. It is the destructive one;
+    // hiding is the membership toggle above.
     if (action === 'kill') {
       // `default` lives at ~/.hermes itself, not under profiles/, so the disk
       // check below would refuse it with a misleading "tidak ada di disk".
@@ -228,7 +291,7 @@ export async function POST(req: NextRequest) {
 
       // Clear any membership entry: a stale entry would block a future profile
       // that reuses the name.
-      spawn(name)
+      show(name)
       return NextResponse.json({
         success: true,
         action,
@@ -237,19 +300,19 @@ export async function POST(req: NextRequest) {
         deleted: hasProfile,
         /** How many of its tasks were removed from the board. */
         purged,
-        killed: killedNames(),
+        hidden: hiddenNames(),
       })
     }
 
     /* ------------------------------------------------------------- spawn --- */
-    const changed = spawn(name)
+    const changed = show(name)
     return NextResponse.json({
       success: true,
       action,
       name,
       /** false when the profile was already visible. */
       changed,
-      killed: killedNames(),
+      hidden: hiddenNames(),
     })
   } catch (err) {
     return NextResponse.json(

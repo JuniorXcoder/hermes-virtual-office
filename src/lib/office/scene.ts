@@ -156,7 +156,7 @@ export function createScene(
   // Depth cue: distant blocks wash toward the sky, so the street has depth.
   scene.fog = new THREE.Fog(0xd3e2ef, 70, 190)
 
-  const hour = Number(
+  let hour = Number(
     new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })
       .format(new Date()),
   )
@@ -523,6 +523,15 @@ export function createScene(
       }
     }
 
+    if (now - lastPaletteUpdate >= 60_000) {
+      const nextHour = Number(
+        new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })
+          .format(new Date()),
+      )
+      if (nextHour !== hour) setHour(nextHour)
+      lastPaletteUpdate = now
+    }
+
     agents.forEach((a, i) => {
       retarget(a, currentMeeting, i)
 
@@ -634,7 +643,6 @@ export function createScene(
         mat.emissiveIntensity += (target - mat.emissiveIntensity) * Math.min(1, dt * 4)
       }
 
-      // badge bob
       a.avatar.badge.rotation.z = t * 0.8 + a.phase
       a.avatar.badge.position.y = 1.85 + Math.sin(t * 1.6 + a.phase) * 0.03
 
@@ -754,6 +762,7 @@ export function createScene(
   const skyDay = skyGradientTexture()
   const skyNight = skyGradientTexture(['#20344d', '#31465f', '#4a6076', '#63798c'])
   function setHour(h: number) {
+    hour = h
     office.applyPalette(h)
     // Day and night keep the gradient background. A flat colour (the previous
     // behaviour) threw away the sky's depth the moment the clock ticked over.
@@ -762,9 +771,12 @@ export function createScene(
   }
   setHour(hour)
 
+  let lastPaletteUpdate = performance.now()
+
   function start() {
     if (!raf) {
       last = performance.now()
+      lastPaletteUpdate = last
       raf = requestAnimationFrame(frame)
     }
   }
@@ -774,6 +786,7 @@ export function createScene(
   }
   function dispose() {
     stop()
+    controls.dispose()
     renderer.domElement.removeEventListener('mousedown', onDown)
     renderer.domElement.removeEventListener('mouseup', onUp)
     renderer.dispose()

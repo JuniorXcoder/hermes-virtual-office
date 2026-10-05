@@ -2,18 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import { fetchJson } from '@/lib/api'
+import ModelPicker, { type ModelChoice } from './ModelPicker'
 
 /**
- * Spawn / kill control.
+ * Spawn / hide / kill control.
  *
- * An agent exists in the office when its Hermes profile is an assignee, so this
- * panel toggles office MEMBERSHIP (src/lib/hermes/office-membership.ts) rather
- * than deleting anything: killing a profile removes its avatar, not its work. Its
- * tasks stay on the board.
- *
- * Spawn and kill both animate through the front door — the agent walks in, or
- * walks out and despawns on arrival — which is why the button does not need to
- * say "this takes a second".
+ * "Sembunyikan" and "Spawn" toggle office MEMBERSHIP
+ * (src/lib/hermes/office-membership.ts): the avatar leaves or enters, the profile
+ * and its tasks are untouched. "Kill" is the destructive one — it deletes the
+ * profile and purges its tasks — so it is only offered when a profile exists and
+ * asks for a second click.
  */
 
 type Row = {
@@ -23,7 +21,10 @@ type Row = {
   profile: boolean
   inOffice: boolean
   reason: string | null
+  /** The profile's default model, when it has one. */
+  model?: string | null
 }
+
 
 export default function AgentSpawnPanel({
   open,
@@ -44,6 +45,9 @@ export default function AgentSpawnPanel({
   const [note, setNote] = useState<string | null>(null)
   /** id awaiting the second click before a destructive delete. */
   const [confirmKill, setConfirmKill] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelChoice[]>([])
+  /** name -> model being picked but not yet saved. */
+  const [pick, setPick] = useState<Record<string, string>>({})
 
   // A click anywhere else cancels a pending delete.
   useEffect(() => {
@@ -73,7 +77,41 @@ export default function AgentSpawnPanel({
     if (open) void load()
   }, [open])
 
-  async function act(action: 'spawn' | 'kill', name: string) {
+  // The catalogue is config, not roster state — fetch it once per opening.
+  useEffect(() => {
+    if (!open || models.length) return
+    let alive = true
+    fetchJson<{ models?: ModelChoice[] }>('/api/hermes/models', { cache: 'no-store' }).then((res) => {
+      if (alive && res.ok) setModels(res.data?.models || [])
+    })
+    return () => {
+      alive = false
+    }
+  }, [open, models.length])
+
+  async function setModel(name: string, model: string) {
+    setBusy(name)
+    setErr(null)
+    setNote(null)
+    try {
+      const hit = models.find((m) => m.model === model)
+      const res = await fetchJson('/api/hermes/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set-model', name, model, provider: hit?.provider }),
+      })
+      if (!res.ok) throw new Error(res.error || 'gagal menyimpan model')
+      setNote(`Model "${name}" diset ke ${model} — berlaku pada spawn/chat berikutnya.`)
+      await load()
+      onChanged()
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function act(action: 'spawn' | 'hide' | 'kill', name: string) {
     setBusy(name)
     setErr(null)
     setNote(null)
@@ -92,6 +130,8 @@ export default function AgentSpawnPanel({
             ? `"${name}" dihapus permanen bersama ${n} tugasnya`
             : `"${name}" dihapus permanen`,
         )
+      } else if (action === 'hide') {
+        setNote(`"${name}" disembunyikan — tugasnya tetap di papan`)
       }
       await load()
       onChanged()
@@ -194,39 +234,67 @@ export default function AgentSpawnPanel({
                 </b>
                 <i>{r.total} tugas</i>
               </div>
-              {/* Two different things, so two different buttons. A name with no
-                  profile on disk is an assignee left behind by a task whose
-                  profile was deleted — there is nothing to delete, and offering
-                  "Kill" for it just produced a confusing error. */}
-              {r.profile ? (
-                <button
-                  className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
-                  disabled={busy === r.name}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (confirmKill !== r.name) {
-                      setConfirmKill(r.name)
-                      return
-                    }
-                    void act('kill', r.name)
-                  }}
-                  title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
-                >
-                  {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
-                </button>
-              ) : (
+              {/* The profile's default model: what its workers and chats run.
+                  Saving here writes `model.default` for that profile, so it
+                  applies to every future spawn — not just one task. */}
+              {r.profile && (
+                <div className="vp-agent-model">
+                  <ModelPicker
+                    value={pick[r.name] ?? r.model ?? ''}
+                    onChange={(model) => setPick((p) => ({ ...p, [r.name]: model }))}
+                    models={models}
+                    disabled={busy === r.name}
+                    emptyLabel="bawaan Hermes"
+                    title="Model bawaan profil ini"
+                  />
+                  <button
+                    className="vp-btn"
+                    disabled={busy === r.name || (pick[r.name] ?? r.model ?? '') === (r.model ?? '')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void setModel(r.name, pick[r.name] ?? '')
+                    }}
+                  >
+                    {busy === r.name ? '…' : 'Set'}
+                  </button>
+                </div>
+              )}
+              {/* Two different things, so two different buttons, and now two
+                  different actions. A name with no profile on disk is an assignee
+                  left behind by a task whose profile was deleted — there is
+                  nothing to delete, and hiding it is the ONLY safe operation:
+                  sending it to `kill` purged its tasks permanently while the
+                  button said "tanpa menghapus apa pun". */}
+              <div className="flex gap-2">
                 <button
                   className="vp-btn"
                   disabled={busy === r.name}
                   onClick={(e) => {
                     e.stopPropagation()
-                    void act('kill', r.name)
+                    void act('hide', r.name)
                   }}
                   title="Keluarkan nama ini dari kantor tanpa menghapus apa pun"
                 >
                   {busy === r.name ? '…' : 'Sembunyikan'}
                 </button>
-              )}
+                {r.profile && (
+                  <button
+                    className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
+                    disabled={busy === r.name}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (confirmKill !== r.name) {
+                        setConfirmKill(r.name)
+                        return
+                      }
+                      void act('kill', r.name)
+                    }}
+                    title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
+                  >
+                    {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {confirmKill && (
@@ -251,7 +319,7 @@ export default function AgentSpawnPanel({
                       {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
                     </b>
                     <i>
-                      {r.reason === 'killed'
+                      {r.reason === 'hidden'
                         ? 'disembunyikan'
                         : r.reason === 'no_profile'
                           ? 'tanpa profil di disk'
