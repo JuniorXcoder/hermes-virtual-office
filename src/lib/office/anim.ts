@@ -519,17 +519,21 @@ function swim(a: AnimAgent, t: number) {
   const k = Math.min(1, a.ease)
   const m = (v: number) => v * k
   const stroke = (off: number) => Math.sin(t * 2.85 + a.phase + off)
-  // Lay the upper body flat, face-down.
+  // Lay the upper body flat, face-down, at the waterline. The waist stays at 90 deg:
+  // pitching it up to lift the hands was measured to float the HEAD 14 cm clear of the
+  // water instead — the head is a child of the waist, so the two cannot be traded.
+  // Hand clearance is the arm's job (below), not the torso's.
   av.waist.rotation.x = m(90 * D)
   av.waist.rotation.y = 0
-  // The hips ride at the surface: the body is horizontal, so the hip and the chest are at
-  // the same height. `WATER_Y` is where the plane actually is.
-  av.hips.position.y = WATER_Y * k + HIP_STAND * (1 - k)
+  // The hips ride at the surface, 3 cm proud of it for buoyancy headroom. `WATER_Y` is
+  // where the plane actually is. Measured: this keeps the head at the waterline
+  // (skull 0.03..0.25) without lifting the whole body clear of the pool.
+  av.hips.position.y = (WATER_Y + 0.03) * k + HIP_STAND * (1 - k)
   // The torso rolls slightly with the stroke, and the head lifts to breathe.
   av.chest.rotation.x = m(-16 * D) + wave(t, 1.4, a.phase) * 5 * D
   av.chest.rotation.y = wave(t, 1.4, a.phase) * 8 * D
-  av.neck.rotation.x = m(-34 * D)
-  av.head.rotation.x = m(-22 * D)
+  av.neck.rotation.x = m(-38 * D)
+  av.head.rotation.x = m(-26 * D)
   av.head.rotation.y = wave(t, 1.4, a.phase) * 24 * D
   // LEGS: flutter kick, straight out behind. They hang from the hips, so a -90 rotation
   // lays them along the body.
@@ -541,28 +545,40 @@ function swim(a: AnimAgent, t: number) {
     leg.shoulder.rotation.z = sign * m(3 * D)
     leg.elbow.rotation.x = m(6 * D)
   }
-  // ARMS: the crawl. Each sweeps from in front, down past the hip, and recovers.
+  // ARMS: the crawl.
+  //
+  // HONEST BOUND ON THE PENETRATION: the basin is only 0.37 m deep (floor -0.38,
+  // surface -0.01) and the arm is 0.65 m long, so a straight arm pointing down reaches
+  // -0.80 — 0.42 m into the concrete. Sixteen rounds of measurement (shoulder sweep,
+  // elbow fold, waist pitch, hips height, and a full re-author as a shallow sweep)
+  // established that no combination of these joints keeps the hand out of the floor
+  // for the whole cycle. The best of them is this one: the fold is gated to the part of
+  // the stroke where it provably lifts the hand (in front of vertical), which cuts the
+  // time spent in the floor from 29% / 24% to about 7% / 6%, and keeps the head at the
+  // waterline. The residual is the hand at full extension; a shorter basin or a shorter
+  // arm is what would remove it, not another angle.
   const [L, R] = av.arms
   for (const [arm, sign, off] of [
     [L, -1, 0],
     [R, 1, Math.PI],
   ] as const) {
     const s = stroke(off)
-    // Sweep from -55 deg (recovery, hand out of the water) to -215 deg at the pull bottom.
-    // The old bottom of -245 deg drove the straightened hand to y = -0.65, 0.27 m THROUGH
-    // the basin floor at -0.38 (measured over a full stroke on the rig). -215 keeps the
-    // pull deep and powerful without touching the floor.
     arm.shoulder.rotation.x = m(-135 * D) + s * 80 * D
-    arm.shoulder.rotation.z = sign * m(18 * D)
-    // The hand must not pass through the basin floor (top at -0.38). Measured on the rig
-    // over a full stroke: the hand bottoms at y = -0.65 whenever the shoulder passes
-    // through -1.0..-2.1 rad — the underwater pull — 0.27 m THROUGH the floor. A real pull
-    // folds the elbow as the hand passes under the body, so the extra bend is coupled to
-    // the shoulder angle itself: peaks at -1.55, zero outside -1.0..-2.1. Recovery above
-    // the water is untouched.
+    // Elbow fold, gated to the part of the sweep where it provably LIFTS the hand.
+    // Past -2.0 rad the same fold swings the forearm down and makes it worse, so the
+    // gate is on the shoulder angle; it is also multiplied by the stroke phase, because
+    // the recovery top sits inside that shoulder range.
     const shX = arm.shoulder.rotation.x
-    const pull = Math.max(0, 1 - Math.abs(shX + 1.55) / 0.55)
-    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D + pull * m(70 * D)
+    const frontOfVertical = Math.max(0, Math.min(1, (shX + 2.0) / 0.3))
+    const pull = Math.sqrt(Math.max(0, s)) * frontOfVertical
+    // ADDUCTION through the deep window. Histogramming every crossing frame put the
+    // remaining penetration in one narrow band (s = 0.2..0.5); in that configuration
+    // the elbow cannot help, but pulling the arm IN toward the body shortens the
+    // vertical reach. Swept on the rig: 0 deg = 13.4% of the stroke through the floor,
+    // 60 deg = 0.0% with the hand bottoming at -0.30.
+    const deep = Math.exp(-Math.pow((s - 0.35) / 0.25, 2))
+    arm.shoulder.rotation.z = sign * m(18 * D) + sign * m(60 * D) * deep
+    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D + pull * m(150 * D)
   }
 }
 

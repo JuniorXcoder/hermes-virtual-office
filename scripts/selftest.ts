@@ -1831,24 +1831,53 @@ void (async () => {
     }
     if (leaks.length) problems.push(`equipment shown in the wrong pose: ${leaks.join(', ')}`)
 
-    // 5. the rig's own cross-bar must not pass through the hanging body. The rail was
-    //    at 1.70 and a hanging head sweeps 1.62..1.97, so it went straight through the
-    //    head. Both numbers are data now, and this compares them.
+    // 5. THE RIG HAS NO CROSS-BAR, and this proves why rather than trusting a comment.
+    //
+    // A decorative lower rail used to sit on this rig and cannot fit: measured across the
+    // muscle-up and the pull-up, heads occupy 1.46..2.22, hips 0.95..1.41, and the
+    // swinging feet reach 0.03. The bodies fill the whole span between the mat and the
+    // bar, so a rail at 1.40 passed through the muscle-up's torso (OBB audit: hip 0.02 m
+    // inside) and 1.51 hit the head band instead. The mesh is gone; this asserts the
+    // bands really do overlap each other, so re-adding a rail is provably impossible
+    // rather than merely discouraged.
     {
-      let lo = 9
-      let hi = -9
-      for (let i = 0; i <= 60; i++) {
-        anim.activity = 'pullup'
-        animate(anim, i * 0.09, 0)
-        av.group.updateMatrixWorld(true)
-        const head = new THREE.Vector3()
-        av.head.getWorldPosition(head)
-        lo = Math.min(lo, head.y - 0.155)
-        hi = Math.max(hi, head.y + 0.155)
+      let headLo = 9
+      let headHi = -9
+      let footLo = 9
+      let hipHi = -9
+      const SHIN_LEN = 0.46
+      for (const [act, x] of [['pullup', GYM.rig.x], ['muscleup', GYM.rig.x + 0.85]] as const) {
+        const av2 = buildAvatar('backend')
+        av2.group.position.set(x, 0, GYM.rig.z)
+        av2.group.rotation.y = Math.PI
+        const a2 = { avatar: av2, activity: act as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+        for (let i = 0; i <= 120; i++) {
+          animate(a2, i * 0.09, 0)
+          av2.group.updateMatrixWorld(true)
+          const head = new THREE.Vector3()
+          av2.head.getWorldPosition(head)
+          const hip = new THREE.Vector3()
+          av2.hips.getWorldPosition(hip)
+          headLo = Math.min(headLo, head.y - 0.155)
+          headHi = Math.max(headHi, head.y + 0.155)
+          hipHi = Math.max(hipHi, hip.y + 0.1)
+          for (const side of [0, 1] as const) {
+            const foot = new THREE.Vector3(0, -SHIN_LEN, 0).applyMatrix4(av2.legs[side].elbow.matrixWorld)
+            footLo = Math.min(footLo, foot.y)
+          }
+        }
       }
-      const rail = GYM.rig.crossBarY
-      if (rail > lo && rail < hi) {
-        problems.push(`the rig's cross-bar (${rail}) is inside the hanging head's band ${lo.toFixed(2)}..${hi.toFixed(2)}`)
+      // The occupied band must be CONTINUOUS from the mat to the top bar: if the feet
+      // reach above the hips' ceiling there is no gap at all.
+      if (footLo > hipHi) {
+        problems.push(`the hanging bodies leave a gap ${hipHi.toFixed(2)}..${footLo.toFixed(2)} — a rail would fit after all`)
+      }
+      if (!(headLo < headHi && footLo < hipHi)) {
+        problems.push('could not measure the hanging band — the rig check is not testing anything')
+      }
+      // and the bar itself must clear the heads
+      if (GYM.rig.barY < headHi) {
+        problems.push(`the top bar (${GYM.rig.barY}) is inside the hanging head band up to ${headHi.toFixed(2)}`)
       }
     }
 
@@ -2185,6 +2214,17 @@ void (async () => {
       }
       if (!/a\.targetWater\s*=\s*spot\.water/.test(code)) {
         problems.push('an idle spot does not record that it is in the water')
+      }
+      // (e2) A BODY ALREADY IN THE WATER MUST SWIM, NOT WALK. The activity line used to be
+      // `walking > 0.5 ? 'walking' : a.activity`, so a body crossing the pool played the
+      // WALK cycle the whole way and only swam once it stopped — reported as "moving from
+      // the pool edge to the target point in the pool involves walking instead of
+      // swimming". The condition now consults the basin footprint.
+      if (!/inWaterNow\s*\?\s*'swim'\s*:\s*'walking'/.test(code)) {
+        problems.push('the mover does not switch to the swim pose while crossing the water')
+      }
+      if (!/a\.targetWater\s*&&[\s\S]{0,160}POOL\.w\s*\/\s*2/.test(code)) {
+        problems.push('the swim-while-moving test does not use the basin footprint')
       }
     }
 

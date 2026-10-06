@@ -501,11 +501,12 @@ export const GYM = {
    * and the animation each carried their own copy of 2.39, a change to one would
    * silently leave the avatar hanging in mid-air beside the bar.
    *
-   * `crossBarY` is the lower rail. It is data for the same reason: a body hanging from
-   * `barY` sweeps its head through 1.62..1.97, so a rail at 1.70 passes THROUGH the
-   * head. The value is chosen to clear that band, and the self-test asserts it.
+   * There is deliberately NO lower cross-bar. One was there as a decorative rail, and it
+   * cannot fit: measured across the two hanging poses, heads occupy 1.46..2.22, hips
+   * 0.95..1.41, and the swinging feet reach 0.03 — the bodies fill the whole span between
+   * the mat and the bar, so any rail at any height intersects one of them.
    */
-  rig: { x: 0, z: -7.6, span: 3.0, barY: 2.39, crossBarY: 1.4 },
+  rig: { x: 0, z: -7.6, span: 3.0, barY: 2.39 },
 }
 
 /**
@@ -1175,7 +1176,14 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // (x -4.2, z -5.6), so the spot is the pad itself. The first version reused the
   // standing-press offset and put the body 1.37 m away, lying on the floor next to the
   // bench — measured, not guessed.
-  { x: GYM.rack.x, z: GYM.rack.z, act: 'benchpress', bench: true, face: -Math.PI / 2, level: 0 },
+  //
+  // face = PI, not -PI/2. The pad runs along Z (0.36 wide in x, 1.25 long in z) and the
+  // pose lays the torso along the body's own Z, so only face 0 or PI puts the body ALONG
+  // the pad. -PI/2 laid it ACROSS: body-axis dot pad-axis measured 0.00, head hanging off
+  // the pad's east edge. PI (head north, feet south) fits inside the pad footprint;
+  // face 0 hangs the head 9 cm off the south end. The press reads correctly either way:
+  // hands spread along X (the bar's own axis) and travel upward.
+  { x: GYM.rack.x, z: GYM.rack.z, act: 'benchpress', bench: true, face: Math.PI, level: 0 },
   // In FRONT of the dumbbell rack (the rack's own footprint spans x 3.1..5.3,
   // z -6.05..-5.15, so a spot at its centre is inside it). Facing north to the rack.
   // Both stand SOUTH of the rack, so a fixed PI faced north and missed by up to 34 degrees

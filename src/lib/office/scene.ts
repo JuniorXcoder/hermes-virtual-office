@@ -40,6 +40,7 @@ import {
   insideCeoRoom,
   mayEnterCeoRoom,
   wrapAngle,
+  POOL,
   type Desk,
   type IdleSpot,
   type MeetingRoomId,
@@ -991,7 +992,17 @@ export function createScene(
         a.face = a.arrivalFace
       }
 
-      const activity: Activity = a.walking > 0.5 ? 'walking' : a.activity
+      // IN THE WATER, SWIM — even while still travelling. The activity line below shows
+      // the WALK cycle whenever `a.walking > 0.5`, so without this a body crossed the
+      // whole pool doing a walking animation and only started swimming on arrival.
+      // Measured: the old code showed 'walking' for the entire deck-to-lane crossing.
+      // The basin footprint (not the coping) is the test: the coping is deck you walk
+      // on, the water inside it is where you swim.
+      const inWaterNow =
+        !!a.targetWater &&
+        Math.abs(g.position.x - POOL.x) < POOL.w / 2 &&
+        Math.abs(g.position.z - POOL.z) < POOL.d / 2
+      const activity: Activity = a.walking > 0.5 ? (inWaterNow ? 'swim' : 'walking') : a.activity
       const anim: AnimAgent = {
         avatar: a.avatar,
         activity,

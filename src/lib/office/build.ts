@@ -622,16 +622,14 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       bar.rotation.z = Math.PI / 2
       bar.position.set(0, GYM.rig.barY, 0)
       g.add(bar)
-      // A lower cross-bar, so it reads as a rig and not a doorway.
-      //
-      // 1.40, not the 1.70 it was: a body hanging from the top bar has its head between
-      // y 1.62 and 1.97 (the head centre moves as the pull-up rises), and 1.70 is exactly
-      // inside that band — the head passed through the bar. 1.40 clears the lowest head
-      // position by 6 cm and still reads as structure.
-      const low = cyl(0.026, 0.026, GYM.rig.span, 0x8f979d, 10, 0.8)
-      low.rotation.z = Math.PI / 2
-      low.position.set(0, GYM.rig.crossBarY, 0)
-      g.add(low)
+      // NO LOWER CROSS-BAR. It used to sit here as decoration ("so it reads as a rig and
+      // not a doorway"), and it cannot coexist with the two hanging poses. Measured
+      // bands across the muscle-up and the pull-up: heads 1.46..2.22, hips 0.95..1.41,
+      // and the swinging feet reach down to 0.03 — the bodies fill the entire height
+      // between the mat and the bar, so there is no free y for a rail. At 1.40 the
+      // muscle-up's torso passed through it (the OBB audit measured the hip 0.02 m
+      // inside); at 1.51 it hit the head band instead. The straps and rings below read
+      // as a rig on their own.
       // two hanging grips
       for (const gx of [-0.5, 0.5]) {
         const strap = box(0.05, 0.42, 0.05, 0x3a4045, { rough: 0.9 })
