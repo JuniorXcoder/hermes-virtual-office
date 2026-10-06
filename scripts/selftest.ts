@@ -9,7 +9,9 @@
  *
  * Run: npm run selftest
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   BOARD_COLUMNS,
   CEILING_Y,
@@ -170,6 +172,7 @@ console.log('geometry')
     'src/app/api/hermes/tasks/[id]/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/meeting/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/meeting/actions/route.ts': ['GET'],
+    'src/app/api/hermes/office/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/agents/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/cron/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/cron/actions/route.ts': ['GET'],
@@ -559,6 +562,50 @@ void (async () => {
     }
   }
   check('API replies never throw while being read', problems.length === 0, problems.join(' | '))
+
+  // The office's own DB (data/office.db) is a separate store from the Hermes CLI
+  // data, and it is the one thing the office keeps across reloads: the office
+  // name, where each avatar stood, and the agent Q&A threads. It runs on
+  // `node:sqlite`, so the round trip is asserted here rather than assumed —
+  // a silent failure means avatars snap back to the door on every reload.
+  {
+    const problems: string[] = []
+    const testPath = join(tmpdir(), `office-test-${process.pid}.db`)
+    process.env.OFFICE_DB_PATH = testPath
+    try {
+      const db = await import('../src/lib/office/db')
+      // name round-trip, trimmed and persisted
+      db.setOfficeName('  Kantor Uji  ')
+      if (db.getOfficeName() !== 'Kantor Uji') problems.push(`name = ${db.getOfficeName()}`)
+      // avatar upsert: same id must UPDATE, not duplicate
+      db.saveAvatars([
+        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 1, z: 2, level: 0, activity: 'idle', facing: 0, spawned: false },
+      ])
+      db.saveAvatars([
+        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 9, z: 8, level: 1, activity: 'coffee', facing: 1.5, spawned: false },
+      ])
+      const avatars = db.listAvatars()
+      if (avatars.length !== 1) problems.push(`upsert duplicated the row (${avatars.length})`)
+      const a1 = avatars[0]
+      if (!a1 || a1.x !== 9 || a1.z !== 8 || a1.level !== 1 || a1.activity !== 'coffee') {
+        problems.push(`avatar not updated: ${JSON.stringify(a1)}`)
+      }
+      // Q&A: an open thread counts toward the responsible's badge until answered
+      const t = db.askQuestion('staff', 'manager', 'boleh akses staging?')
+      if (db.openQaCounts().manager !== 1) problems.push('open thread not counted')
+      const answered = db.answerQuestion(t.id, 'boleh')
+      if (answered?.status !== 'answered') problems.push(`answer did not close the thread: ${answered?.status}`)
+      if (db.openQaCounts().manager) problems.push('answered thread still counted as open')
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    } finally {
+      delete process.env.OFFICE_DB_PATH
+      for (const suffix of ['', '-wal', '-shm']) {
+        try { rmSync(testPath + suffix) } catch { /* not created */ }
+      }
+    }
+    check('office DB round-trips name, avatar position and Q&A', problems.length === 0, problems.join(' | '))
+  }
 
   // The chat bridge reads the CLI's session line from stderr, because that is where
   // it is written — measured. An earlier version read stdout only and every send

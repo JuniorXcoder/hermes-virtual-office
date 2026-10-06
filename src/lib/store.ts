@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
+import type { AvatarState, QaThread } from './office/types'
 import { fetchJson } from './api'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
@@ -24,7 +25,16 @@ type State = {
   openTaskId: string | null
   newTaskOpen: boolean
 
+  /** The office's own store (data/office.db), separate from the Hermes CLI data. */
+  officeName: string
+  avatars: AvatarState[]
+  qa: QaThread[]
+  /** Open Q&A thread count per responsible — the badge. */
+  qaOpen: Record<string, number>
+
   load: () => Promise<void>
+  loadOffice: () => Promise<void>
+  setOfficeName: (name: string) => Promise<void>
   setView: (v: '3d' | '2d' | 'sprite') => void
   setPeek: (desk: number | null) => void
   openTask: (taskId: string | null) => void
@@ -48,6 +58,11 @@ export const useOffice = create<State>((set) => ({
   openTaskId: null,
   newTaskOpen: false,
 
+  officeName: 'Hermes Office',
+  avatars: [],
+  qa: [],
+  qaOpen: {},
+
   async load() {
     const res = await fetchJson<{ tasks?: Task[]; agents?: Agent[] }>('/api/hermes/tasks', {
       cache: 'no-store',
@@ -57,6 +72,35 @@ export const useOffice = create<State>((set) => ({
       return
     }
     set({ tasks: res.data.tasks || [], agents: res.data.agents || [], error: null, loading: false })
+  },
+
+  /**
+   * The office's own store. Kept separate from `load()` on purpose: a broken
+   * Hermes install (tasks/agents failing) must not stop the room from rendering,
+   * and this endpoint reads data/office.db, not the CLI.
+   */
+  async loadOffice() {
+    const res = await fetchJson<{
+      name?: string
+      avatars?: AvatarState[]
+      qa?: QaThread[]
+      qaOpen?: Record<string, number>
+    }>('/api/hermes/office', { cache: 'no-store' })
+    if (!res.ok || !res.data) return
+    set({
+      officeName: res.data.name || 'Hermes Office',
+      avatars: res.data.avatars || [],
+      qa: res.data.qa || [],
+      qaOpen: res.data.qaOpen || {},
+    })
+  },
+
+  async setOfficeName(name: string) {
+    const res = await fetchJson<{ name?: string }>('/api/hermes/office', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'setName', name }),
+    })
+    if (res.ok && res.data?.name) set({ officeName: res.data.name })
   },
 
   async refreshMeeting() {
@@ -101,7 +145,11 @@ export function startPolling() {
     if (document.hidden) return schedule()
     running = true
     try {
-      await Promise.all([useOffice.getState().load(), useOffice.getState().refreshMeeting()])
+      await Promise.all([
+        useOffice.getState().load(),
+        useOffice.getState().refreshMeeting(),
+        useOffice.getState().loadOffice(),
+      ])
     } finally {
       running = false
       schedule()
