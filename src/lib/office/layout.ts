@@ -452,6 +452,15 @@ export const COURTYARD = BARS.courtyard
 export const WALKWAY_W = 2.5
 export const POOL = { x: 0, z: 4, w: 12, d: 7, waterY: 0.05, deck: 1.2 }
 
+/**
+ * Where the water SURFACE actually is, as drawn.
+ *
+ * The mesh offsets the plane below `POOL.waterY`, and the swim pose has to float a body at
+ * exactly this height. Two copies of the number is how the body ended up hovering above the
+ * water: the pose was solved against `waterY` while the plane sat 0.06 lower.
+ */
+export const WATER_Y = POOL.waterY - 0.06
+
 /* ------------------------------------------------------- courtyard zones -- */
 
 /**
@@ -476,7 +485,12 @@ export const GYM = {
   /** Mat rectangle — 13 x 7 m of open courtyard north of the pool. */
   x1: -6.5, x2: 6.5, z1: -9.0, z2: -2.4,
   /** The barbell rack, on the mat's west half. `barY` is where the bar rests. */
-  rack: { x: -4.2, z: -5.6, barY: 1.32 },
+  /**
+   * The barbell rack. `barY` is where the bar rests; `benchTop` is the surface of the pad
+   * underneath it, which the bench-press pose lies on. Both are data because the pose has
+   * to agree with the mesh, and the self-test compares them.
+   */
+  rack: { x: -4.2, z: -5.6, barY: 1.32, benchTop: 0.52 },
   /** Dumbbell rack, on the mat's east half. */
   dumbbells: { x: 4.2, z: -5.6 },
   /**
@@ -715,15 +729,23 @@ export type DiningSet = {
 }
 
 export const DINING_SETS: DiningSet[] = [
-  // ALL of them in the PANTRY / DAPUR. The user was explicit: the dining tables belong in
-  // the pantry, not in the leisure room. These four run down the middle of the room, clear
-  // of the counter (x 25.15..26.05), the water cooler and the partition at z = 2.
-  { x: 16.6, z: 4.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 16.6, z: 9.4, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 16.6, z: 14.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 16.6, z: 19.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  // one more against the east side, north of the counter's end
-  { x: 20.4, z: 17.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  // SIX tables in the PANTRY / DAPUR, in a deliberate grid — not scattered.
+  //
+  // The room runs x 14.2..27.9, z 2.0..20.9, with the counter on the far east wall
+  // (x 25.15..26.05) and the water cooler at its south end. Two columns of three:
+  //
+  //   column A  x = 17.0    column B  x = 21.6
+  //   rows      z = 6.0, 10.6, 15.2
+  //
+  // A 2.2 m gap between columns and 4.6 m between rows, so every set has room for its four
+  // chairs and a body can walk between them. All six are clear of the counter and the
+  // partition at z = 2.
+  { x: 17.0, z: 6.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 17.0, z: 10.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 17.0, z: 15.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 21.6, z: 6.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 21.6, z: 10.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 21.6, z: 15.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
 ]
 
 /** Seat height of a dining chair — matches SEATS.chair, so the pose is unchanged. */

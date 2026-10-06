@@ -33,6 +33,7 @@ import {
   insideCeoRoom,
   mayEnterCeoRoom,
   POOL,
+  WATER_Y,
   LEVEL_H,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
@@ -2155,6 +2156,27 @@ void (async () => {
     const av = buildAvatar('backend')
     if (!av.held.burger || !av.held.pizza) problems.push('the avatar cannot hold a meal')
     if (!av.held.tongs) problems.push('the avatar cannot hold the BBQ tongs')
+    // THE GRIP BANDS MUST BE WHERE THE HANDS ARE. Fixed at +-0.41 they only fit the
+    // overhead press; a bench press opens to 1.26 m and left the hands on bare bar.
+    {
+      const FIST = new THREE.Vector3(0, -(FOREARM + 0.03), 0)
+      for (const act of ['barbell', 'benchpress'] as const) {
+        const b = buildAvatar('backend')
+        const anim = { avatar: b, activity: act as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+        let worst = 0
+        for (let i = 0; i <= 40; i++) {
+          animate(anim, i * 0.12, 0)
+          b.group.updateMatrixWorld(true)
+          const fists = [0, 1].map((s) => b.arms[s as 0 | 1].elbow.localToWorld(FIST.clone()))
+          for (const s of [0, 1] as const) {
+            const p = new THREE.Vector3()
+            b.held.barbellGrips[s].getWorldPosition(p)
+            worst = Math.max(worst, p.distanceTo(fists[s]))
+          }
+        }
+        if (worst > 0.03) problems.push(`'${act}': the grip band is ${worst.toFixed(3)} m from the hand`)
+      }
+    }
     check('pull-up, muscle-up and bench press all exist', problems.length === 0, problems.join(' | '))
   }
 
@@ -2200,8 +2222,29 @@ void (async () => {
     const problems: string[] = []
 
     // (a) the dining sets must be MANY, and each must have its table mesh data intact
-    if (DINING_SETS.length < 5) {
-      problems.push(`only ${DINING_SETS.length} dining sets — the user asked for many tables`)
+    if (DINING_SETS.length !== 6) {
+      problems.push(`${DINING_SETS.length} dining sets — the user asked for SIX`)
+    }
+    // and they must be in a deliberate GRID, not scattered: two columns, three rows
+    {
+      const xs = [...new Set(DINING_SETS.map((s) => Math.round(s.x * 10) / 10))].sort((a, b) => a - b)
+      const zs = [...new Set(DINING_SETS.map((s) => Math.round(s.z * 10) / 10))].sort((a, b) => a - b)
+      if (xs.length !== 2) problems.push(`dining columns are not aligned: x values ${xs.join(', ')}`)
+      if (zs.length !== 3) problems.push(`dining rows are not aligned: z values ${zs.join(', ')}`)
+      // every column/row pair must have a table, or the grid has a hole
+      for (const x of xs) {
+        for (const z of zs) {
+          const hit = DINING_SETS.some((s) => Math.abs(s.x - x) < 0.05 && Math.abs(s.z - z) < 0.05)
+          if (!hit) problems.push(`the dining grid is missing a table at (${x}, ${z})`)
+        }
+      }
+      // and no two tables may be so close that their chairs collide
+      for (const [i, a] of DINING_SETS.entries()) {
+        for (const b of DINING_SETS.slice(i + 1)) {
+          const d = Math.hypot(a.x - b.x, a.z - b.z)
+          if (d < 2.4) problems.push(`dining sets at (${a.x},${a.z}) and (${b.x},${b.z}) are only ${d.toFixed(1)} m apart`)
+        }
+      }
     }
     for (const [i, s] of DINING_SETS.entries()) {
       if (!(s.w > 0.5 && s.d > 0.3)) problems.push(`dining set ${i} has no usable table size`)
@@ -2374,6 +2417,128 @@ void (async () => {
     }
     if (DINING_SETS.length < 4) problems.push(`only ${DINING_SETS.length} dining sets`)
     check('every dining table is in the pantry', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // LYING DOWN NEEDS A WAIST JOINT (poin 3, 7, and the bench press).
+  //
+  // `chest` pivots at the SHOULDERS, so leaning it only tips the head back — the torso stays
+  // upright. That is why the swimmer floated, the bench press looked like sitting, and the
+  // daybed never lay down. The rig now has a `waist` at the hip, and this measures the
+  // result rather than trusting it: a body that is lying has its chest at nearly the SAME
+  // height as its hip, and one that is standing has the chest 0.66 above it.
+  //
+  // No screenshot can be fooled by this number, and no pose can fake it.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const gap = (act: Activity): number => {
+      const av = buildAvatar('backend')
+      const a = { avatar: av, activity: act, ease: 1, phase: 0.3, meetingTalking: false }
+      let worst = 0
+      for (let i = 0; i <= 40; i++) {
+        animate(a, i * 0.12, 0)
+        av.group.updateMatrixWorld(true)
+        const chest = av.chest.getWorldPosition(new THREE.Vector3())
+        const hip = av.hips.getWorldPosition(new THREE.Vector3())
+        worst = Math.max(worst, chest.y - hip.y)
+      }
+      return worst
+    }
+    // LYING: the chest must come down close to the hip.
+    for (const [act, maxGap] of [
+      ['swim', 0.12],
+      ['benchpress', 0.12],
+      ['recline', 0.22],
+    ] as const) {
+      const g = gap(act)
+      if (g > maxGap) {
+        problems.push(`'${act}' is not lying down: chest is ${g.toFixed(3)} m above the hip (max ${maxGap})`)
+      }
+    }
+    // STANDING: the upright poses must NOT have been flattened by the change.
+    for (const act of ['idle', 'walking', 'typing'] as const) {
+      const g = gap(act)
+      if (g < 0.5) problems.push(`'${act}' is no longer upright: chest-hip gap ${g.toFixed(3)}`)
+    }
+    // and the joint must exist on the rig, or every pose above is measuring something else
+    const av = buildAvatar('backend')
+    if (!av.waist) problems.push('the rig has no waist joint')
+    else if (av.waist.parent !== av.hips) problems.push('the waist is not a child of the hips')
+    check('a lying pose really lies down, and a standing pose still stands', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE SWIMMER FLOATS AT THE WATER SURFACE, WHICH IS WHERE THE PLANE IS (poin 2).
+  //
+  // `WATER_Y` is the surface as DRAWN, and the pose reads the same constant. The body's
+  // centre must sit within a hand's width of it, and part of the body must be under it —
+  // otherwise the avatar is hovering above the pool, which is what the user reported.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const av = buildAvatar('backend')
+    const spot = IDLE_SPOTS.find((s) => s.act === 'swim')!
+    av.group.position.set(spot.x, 0, spot.z)
+    const a = { avatar: av, activity: 'swim' as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+    let lo = 9
+    let hi = -9
+    for (let i = 0; i <= 60; i++) {
+      animate(a, i * 0.1, 0)
+      av.group.updateMatrixWorld(true)
+      const box = new THREE.Box3().setFromObject(av.hips)
+      lo = Math.min(lo, box.min.y)
+      hi = Math.max(hi, box.max.y)
+    }
+    const centre = (lo + hi) / 2
+    if (Math.abs(centre - WATER_Y) > 0.25) {
+      problems.push(`the swimmer's centre is ${(centre - WATER_Y).toFixed(2)} m from the water surface`)
+    }
+    if (lo > WATER_Y) problems.push('no part of the swimmer is under the water')
+    // the mesh and the pose must read the SAME constant
+    const build = readFileSync(new URL('../src/lib/office/build.ts', import.meta.url), 'utf8')
+    if (!/water\.position\.set\(x, WATER_Y, z\)/.test(build)) {
+      problems.push('the water plane is not drawn at WATER_Y — the pose and the mesh can drift')
+    }
+    check('the swimmer floats at the water surface', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE RACK'S BAR IS HIDDEN WHILE SOMEBODY BENCHES.
+  //
+  // The bar is in the lifter's hands, so leaving the rack's own bar resting in the hooks
+  // draws two bars in the same place. The mesh exposes `setRackBarVisible` and the scene
+  // calls it every frame.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const build = readFileSync(new URL('../src/lib/office/build.ts', import.meta.url), 'utf8')
+    const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    if (!/setRackBarVisible/.test(build)) problems.push('the rack bar cannot be hidden')
+    if (!/rackBarParts\.push\(bar\)/.test(build)) problems.push("the rack's bar is not collected")
+    if (!/office\.setRackBarVisible\(/.test(scene)) {
+      problems.push('the scene never hides the rack bar — two bars will overlap')
+    }
+    if (!/activity === 'benchpress'/.test(scene)) {
+      problems.push('the scene does not test for a benching body')
+    }
+    // the pose must lie on the pad, not sit at it
+    const av = buildAvatar('backend')
+    const a = { avatar: av, activity: 'benchpress' as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+    let minHip = 9
+    let maxHip = -9
+    for (let i = 0; i <= 40; i++) {
+      animate(a, i * 0.12, 0)
+      minHip = Math.min(minHip, av.hips.position.y)
+      maxHip = Math.max(maxHip, av.hips.position.y)
+    }
+    if (maxHip > GYM.rack.benchTop + 0.06) {
+      problems.push(`the lifter's hip is at ${maxHip.toFixed(3)}, above the pad (${GYM.rack.benchTop})`)
+    }
+    if (minHip < GYM.rack.benchTop - 0.06) {
+      problems.push(`the lifter's hip is at ${minHip.toFixed(3)}, below the pad (${GYM.rack.benchTop})`)
+    }
+    check('a bench press lies on the pad with the rack bar hidden', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

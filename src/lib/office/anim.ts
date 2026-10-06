@@ -9,9 +9,11 @@ import * as THREE from 'three'
 import type { Avatar } from './avatar'
 
 import { CHEST_Y, FIST_FROM_ELBOW, HIP_STAND, SHOULDER_X, SHOULDER_Y, UPPER_ARM } from './avatar'
-import { GYM, SEATS } from './layout'
+import { GYM, SEATS, WATER_Y } from './layout'
 
 const D = Math.PI / 180
+/** The bench pad's surface, read from the same data the mesh is built from. */
+const BENCH_TOP = GYM.rack.benchTop
 export { HIP_STAND }
 
 /* ------------------------------------------------------------ held items -- */
@@ -41,7 +43,9 @@ function fistInAvatar(av: Avatar, side: 0 | 1, out: THREE.Vector3): THREE.Vector
   out.x += side === 0 ? -SHOULDER_X : SHOULDER_X
   out.y += SHOULDER_Y // shoulder joint, in the chest's frame
   out.applyEuler(av.chest.rotation)
-  out.y += CHEST_Y + av.hips.position.y // chest and hips, in the avatar's frame
+  out.y += CHEST_Y // chest, in the waist's frame
+  out.applyEuler(av.waist.rotation) // the WAIST, which lays the upper body down
+  out.y += av.hips.position.y // waist and hips, in the avatar's frame
   return out
 }
 
@@ -54,6 +58,22 @@ function holdBarbell(a: AnimAgent) {
   bar.visible = true
   bar.position.set((L.x + R.x) / 2, (L.y + R.y) / 2, (L.z + R.z) / 2)
   bar.rotation.set(0, 0, 0)
+  /**
+   * Slide the GRIP BANDS onto the fists.
+   *
+   * They used to be fixed at +-0.41 — the width of the overhead press — so a wider grip
+   * (a bench press opens to 1.26 m) left the hands holding bare bar between the bands. The
+   * knurling is what says "held", so it has to be where the hands are.
+   *
+   * A bar is 1.9 m long, so the band cannot run past +-0.95 minus its own half-length. The
+   * grip is clamped inside that and the plates stay outside it.
+   */
+  const grips = av.held.barbellGrips
+  const half = L.distanceTo(R) / 2
+  const at = Math.max(0.28, Math.min(0.72, half))
+  for (const [i, g] of grips.entries()) {
+    g.position.x = i === 0 ? -at : at
+  }
 }
 
 /** A dumbbell in each fist. */
@@ -418,47 +438,52 @@ function sofa(a: AnimAgent, t: number) {
 }
 
 /**
- * Benching under the bar: LYING on the bench, pressing upward.
+ * Benching: LYING on the bench, pressing the bar.
  *
- * The body is horizontal, which is what makes it a bench press rather than a standing
- * press. The rig's bench pad is at y 0.46 with the bar above it at 1.32, so the torso
- * lies at roughly hip 0.62 and the bar travels from chest (1.30) to lockout (1.78).
+ * The body is horizontal, which is what makes it a bench press and not a seated press.
+ * That needs the WAIST: `chest` pivots at the shoulders, so a chest-only lean tips the head
+ * back and leaves the torso upright — the body reads as SITTING at the bench, which is what
+ * the user saw.
  *
- * `holdBarbell` places the bar from the fists, so the bar rides the arms automatically.
+ * The rack's own bar is hidden while this runs (see `holdBarbell`), because the bar is in
+ * the lifter's hands: two bars in the same place is the same mistake as two idle spots.
  */
 function benchpress(a: AnimAgent, t: number) {
   const av = a.avatar
   const k = Math.min(1, a.ease)
   const m = (v: number) => v * k
-  // The bench is 0.46 high; lying on it puts the hips a little above the pad.
-  const HIP_LIE = 0.62
-  av.hips.position.y = HIP_LIE - (HIP_LIE - HIP_STAND) * (1 - k) * 0
-  // LEGS: knees up, feet flat on the floor beside the bench.
+  // Lay the upper body flat on the pad. The pad's top is 0.52, so the hip rides just above
+  // it and the waist lays the torso along the bench.
+  av.waist.rotation.x = m(-88 * D)
+  av.waist.rotation.y = 0
+  av.hips.position.y = BENCH_TOP * k + HIP_STAND * (1 - k)
+  // LEGS: knees up, feet flat on the floor beside the bench. They hang from the hips, so
+  // they need their own fold to reach the ground.
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = m(-78 * D)
-    leg.shoulder.rotation.z = sign * m(10 * D)
-    leg.elbow.rotation.x = m(80 * D)
+    leg.shoulder.rotation.x = m(-64 * D)
+    leg.shoulder.rotation.z = sign * m(12 * D)
+    leg.elbow.rotation.x = m(78 * D)
   }
-  // TORSO: flat on the bench, slight arch.
-  av.chest.rotation.x = m(-6 * D)
+  // The torso is already flat; a slight arch and the head resting on the pad.
+  av.chest.rotation.x = m(6 * D)
   av.chest.rotation.y = 0
-  av.neck.rotation.x = m(4 * D)
-  av.head.rotation.x = m(6 * D)
+  av.neck.rotation.x = m(-14 * D)
+  av.head.rotation.x = m(-6 * D)
   av.head.rotation.y = wave(t, 0.3, a.phase) * 5 * D
-  // ARMS: press from the chest to lockout. At the bottom the elbows are wide and bent;
-  // at the top they are straight.
+  // ARMS: press from the chest to lockout. At the bottom the elbows are wide and bent; at
+  // the top they are straight. Both arms together, because a bar is one object.
   const press = (Math.sin(t * 0.95 + a.phase) + 1) / 2
   const [L, R] = av.arms
   for (const [arm, sign] of [
     [L, -1],
     [R, 1],
   ] as const) {
-    arm.shoulder.rotation.x = m(-70 * D) - press * 34 * D
-    arm.shoulder.rotation.z = sign * m(34 * D)
-    arm.elbow.rotation.x = m(-84 * D) + press * 78 * D
+    arm.shoulder.rotation.x = m(-88 * D) + press * 46 * D
+    arm.shoulder.rotation.z = sign * m(36 * D)
+    arm.elbow.rotation.x = m(-96 * D) + press * 92 * D
   }
   holdBarbell(a)
 }
@@ -466,46 +491,43 @@ function benchpress(a: AnimAgent, t: number) {
 /**
  * Swimming a lane.
  *
- * The body is IN the water: the pool surface is at y 0.05, so the whole avatar sits low
- * and horizontal, with the head up for breath. The arms alternate a front crawl and the
- * legs flutter.
+ * THE BODY LIES FLAT, and that needs the WAIST. `chest` pivots at the shoulders, so leaning
+ * it only tips the head back — the torso stays upright and the swimmer reads as a standing
+ * person with a stiff neck, floating above the water. `waist` pivots at the hip and lays
+ * the whole upper body down.
  *
- * The hips ride BELOW standing height by design — a swimmer is not standing in the pool,
- * and a body at standing height in 1.2 m of water is visibly wrong.
+ * The height is then solved against the WATER SURFACE, which is at `POOL.waterY - 0.06`
+ * (the mesh offsets it), not at `POOL.waterY`. Getting that wrong is what left the body
+ * hovering: it was set from the hip, and a horizontal body's hip is BELOW its centre.
  */
 function swim(a: AnimAgent, t: number) {
   const av = a.avatar
   const k = Math.min(1, a.ease)
   const m = (v: number) => v * k
-  // A crawl stroke: one full cycle per ~2.2 s, the two arms half a cycle apart.
   const stroke = (off: number) => Math.sin(t * 2.85 + a.phase + off)
-  // AT THE SURFACE. Solved by sampling the rig, not guessed: the torso pivots at the
-  // chest, so the body's centre sits about 0.4 m above the hip. hipY -0.37 puts that
-  // centre at 0.05 — the water line — with the head and shoulders breaking the surface
-  // and the legs just under it.
-  //
-  // The first value (0.30) floated the whole body 0.8 m ABOVE the water, which the probe
-  // caught; 0.02 still left it 0.38 m high.
-  av.hips.position.y = -0.37 * k + HIP_STAND * (1 - k)
-  // The body lies face-DOWN and horizontal. The rig has no waist joint, so a flat
-  // swimmer is built from the chest pivot: leaning the torso forward 80 deg lays it out.
-  av.chest.rotation.x = m(84 * D)
-  av.chest.rotation.y = wave(t, 1.4, a.phase) * 6 * D
-  // head up for breath, turning with the stroke
-  av.neck.rotation.x = m(-64 * D)
-  av.head.rotation.x = m(-18 * D)
-  av.head.rotation.y = wave(t, 1.4, a.phase) * 26 * D
-  // LEGS: flutter kick, straight behind — and raised to the surface, because a swimmer's
-  // legs do not drag on the bottom.
+  // Lay the upper body flat, face-down.
+  av.waist.rotation.x = m(90 * D)
+  av.waist.rotation.y = 0
+  // The hips ride at the surface: the body is horizontal, so the hip and the chest are at
+  // the same height. `WATER_Y` is where the plane actually is.
+  av.hips.position.y = WATER_Y * k + HIP_STAND * (1 - k)
+  // The torso rolls slightly with the stroke, and the head lifts to breathe.
+  av.chest.rotation.x = m(-16 * D) + wave(t, 1.4, a.phase) * 5 * D
+  av.chest.rotation.y = wave(t, 1.4, a.phase) * 8 * D
+  av.neck.rotation.x = m(-34 * D)
+  av.head.rotation.x = m(-22 * D)
+  av.head.rotation.y = wave(t, 1.4, a.phase) * 24 * D
+  // LEGS: flutter kick, straight out behind. They hang from the hips, so a -90 rotation
+  // lays them along the body.
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = m(-96 * D) + wave(t, 5.5, a.phase + (sign > 0 ? Math.PI : 0)) * 14 * D
+    leg.shoulder.rotation.x = m(-90 * D) + wave(t, 5.5, a.phase + (sign > 0 ? Math.PI : 0)) * 12 * D
     leg.shoulder.rotation.z = sign * m(3 * D)
-    leg.elbow.rotation.x = m(10 * D)
+    leg.elbow.rotation.x = m(6 * D)
   }
-  // ARMS: the crawl. Each arm sweeps from in front, down past the hip, and recovers.
+  // ARMS: the crawl. Each sweeps from in front, down past the hip, and recovers.
   const [L, R] = av.arms
   for (const [arm, sign, off] of [
     [L, -1, 0],
@@ -531,26 +553,36 @@ function recline(a: AnimAgent, t: number) {
   const av = a.avatar
   const k = Math.min(1, a.ease)
   const m = (v: number) => v * k
-  // The bed surface is 0.5; lying on it puts the hips there.
+  // The bed surface is 0.5; lying on it puts the hip there.
   const HIP_LIE = 0.54
   av.hips.position.y = HIP_LIE * k + HIP_STAND * (1 - k)
-  // LEGS: straight out along the bed, one knee loosely bent.
+  // LYING, and that needs the WAIST. The first version only leaned the CHEST, which pivots
+  // at the shoulders — so the torso stayed upright and the "reclining" body measured a
+  // chest-to-hip gap of 0.66, exactly a standing body's. The waist lays the torso back
+  // along the raised back rest.
+  // -76 deg: measured, not chosen. At -64 the chest-to-hip gap is 0.289, which reads as
+  // SITTING on the bed; at -76 it is 0.160, clearly lying back while still propped on the
+  // daybed's raised rest. -84 would be flat and would waste the rest.
+  av.waist.rotation.x = m(-76 * D)
+  av.waist.rotation.y = 0
+  // LEGS: straight out along the bed, one knee loosely bent. They hang from the hips, so
+  // they need their own rotation to lie along the bed rather than hang off the end.
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = m(-88 * D) + (sign > 0 ? m(14 * D) : 0)
+    leg.shoulder.rotation.x = m(-84 * D) + (sign > 0 ? m(14 * D) : 0)
     leg.shoulder.rotation.z = sign * m(6 * D)
     leg.elbow.rotation.x = m(sign > 0 ? 30 * D : 8 * D)
   }
-  // TORSO: propped up on the raised back rest.
-  av.chest.rotation.x = m(-38 * D)
+  // The torso is already laid back; the head rests and turns slowly.
+  av.chest.rotation.x = m(6 * D)
   av.chest.rotation.y = wave(t, 0.25, a.phase) * 4 * D
-  av.neck.rotation.x = m(16 * D)
-  av.head.rotation.x = m(10 * D)
+  av.neck.rotation.x = m(8 * D)
+  av.head.rotation.x = m(6 * D)
   av.head.rotation.y = wave(t, 0.2, a.phase) * 20 * D
-  // ARMS: hands behind the head, elbows out. That is what makes a recline read as
-  // relaxing rather than as a body that fell over.
+  // ARMS: hands behind the head, elbows out. That is what makes a recline read as relaxing
+  // rather than as a body that fell over.
   const [L, R] = av.arms
   for (const [arm, sign] of [
     [L, -1],

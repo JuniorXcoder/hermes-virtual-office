@@ -952,6 +952,9 @@ export function createScene(
     office.animateStreet(dt, t)
     // The grill's fire and smoke: the only live flame in the building.
     office.animateBbq(t)
+    // The rack's bar is hidden while somebody is benching: the bar is in their hands, and
+    // leaving a second one resting in the hooks draws two bars in the same place.
+    office.setRackBarVisible(!avatars.some((a) => a.activity === 'benchpress' && a.walking < 0.5))
     controls.update()
     renderer.render(scene, camera)
     labelRenderer.render(scene, camera)

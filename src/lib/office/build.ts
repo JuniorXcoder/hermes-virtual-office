@@ -54,6 +54,7 @@ import {
   PANTRY_STOOLS,
   PANTRY_STOOL_GAP,
   POOL,
+  WATER_Y,
   POOL_BENCHES,
   POOL_LOUNGERS,
   RECEPTION,
@@ -319,6 +320,13 @@ export type OfficeProps = {
    * motionless in the air reads as a grey ball rather than as cooking.
    */
   animateBbq: (t: number) => void
+  /**
+   * Show or hide the bar resting in the rack's hooks.
+   *
+   * The bench-press pose puts the bar in the lifter's hands; leaving the rack's own bar in
+   * place would draw two bars in the same spot.
+   */
+  setRackBarVisible: (visible: boolean) => void
   applyPalette: (hour: number) => void
   dispose: () => void
 }
@@ -330,6 +338,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const bbqSmoke: THREE.Mesh[] = []
   let bbqFire: THREE.Mesh | null = null
   let bbqGlow: THREE.PointLight | null = null
+  /** The bar and plates resting in the rack's hooks, hidden while somebody benches. */
+  const rackBarParts: THREE.Mesh[] = []
   let pal: Palette = paletteFor(hour)
   const disposables: { dispose(): void }[] = []
   const track = <T extends { dispose(): void }>(t: T): T => {
@@ -448,7 +458,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       ),
     )
     water.rotation.x = -Math.PI / 2
-    water.position.set(x, POOL.waterY - 0.06, z)
+    water.position.set(x, WATER_Y, z)
     group.add(water)
     // coping: a light stone lip all the way round
     for (const [sx, sz, sw, sd] of [
@@ -521,6 +531,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       bar.rotation.z = Math.PI / 2
       bar.position.set(0, GYM.rack.barY, 0)
       g.add(bar)
+      // The rack's bar and its plates are collected so the bench-press pose can HIDE them:
+      // when the bar is in the lifter's hands, leaving a second bar resting in the hooks
+      // means two bars in the same place.
+      rackBarParts.push(bar)
       // plates, biggest inboard
       for (const side of [-1, 1]) {
         for (const [off, r] of [
@@ -532,6 +546,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
           plate.rotation.z = Math.PI / 2
           plate.position.set(side * off, GYM.rack.barY, 0)
           g.add(plate)
+          rackBarParts.push(plate)
         }
       }
       // a bench under the bar
@@ -2024,6 +2039,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
    * and starting again. The opacity is multiplied by the base the mesh was built with, so
    * the three puffs keep their graded faintness instead of all becoming equally solid.
    */
+  function setRackBarVisible(visible: boolean) {
+    for (const m of rackBarParts) m.visible = visible
+  }
+
   function animateBbq(t: number) {
     if (bbqFire) {
       const mat = bbqFire.material as THREE.MeshStandardMaterial
@@ -2056,6 +2075,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup,
     animateStreet,
     animateBbq,
+    setRackBarVisible,
     sun,
     applyPalette,
     dispose,

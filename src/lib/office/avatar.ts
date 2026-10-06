@@ -25,6 +25,18 @@ export type Avatar = {
   neck: THREE.Object3D
   head: THREE.Object3D
   hips: THREE.Object3D
+  /**
+   * The WAIST joint — the pivot that lays the whole upper body down.
+   *
+   * `chest` pivots at the TOP of the torso, so leaning it forward tips the shoulders and
+   * head while the torso itself stays upright: fine for a crouch or a typing lean, useless
+   * for lying down. Without a waist, a swimmer and a bench press both read as a STANDING
+   * body with its head tipped back, which is exactly how they looked.
+   *
+   * This is a child of `hips` holding the torso, chest and arms, so rotating it lays the
+   * upper body flat while the legs stay where they are.
+   */
+  waist: THREE.Object3D
   arms: [Limb, Limb]
   legs: [Limb, Limb]
   badge: THREE.Mesh
@@ -38,6 +50,13 @@ export type Avatar = {
    */
   held: {
     barbell: THREE.Group
+    /**
+     * The knurled grip bands on the bar, so a pose can slide them onto the hands.
+     *
+     * A fixed offset only fits one grip width; a bench press opens wider than a press, and
+     * the hands would end up on bare bar between the bands.
+     */
+    barbellGrips: THREE.Mesh[]
     dumbbells: [THREE.Group, THREE.Group]
     /** A burger in the right hand; hidden when the meal is a pizza. */
     burger: THREE.Group
@@ -104,8 +123,9 @@ const DUMBBELL_HEAD_GEO = new THREE.CylinderGeometry(0.075, 0.075, 0.07, 14)
  * The bar lies along local +X and is centred on the origin, so a pose places it by
  * putting its origin at the midpoint of the two fists.
  */
-function buildBarbell(): THREE.Group {
+function buildBarbell(): { group: THREE.Group; grips: THREE.Mesh[] } {
   const g = new THREE.Group()
+  const grips: THREE.Mesh[] = []
   const bar = new THREE.Mesh(BAR_GEO, STEEL)
   bar.rotation.z = Math.PI / 2
   g.add(bar)
@@ -116,6 +136,7 @@ function buildBarbell(): THREE.Group {
     grip.rotation.z = Math.PI / 2
     grip.position.x = side * 0.41
     g.add(grip)
+    grips.push(grip)
     const collar = new THREE.Mesh(COLLAR_GEO, IRON)
     collar.rotation.z = Math.PI / 2
     collar.position.x = side * 0.66
@@ -132,7 +153,7 @@ function buildBarbell(): THREE.Group {
     if ((o as THREE.Mesh).isMesh) o.castShadow = true
   })
   g.visible = false
-  return g
+  return { group: g, grips }
 }
 
 /**
@@ -294,13 +315,21 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   const legs: [Limb, Limb] = [makeLeg(-1), makeLeg(1)]
 
   // ---- torso
+  //
+  // The torso hangs from the WAIST, which pivots at the hip. `chest` still sits on top of
+  // the torso and still pivots there — that is the shoulder joint — but the waist is what
+  // lets the whole upper body lie down.
+  const waist = new THREE.Group()
+  waist.position.y = 0
+  hips.add(waist)
+
   const torso = new THREE.Mesh(new THREE.BoxGeometry(TORSO_W, TORSO_H, TORSO_D), mat(accent))
   torso.position.y = TORSO_H / 2
-  hips.add(torso)
+  waist.add(torso)
 
   const chest = new THREE.Group()
   chest.position.y = CHEST_Y
-  hips.add(chest)
+  waist.add(chest)
 
   const neckMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.12), mat(skin, 0.85))
   neckMesh.position.y = 0.045
@@ -354,7 +383,7 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   // -> hips -> group), so the item's position is expressed in that frame too. Hanging
   // it off the chest applied the chest's transform a second time and the bar floated
   // 1.67 m from the hands.
-  const barbell = buildBarbell()
+  const { group: barbell, grips: barbellGrips } = buildBarbell()
   group.add(barbell)
   const dumbbells: [THREE.Group, THREE.Group] = [buildDumbbell(), buildDumbbell()]
   for (const d of dumbbells) group.add(d)
@@ -372,5 +401,5 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     }
   })
 
-  return { group, chest, neck, head, hips, arms, legs, badge, held: { barbell, dumbbells, burger, pizza, tongs } }
+  return { group, chest, neck, head, hips, waist, arms, legs, badge, held: { barbell, barbellGrips, dumbbells, burger, pizza, tongs } }
 }
