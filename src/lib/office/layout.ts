@@ -775,47 +775,15 @@ export function diningChairs(set: DiningSet): { x: number; z: number }[] {
   ]
 }
 
+/** Facing for a chair at (cx,cz) so it LOOKS at the table centre. */
+export function diningChairFacing(set: DiningSet, cx: number, cz: number): number {
+  // The chair mesh carries its back rest at local +z, so it looks along local -z, i.e.
+  // the look vector is (-sin f, -cos f). We want that to point at the table, so
+  // f = atan2(-(tx-cx), -(tz-cz)).
+  return Math.atan2(-(set.x - cx), -(set.z - cz))
+}
 
 /* ------------------------------------------------------------- access -- */
-
-/**
- * THE facing convention, in one place.
- *
- * `face` is the direction a BODY LOOKS. Every avatar mesh in this project carries its face
- * on local -z, so a body rotated by `f` looks along `(-sin f, -cos f)`.
- *
- * Therefore, to look AT a point:
- *
- *     look = (target - from) / |target - from|
- *     -sin f = dx, -cos f = dz
- *     f = atan2(-dx, -dz)
- *
- * Almost every spot in this file used `atan2(dx, dz)` instead — the exact opposite — which
- * is why chairs had their backs to their tables, the pantry stools faced away from the
- * counter, the gardener turned his back on the plants and the cooks faced away from the
- * grill. One helper, used everywhere, is what stops that recurring: the convention is
- * written down once and every caller reads it.
- */
-export function faceToward(fromX: number, fromZ: number, toX: number, toZ: number): number {
-  return Math.atan2(-(toX - fromX), -(toZ - fromZ))
-}
-
-/** The world direction a body with this facing LOOKS. */
-export function lookVector(face: number): { x: number; z: number } {
-  return { x: -Math.sin(face), z: -Math.cos(face) }
-}
-
-/**
- * Which way a body sitting at a desk's chair LOOKS: at the desk.
- *
- * Lives here, beside `faceToward`, so the self-test can call it. It used to be a private
- * function inside `scene.ts` with a hand-rolled `atan2(dx, dz)` — the opposite sign from the
- * convention — which put every typing agent's back to its own desk.
- */
-export function deskSeatFacing(desk: Desk): number {
-  const chair = deskSeatWorld(desk)
-  return faceToward(chair.x, chair.z, desk.x, desk.z)
-}
 
 /**
  * Who may enter the CEO suite.
@@ -1115,23 +1083,11 @@ export type IdleSpot = {
  */
 export const IDLE_SPOTS: IdleSpot[] = [
   /* ---- poolside: the south benches, and the west daybeds to LIE on ------- */
-  // `face` is computed to LOOK AT THE WATER, not copied from the mesh rotation. The mesh's
-  // `facing` is a build-time rotation and the body's facing is a look direction: they are
-  // different quantities, and reusing one for the other is what turned the two outer benches
-  // 34 degrees off the pool.
-  ...POOL_BENCHES.map((b) => ({
-    x: b.x, z: b.z, act: 'pool' as const, seated: true,
-    face: faceToward(b.x, b.z, POOL.x, POOL.z), level: 0 as const,
-  })),
+  ...POOL_BENCHES.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
   // The daybeds are for LYING, not sitting: they have a raised back rest, and a seated
   // pose on one reads as somebody perched on the edge of a bed. `act: 'recline'` is what
   // selects the lying pose — the activity picks the pose, exactly as 'barbell' does.
-  // The daybed lies with its head AWAY from the water so the body looks across it, which is
-  // the same look direction the bench uses.
-  ...SUNBEDS.map((b) => ({
-    x: b.x, z: b.z, act: 'recline' as const, seated: true,
-    face: faceToward(b.x, b.z, POOL.x, POOL.z), level: 0 as const,
-  })),
+  ...SUNBEDS.map((b) => ({ x: b.x, z: b.z, act: 'recline' as const, seated: true, face: b.facing, level: 0 as const })),
 
   /* ---- IN the water: swimming ------------------------------------------- */
   // Four lanes across the pool. `water` lets the mover in; without it the basin is a
@@ -1150,22 +1106,18 @@ export const IDLE_SPOTS: IdleSpot[] = [
   //
   // `face` points AT the equipment in every case, because a body exercising away from
   // the thing it is using looks broken (poin 8 and 9).
-  { x: GYM.rack.x + 1.15, z: GYM.rack.z + 0.75, act: 'barbell', face: faceToward(GYM.rack.x + 1.15, GYM.rack.z + 0.75, GYM.rack.x, GYM.rack.z), level: 0 },
+  { x: GYM.rack.x + 1.15, z: GYM.rack.z + 0.75, act: 'barbell', face: -Math.PI / 2, level: 0 },
   // BENCH PRESS: ON the bench, not beside it. The bench pad is at the rack's own centre
   // (x -4.2, z -5.6), so the spot is the pad itself. The first version reused the
   // standing-press offset and put the body 1.37 m away, lying on the floor next to the
   // bench — measured, not guessed.
-  // The bench press LIES on the rack, so there is no direction to look "at" — the body is
-  // supine. Its facing is the rack's own axis: feet toward the rack's south side.
-  { x: GYM.rack.x, z: GYM.rack.z, act: 'benchpress', bench: true, face: 0, level: 0 },
+  { x: GYM.rack.x, z: GYM.rack.z, act: 'benchpress', bench: true, face: -Math.PI / 2, level: 0 },
   // In FRONT of the dumbbell rack (the rack's own footprint spans x 3.1..5.3,
   // z -6.05..-5.15, so a spot at its centre is inside it). Facing north to the rack.
-  { x: GYM.dumbbells.x - 0.6, z: GYM.dumbbells.z + 0.9, act: 'dumbbell', face: faceToward(GYM.dumbbells.x - 0.6, GYM.dumbbells.z + 0.9, GYM.dumbbells.x, GYM.dumbbells.z), level: 0 },
-  { x: GYM.dumbbells.x + 0.2, z: GYM.dumbbells.z + 1.5, act: 'dumbbell', face: faceToward(GYM.dumbbells.x + 0.2, GYM.dumbbells.z + 1.5, GYM.dumbbells.x, GYM.dumbbells.z), level: 0 },
+  { x: GYM.dumbbells.x - 0.6, z: GYM.dumbbells.z + 0.9, act: 'dumbbell', face: Math.PI, level: 0 },
+  { x: GYM.dumbbells.x + 0.2, z: GYM.dumbbells.z + 1.5, act: 'dumbbell', face: Math.PI, level: 0 },
   // directly under the bar: the pull-up pose solves its own height, so the body hangs
   // with its feet off the mat rather than standing beside the rig.
-  // Hanging from the bar: the body faces the bar, which is directly overhead at the same
-  // x/z, so any facing is "at" it. North, so the face is toward the bar's far side.
   { x: GYM.rig.x, z: GYM.rig.z, act: 'pullup', face: Math.PI, level: 0 },
   // Muscle-up: on the SAME bar as the pull-up, at the other end of the span. It used to
   // sit at `rig.x + span/2 + 0.55` — 0.55 m PAST the end post — so the body hung off the
@@ -1184,17 +1136,17 @@ export const IDLE_SPOTS: IdleSpot[] = [
   //
   // Two of these three used to be wrong — a fixed `Math.PI` and `0` left them facing
   // away from the grill, which the self-test caught as dot = -0.97 and -0.53.
-  { x: BBQ.x - 1.55, z: BBQ.z, act: 'bbq', face: faceToward(BBQ.x - 1.55, BBQ.z, BBQ.x, BBQ.z), level: 0 },
-  { x: BBQ.x - 0.35, z: BBQ.z + 1.45, act: 'bbq', face: faceToward(BBQ.x - 0.35, BBQ.z + 1.45, BBQ.x, BBQ.z), level: 0 },
-  { x: BBQ.x + 1.45, z: BBQ.z - 0.9, act: 'bbq', face: faceToward(BBQ.x + 1.45, BBQ.z - 0.9, BBQ.x, BBQ.z), level: 0 },
+  { x: BBQ.x - 1.55, z: BBQ.z, act: 'bbq', face: Math.atan2(1.55, 0), level: 0 },
+  { x: BBQ.x - 0.35, z: BBQ.z + 1.45, act: 'bbq', face: Math.atan2(0.35, -1.45), level: 0 },
+  { x: BBQ.x + 1.45, z: BBQ.z - 0.9, act: 'bbq', face: Math.atan2(-1.45, 0.9), level: 0 },
 
   /* ---- the planting band: LOOK AT THE FLOWERS (poin 5) ------------------ */
   // The band runs x -6..6.2 at z -2.4..-0.8. A body stands SOUTH of it and faces NORTH
   // into the greenery: rotation PI turns the local +z look to -z. The old spots stood
   // south but faced `Math.PI` from the wrong side, so they looked away from the beds.
-  { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: faceToward(PLANTING.x1 + 1.6, PLANTING.z2 + 0.75, PLANTING.x1 + 1.6, (PLANTING.z1 + PLANTING.z2) / 2), level: 0 },
-  { x: (PLANTING.x1 + PLANTING.x2) / 2, z: PLANTING.z2 + 0.75, act: 'garden', face: faceToward((PLANTING.x1 + PLANTING.x2) / 2, PLANTING.z2 + 0.75, (PLANTING.x1 + PLANTING.x2) / 2, (PLANTING.z1 + PLANTING.z2) / 2), level: 0 },
-  { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: faceToward(PLANTING.x2 - 1.6, PLANTING.z2 + 0.75, PLANTING.x2 - 1.6, (PLANTING.z1 + PLANTING.z2) / 2), level: 0 },
+  { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
+  { x: (PLANTING.x1 + PLANTING.x2) / 2, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
+  { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
 
   /* ---- pantry: the three stools ---------------------------------------- */
   ...PANTRY_STOOLS.map((z) => ({
@@ -1202,8 +1154,8 @@ export const IDLE_SPOTS: IdleSpot[] = [
     z,
     act: 'coffee' as const,
     seated: true,
-    // Look EAST into the counter (x 25.6) from the stool's own position.
-    face: faceToward(PANTRY.x + PANTRY_STOOL_GAP, z, PANTRY.x, z),
+    // The stools are WEST of the counter (x 25.6), so the body faces EAST into it.
+    face: Math.PI / 2,
     level: 0 as const,
   })),
 
@@ -1216,13 +1168,13 @@ export const IDLE_SPOTS: IdleSpot[] = [
       z: c.z,
       act: 'eat' as const,
       seated: true,
-      face: faceToward(c.x, c.z, s.x, s.z),
+      face: diningChairFacing(s, c.x, c.z),
       level: 0 as const,
     })),
   ),
 
   /* ---- the leisure room: the sofa, facing the TV ------------------------- */
-  { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: faceToward(LOUNGE.x, LOUNGE.z, LOUNGE_TV.x, LOUNGE_TV.z), level: 0 },
+  { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: 0, level: 0 },
 
   /* ---- open standing room in the courtyard and the lobby ---------------- */
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
@@ -1244,8 +1196,7 @@ export const IDLE_SPOTS: IdleSpot[] = [
       z: s.z,
       act: 'meeting' as const,
       seated: true,
-      // LOOK AT THE TABLE, computed from this seat's own position.
-      face: faceToward(s.x, s.z, MEETING_TABLES[id].x, MEETING_TABLES[id].z),
+      face: s.facing,
       level: 1 as const,
     })),
   ),

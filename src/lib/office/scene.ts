@@ -37,11 +37,8 @@ import {
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
   LEVEL_H,
   stairHeightAt,
-  faceToward,
-  deskSeatFacing,
   insideCeoRoom,
   mayEnterCeoRoom,
-  MEETING_TABLES,
   type Desk,
   type IdleSpot,
   type MeetingRoomId,
@@ -484,6 +481,12 @@ export function createScene(
     return new THREE.Vector3(seat.x, 0, seat.z)
   }
 
+  function deskSeatYaw(desk: Desk) {
+    const chair = deskSeatWorld(desk)
+    const mx = desk.x + -0.28 * Math.sin(desk.facing)
+    const mz = desk.z + -0.28 * Math.cos(desk.facing)
+    return Math.atan2(mx - chair.x, mz - chair.z)
+  }
 
   /** Meeting room currently in use, chosen from the participants' divisions. */
   let meetingRoom: MeetingRoomId = 'rinjani'
@@ -494,18 +497,9 @@ export function createScene(
     return new THREE.Vector3(s.x, 0, s.z)
   }
 
-  /**
-   * Which way a meeting participant LOOKS: at the table, not along the chair's build axis.
-   *
-   * This returned the seat's raw `facing`, which is the mesh's own rotation — a different
-   * quantity from a look direction. Every participant therefore faced 180 degrees away from
-   * the table they were sitting at.
-   */
   function meetingSeatYaw(i: number) {
     const room = MEETING_ROOMS[meetingRoom]
-    const seat = room.seats[i % room.seats.length]
-    const t = MEETING_TABLES[meetingRoom]
-    return faceToward(seat.x, seat.z, t.x, t.z)
+    return room.seats[i % room.seats.length].facing
   }
 
   /**
@@ -622,8 +616,8 @@ export function createScene(
       if (desk) {
         a.target = deskTarget(desk)
         a.targetLevel = 0
-        a.seatYaw = deskSeatFacing(desk)
-        a.arrivalFace = deskSeatFacing(desk)
+        a.seatYaw = deskSeatYaw(desk)
+        a.arrivalFace = deskSeatYaw(desk)
         a.activity = 'typing'
         return
       }
