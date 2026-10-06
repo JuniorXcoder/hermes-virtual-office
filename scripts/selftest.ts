@@ -29,10 +29,12 @@ import {
   LEVEL_BOUNDS,
   DINING_SETS,
   diningChairs,
-  diningChairFacing,
   insideCeoRoom,
   mayEnterCeoRoom,
   POOL,
+  PANTRY,
+  faceToward,
+  deskSeatFacing,
   WATER_Y,
   LEVEL_H,
   MEETING_ROOMS,
@@ -1947,7 +1949,7 @@ void (async () => {
           problems.push(`set ${si} chair ${ci} looks away from its table (dot=${dot.toFixed(2)})`)
         }
         // and the derived facing must match the helper, so the two cannot drift
-        const want = diningChairFacing(set, c.x, c.z)
+        const want = faceToward(c.x, c.z, set.x, set.z)
         let d = Math.abs(spot.face - want)
         while (d > Math.PI) d = Math.abs(d - Math.PI * 2)
         if (d > 0.01) problems.push(`set ${si} chair ${ci} facing ${spot.face.toFixed(3)} != helper ${want.toFixed(3)}`)
@@ -1957,24 +1959,17 @@ void (async () => {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // A SITTING BODY FACES THE WAY ITS FURNITURE FACES (poin 4).
+  // A SITTING BODY LOOKS AT ITS FURNITURE (poin 4).
   //
-  // TWO earlier versions of this test were wrong, and both looked green:
+  // The version that used to live here compared a spot's `face` with the very helper that
+  // produced it — `diningChairFacing` on both sides — so it could not disagree, and it passed
+  // while 31 orientations were wrong. It also compared the body's facing with the MESH's
+  // rotation, which is a different quantity: the mesh rotation is a build-time angle, the
+  // body's `face` is a look direction, and they differ by PI for every chair-like mesh.
   //
-  //   1. it compared the look vector with the direction to the seat's CENTRE — but a
-  //      seated spot sits ON that centre, so the vector was ~0 and every seat scored a
-  //      meaningless 1.00 (a sabotage run caught 0 of 72);
-  //   2. it guessed the back rest's side from the footprint's aspect ratio, which is not
-  //      how the meshes are built, so it reported 30 of 36 correct seats as broken.
-  //
-  // What CAN be asserted is the thing that actually matters: the spot's facing must be the
-  // SAME NUMBER the mesh rotates the furniture by. Each furniture type has its own
-  // convention, so this checks each against its own source rather than inventing one:
-  //
-  //   benches / daybeds  the recorded `facing` on the definition (the mesh reads it too)
-  //   dining chairs      `diningChairFacing`, which the mesh also calls
-  //   meeting chairs     the seat's own `facing` (already covered by the table test)
-  // ───────────────────────────────────────────────────────────────────────────
+  // This checks the CONVENTION instead: every seated spot's facing must equal `faceToward`
+  // from the spot to the thing it is meant to look at. The world-direction proof is the
+  // facing audit further down.
   {
     const problems: string[] = []
     let checked = 0
@@ -1984,32 +1979,21 @@ void (async () => {
       return d < 0.01
     }
 
-    // poolside benches and daybeds: the spot must carry the definition's facing verbatim
-    for (const [i, b] of POOL_BENCHES.entries()) {
-      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'pool')
+    // poolside benches and daybeds look at the water
+    for (const [i, b] of [...POOL_BENCHES, ...SUNBEDS].entries()) {
+      const act = i < POOL_BENCHES.length ? 'pool' : 'recline'
+      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === act)
       if (!spot) {
-        problems.push(`bench ${i} has no 'pool' spot`)
+        problems.push(`${act} ${i} has no idle spot`)
         continue
       }
       checked++
-      if (!near(spot.face, b.facing)) {
-        problems.push(`bench ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
-      }
-    }
-    for (const [i, b] of SUNBEDS.entries()) {
-      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'recline')
-      if (!spot) {
-        problems.push(`daybed ${i} has no 'recline' spot`)
-        continue
-      }
-      checked++
-      if (!near(spot.face, b.facing)) {
-        problems.push(`daybed ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
+      if (!near(spot.face, faceToward(b.x, b.z, POOL.x, POOL.z))) {
+        problems.push(`${act} ${i} does not use faceToward to the water`)
       }
     }
 
-    // dining chairs: both the spot and the mesh call diningChairFacing, so this proves the
-    // spot did not hard-code a number instead
+    // dining chairs look at their own table
     for (const [si, set] of DINING_SETS.entries()) {
       for (const [ci, c] of diningChairs(set).entries()) {
         const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - c.x, s.z - c.z) < 0.05 && s.act === 'eat')
@@ -2018,40 +2002,41 @@ void (async () => {
           continue
         }
         checked++
-        if (!near(spot.face, diningChairFacing(set, c.x, c.z))) {
-          problems.push(`dining set ${si} chair ${ci} does not use diningChairFacing`)
+        if (!near(spot.face, faceToward(c.x, c.z, set.x, set.z))) {
+          problems.push(`dining set ${si} chair ${ci} does not use faceToward to its table`)
         }
       }
     }
 
-    // meeting chairs: the spot must carry the seat's facing (the mesh adds PI itself, and
-    // the table-facing test already checks the result)
+    // meeting chairs look at their room's table
     for (const id of MEETING_ROOM_IDS) {
-      for (const [i, s] of MEETING_ROOMS[id].seats.slice(0, 2).entries()) {
-        const spot = IDLE_SPOTS.find((x) => Math.hypot(x.x - s.x, x.z - s.z) < 0.05 && x.act === 'meeting')
+      const t = MEETING_TABLES[id]
+      for (const [i, seat] of MEETING_ROOMS[id].seats.slice(0, 2).entries()) {
+        const spot = IDLE_SPOTS.find((x) => Math.hypot(x.x - seat.x, x.z - seat.z) < 0.05 && x.act === 'meeting')
         if (!spot) {
           problems.push(`${id} seat ${i} has no 'meeting' spot`)
           continue
         }
         checked++
-        if (!near(spot.face, s.facing)) {
-          problems.push(`${id} seat ${i} spot faces ${spot.face.toFixed(3)} but the chair is ${s.facing.toFixed(3)}`)
+        if (!near(spot.face, faceToward(seat.x, seat.z, t.x, t.z))) {
+          problems.push(`${id} seat ${i} does not use faceToward to its table`)
         }
       }
     }
 
-    if (checked < 20) problems.push(`only ${checked} seats compared — the check is not covering the furniture`)
-    check('every seated spot faces the way its furniture does', problems.length === 0, problems.join(' | '))
+    if (checked < 20) problems.push(`only ${checked} seats compared`)
+    check('every seated spot uses the look-at convention', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // THE PLANTING BAND IS LOOKED AT, NOT TURNED AWAY FROM (poin 5).
+  // THE GARDENER LOOKS INTO THE PLANTING BAND (poin 5).
   //
-  // A body tending the beds stands SOUTH of the band and must face NORTH into it. The
-  // band runs x -6..6.2 at z -2.4..-0.8, so the look vector's z must be negative.
-  // ───────────────────────────────────────────────────────────────────────────
+  // The old check used `lookZ = cos(face)`, which is the convention for a body whose face is
+  // on local +z. Every avatar here has its face on local -z, so the sign was inverted and the
+  // check demanded the gardener turn his back on the plants.
   {
     const problems: string[] = []
+    const bandZ = (PLANTING.z1 + PLANTING.z2) / 2
     const garden = IDLE_SPOTS.filter((s) => s.act === 'garden')
     if (garden.length < 2) problems.push(`only ${garden.length} garden spots`)
     for (const s of garden) {
@@ -2059,45 +2044,35 @@ void (async () => {
         problems.push(`garden spot at z=${s.z} is not south of the planting band (z2=${PLANTING.z2})`)
         continue
       }
-      // look vector of the pose is local +z for 'garden' (the crouch leans forward along
-      // local +z), and `face` rotates it: (sin f, cos f).
-      const lookX = Math.sin(s.face)
-      const lookZ = Math.cos(s.face)
-      // the band is north of the spot, so the look must have a NEGATIVE z
-      if (lookZ > -0.85) {
-        problems.push(`garden spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not look at the plants (lookZ=${lookZ.toFixed(2)})`)
-      }
-      void lookX
-      // and it must be within the band's x span, or it is tending bare paving
       if (s.x < PLANTING.x1 - 0.5 || s.x > PLANTING.x2 + 0.5) {
-        problems.push(`garden spot at x=${s.x.toFixed(1)} is outside the planting band`)
+        problems.push(`garden spot at x=${s.x} is outside the planting band`)
       }
+      const want = faceToward(s.x, s.z, s.x, bandZ)
+      let d = Math.abs(s.face - want) % (Math.PI * 2)
+      if (d > Math.PI) d = Math.PI * 2 - d
+      if (d > 0.01) problems.push(`garden spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not use faceToward to the plants`)
     }
-    check('a gardener faces the plants', problems.length === 0, problems.join(' | '))
+    check('a gardener looks into the planting band', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // THE BBQ IS LOOKED AT, AND IT HAS A FIRE (poin 8).
-  // ───────────────────────────────────────────────────────────────────────────
+  // THE COOK LOOKS AT THE GRILL (poin 8).
+  //
+  // The old check used `look = (sin f, cos f)` — the local +z convention, the opposite of
+  // every avatar in this project — so it demanded the cooks face AWAY from the grill.
   {
     const problems: string[] = []
     const bbqSpots = IDLE_SPOTS.filter((s) => s.act === 'bbq')
     if (bbqSpots.length < 2) problems.push(`only ${bbqSpots.length} BBQ spots`)
     for (const s of bbqSpots) {
-      const lookX = Math.sin(s.face)
-      const lookZ = Math.cos(s.face)
-      const toX = BBQ.x - s.x
-      const toZ = BBQ.z - s.z
-      const len = Math.hypot(toX, toZ) || 1
-      const dot = (lookX * toX + lookZ * toZ) / len
-      if (dot < 0.9) {
-        problems.push(`BBQ spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not face the grill (dot=${dot.toFixed(2)})`)
+      const want = faceToward(s.x, s.z, BBQ.x, BBQ.z)
+      let d = Math.abs(s.face - want) % (Math.PI * 2)
+      if (d > Math.PI) d = Math.PI * 2 - d
+      if (d > 0.01) {
+        problems.push(`BBQ spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not use faceToward to the grill`)
       }
     }
-    // the grill must actually be built with a fire and smoke, and the scene must drive it
-    const av = buildAvatar('backend')
-    void av
-    check('a cook faces the grill', problems.length === 0, problems.join(' | '))
+    check('a cook looks at the grill', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -2592,6 +2567,107 @@ void (async () => {
       problems.push(`the lifter's hip is at ${minHip.toFixed(3)}, below the pad (${GYM.rack.benchTop})`)
     }
     check('a bench press lies on the pad with the rack bar hidden', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE REAL FACING AUDIT: does the BODY look at the right THING?
+  //
+  // Every earlier facing test in this file was a tautology: it compared a spot's `face` with
+  // the same helper that produced it, so it could never disagree. The user's report — "banyak
+  // yang ngebelakangin kursi/sofa, ada juga yg ga menghadap objectnya" — went straight
+  // through it, and a measurement found 31 wrong orientations.
+  //
+  // This builds the avatar, places it on the spot, runs the pose, and measures the WORLD
+  // direction the body looks against the WORLD position of the thing it should look at. It
+  // never reads a spot's `face`, so it cannot agree with the data by construction.
+  //
+  // The convention, written down once in `faceToward`: a body's look is local -z, so
+  // `look = (-sin f, -cos f)`.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const bodyLook = (av: ReturnType<typeof buildAvatar>) => ({
+      x: -Math.sin(av.group.rotation.y),
+      z: -Math.cos(av.group.rotation.y),
+    })
+    const posed = (spot: (typeof IDLE_SPOTS)[number], act: Activity) => {
+      const av = buildAvatar('backend')
+      av.group.position.set(spot.x, 0, spot.z)
+      av.group.rotation.y = spot.face
+      const a = { avatar: av, activity: act, ease: 1, phase: 0.3, meetingTalking: false }
+      for (let i = 0; i < 12; i++) animate(a, i * 0.1, 1 / 60)
+      av.group.updateMatrixWorld(true)
+      return av
+    }
+    const looks = (spot: (typeof IDLE_SPOTS)[number], act: Activity, tx: number, tz: number) => {
+      const look = bodyLook(posed(spot, act))
+      const dx = tx - spot.x
+      const dz = tz - spot.z
+      const len = Math.hypot(dx, dz)
+      if (len < 0.05) return 1 // the body is ON the target: no direction exists
+      return (look.x * dx + look.z * dz) / len
+    }
+
+    for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'pool').entries()) {
+      const d = looks(s, 'pool', POOL.x, POOL.z)
+      if (d < 0.9) problems.push(`pool bench ${i} does not look at the water (dot ${d.toFixed(2)})`)
+    }
+    for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'recline').entries()) {
+      const d = looks(s, 'recline', POOL.x, POOL.z)
+      if (d < 0.9) problems.push(`daybed ${i} does not look at the water (dot ${d.toFixed(2)})`)
+    }
+    for (const [si, set] of DINING_SETS.entries()) {
+      const chairs = IDLE_SPOTS.filter((s) => s.act === 'eat' && Math.hypot(s.x - set.x, s.z - set.z) < 2.2)
+      if (chairs.length !== 4) problems.push(`dining set ${si} has ${chairs.length} eat spots, not 4`)
+      for (const [ci, s] of chairs.entries()) {
+        const d = looks(s, 'eat', set.x, set.z)
+        if (d < 0.9) problems.push(`dining set ${si} chair ${ci} does not look at its table (dot ${d.toFixed(2)})`)
+      }
+    }
+    for (const id of MEETING_ROOM_IDS) {
+      const t = MEETING_TABLES[id]
+      const room = MEETING_ROOMS[id]
+      const centre = room.seats.reduce(
+        (acc, p) => ({ x: acc.x + p.x / room.seats.length, z: acc.z + p.z / room.seats.length }),
+        { x: 0, z: 0 },
+      )
+      for (const s of IDLE_SPOTS.filter((x) => x.act === 'meeting' && Math.hypot(x.x - centre.x, x.z - centre.z) < 3.4)) {
+        const d = looks(s, 'meeting', t.x, t.z)
+        if (d < 0.85) problems.push(`a ${id} meeting chair does not look at its table (dot ${d.toFixed(2)})`)
+      }
+    }
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa')) {
+      const d = looks(s, 'sofa', LOUNGE_TV.x, LOUNGE_TV.z)
+      if (d < 0.9) problems.push(`the sofa does not look at the TV (dot ${d.toFixed(2)})`)
+    }
+    for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'bbq').entries()) {
+      const d = looks(s, 'bbq', BBQ.x, BBQ.z)
+      if (d < 0.9) problems.push(`BBQ spot ${i} does not look at the grill (dot ${d.toFixed(2)})`)
+    }
+    for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'garden').entries()) {
+      const d = looks(s, 'garden', s.x, (PLANTING.z1 + PLANTING.z2) / 2)
+      if (d < 0.85) problems.push(`garden spot ${i} does not look at the plants (dot ${d.toFixed(2)})`)
+    }
+    // The counter is 6.4 m long, so a stool at one end faces its NEAREST point, not the centre.
+    for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'coffee').entries()) {
+      const nearZ = Math.max(PANTRY.z - 3.2, Math.min(PANTRY.z + 3.2, s.z))
+      const d = looks(s, 'coffee', PANTRY.x, nearZ)
+      if (d < 0.95) problems.push(`pantry stool ${i} does not look at the counter (dot ${d.toFixed(2)})`)
+    }
+    for (const d of DESKS.slice(0, 4)) {
+      const seat = deskSeatWorld(d)
+      const av = buildAvatar('backend')
+      av.group.position.set(seat.x, 0, seat.z)
+      av.group.rotation.y = deskSeatFacing(d)  // the scene's OWN function, not a copy
+      const a = { avatar: av, activity: 'typing' as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+      for (let i = 0; i < 12; i++) animate(a, i * 0.1, 1 / 60)
+      const look = bodyLook(av)
+      const dx = d.x - seat.x
+      const dz = d.z - seat.z
+      const dot = (look.x * dx + look.z * dz) / (Math.hypot(dx, dz) || 1)
+      if (dot < 0.9) problems.push(`desk ${d.index}: a typing body does not face its desk (dot ${dot.toFixed(2)})`)
+    }
+    check('every body looks at the thing its pose is about', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

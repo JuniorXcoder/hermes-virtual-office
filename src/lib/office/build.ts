@@ -26,7 +26,7 @@ import {
   BBQ,
   DINING_SETS,
   diningChairs,
-  diningChairFacing,
+  faceToward,
   BOARD_COLUMNS,
   CEILING_Y,
   CONFERENCE,
@@ -862,7 +862,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const c of diningChairs(set)) {
       const cg = new THREE.Group()
       cg.position.set(c.x, 0, c.z)
-      cg.rotation.y = diningChairFacing(set, c.x, c.z)
+      cg.rotation.y = faceToward(c.x, c.z, set.x, set.z)
       const seat = new THREE.Mesh(rbox(0.44, 0.07, 0.44, 0.02), woodMat)
       seat.position.y = 0.46
       seat.castShadow = true
