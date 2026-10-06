@@ -468,11 +468,17 @@ export function visitorSpot(desk: Desk) {
 
 export const BOARD_D = 0.14
 export const BOARD_REVEAL = 0.35
-/** The green whiteboard on Rinjani's north wall — the office Kanban. */
+/**
+ * The green whiteboard on Rinjani's north wall — the office Kanban.
+ *
+ * `z` must clear the WALL, not the room's nominal edge: the wall is WALL_T thick
+ * and its inner face sits at `z1 + WALL_T`. Placing the board at `z1 + WALL_T/2`
+ * buried it inside the wall — it existed, but the camera only ever saw plaster.
+ */
 export const KANBAN_BOARD = {
   x: roomCentre('rinjani').x,
   y: LEVEL_H + 1.55,
-  z: room('rinjani').z1 + WALL_T / 2 + BOARD_D / 2,
+  z: room('rinjani').z1 + WALL_T + BOARD_D / 2 + 0.02,
   w: 6.0,
   h: 2.4,
 }
@@ -560,6 +566,35 @@ export const FOOTPRINTS: Footprint[] = [
   wallSeg('part-dev-mkt', WORK_X1, -6.9, WORK_X2, -6.9),
   wallSeg('part-mkt-content', WORK_X1, 6.9, WORK_X2, 6.9),
   wallSeg('part-leisure-pantry', 14 + WALL_T, 2, ROOM_W, 2),
+
+  /* ------------------------------------------ exec-floor partitions, L1 --- */
+  // The corridor runs along z -11.5..-9.3; these are the walls BETWEEN the rooms
+  // and the corridor, with a door gap per room, plus the walls between rooms.
+  ...(() => {
+    const out: Footprint[] = []
+    const zWall = -11.5
+    const rooms = ROOMS.filter((r) => r.level === 1 && r.id !== 'corridor1')
+    // Sort by x so consecutive rooms share an edge we can wall off.
+    const sorted = [...rooms].sort((a, b) => a.x1 - b.x1)
+    for (const r of sorted) {
+      // the room's south wall, split around its door
+      const d = r.door!
+      if (d.x - d.hw > r.x1 + 0.05) {
+        out.push(wallSeg(`l1-${r.id}-s-w`, r.x1, zWall, d.x - d.hw, zWall, 1))
+      }
+      if (d.x + d.hw < r.x2 - 0.05) {
+        out.push(wallSeg(`l1-${r.id}-s-e`, d.x + d.hw, zWall, r.x2, zWall, 1))
+      }
+      // the wall between this room and the next one east
+      const next = sorted.find((o) => Math.abs(o.x1 - r.x2) < 0.6)
+      if (next) {
+        out.push(wallSeg(`l1-${r.id}-e`, r.x2, r.z1, r.x2, r.z2, 1))
+      }
+    }
+    // the corridor's own north wall is the room walls above; its west end is the
+    // outer wall, its east end too. Nothing else is needed.
+    return out
+  })(),
 
   /* ------------------------------------------------------- desks + chairs -- */
   ...DESKS.flatMap((d) => {

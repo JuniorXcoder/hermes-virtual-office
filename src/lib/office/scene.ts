@@ -79,10 +79,13 @@ function selectiveShadow(root: THREE.Object3D, light: THREE.DirectionalLight) {
   // Area dipersempit ke gedung saja (FLOOR 34x26 + teras). Sebelumnya +-34
   // membuang ~60% resolusi shadow map ke jalan/lingkungan yang tidak perlu,
   // sehingga bayangan interior jadi kabur dan tidak terbaca.
-  cam.left = -22
-  cam.right = 22
-  cam.top = 20
-  cam.bottom = -20
+  // The plot is 56 x 42 m and the building is a U around a courtyard, so the
+  // shadow camera must cover the WHOLE footprint — at +-22 the east and west bars
+  // fell outside it and cast no shadow at all.
+  cam.left = -34
+  cam.right = 34
+  cam.top = 30
+  cam.bottom = -30
   cam.near = 1
   cam.far = 90
   cam.updateProjectionMatrix()
@@ -215,16 +218,20 @@ export function createScene(
   selectiveShadow(office.streetGroup, office.sun)
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 400)
-  camera.position.set(0, 21, 24)
+  // Looking down the courtyard from the south-east: the U, the pool and the open
+  // division rooms all read from here. The old (0,21,24) was framed for the small
+  // square building and now sits inside the west bar.
+  camera.position.set(14, 34, 40)
   const controls = new OrbitControls(camera, renderer.domElement)
-  controls.target.set(0, 1.2, 0)
+  controls.target.set(0, 1.5, -2)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
   controls.maxPolarAngle = Math.PI / 2.35
-  controls.minDistance = 8
+  controls.minDistance = 6
   // Clamp zoom-out to the building itself: letting the camera escape shows the
   // empty world box behind the set dressing.
-  controls.maxDistance = 46
+  // Far enough to see the whole plot (56 x 42) with the street around it.
+  controls.maxDistance = 95
   controls.enablePan = true
   controls.screenSpacePanning = false
 

@@ -1,27 +1,61 @@
 /**
- * Furniture and environment builder — DEMOLISHED SHELL.
+ * Building + furniture builder.
  *
- * The whole interior (outer walls, the oval aula, the division pods, desks,
- * chairs, conference table, lounge, pantry, reception, pool, garden, book nook,
- * windows, artwork, roof) has been removed on purpose so the office can be
- * rebuilt from scratch. What this file builds now is:
+ * The building is a **U** wrapped around an open-air courtyard, and it is **split
+ * level**: the ground floor carries the lobby, the three division work rooms, the
+ * pantry and the leisure room; the first floor carries the CEO suite and the five
+ * named meeting rooms. `layout.ts` is the plan and this file draws exactly it —
+ * every solid here has a matching `Footprint`, and `nav.ts` walks the same table.
  *
- *   - an OPEN MARBLE FLOOR (no walls, no partitions, no furniture),
- *   - a FREE-STANDING Kanban board (the task wall is a feature, not furniture),
- *   - ceiling light panels (overhead fixtures, not furniture),
- *   - the sun/sky lighting rig,
- *   - the OUTSIDE world (earth, plaza, road, trees, neighbours, pedestrians,
- *     traffic) which is unchanged — it is not part of the building.
- *
- * `layout.ts` is the plan; it is empty, so there is nothing to collide with.
- * The rebuild re-populates `FOOTPRINTS` and draws the matching meshes here.
+ * Units: 1 = 1 metre. +X east, +Z south, +Y up.
  */
 import * as THREE from 'three'
+import { rbox } from './bevel'
 import {
+  carpetGrey,
+  glassReal,
+  goldAccent,
+  marbleLight,
+  plasterClean,
+  stoneDark,
+  woodPanelDark,
+  woodWarm,
+} from './materials'
+import {
+  BARS,
+  BBQ,
+  BOARD_COLUMNS,
+  CEILING_Y,
+  CONFERENCE,
+  DESKS,
+  DESK_CHAIR,
+  DOOR,
   FLOOR,
+  FOOTPRINTS,
+  GARDEN,
   HALF_D,
+  HALF_W,
   KANBAN_BOARD,
+  LEVEL_H,
+  LOUNGE,
+  MEETING_ROOMS,
+  MEETING_ROOM_IDS,
+  MEETING_TABLES,
+  PANTRY,
+  PANTRY_STOOLS,
+  PANTRY_STOOL_GAP,
+  POOL,
+  POOL_BENCHES,
+  POOL_LOUNGERS,
+  RECEPTION,
+  ROOMS,
+  ROOM_SIGNS,
+  STAIRS,
+  WALL_H,
+  WALL_T,
   paletteFor,
+  roomById,
+  roomCentre,
   type Palette,
 } from './layout'
 
@@ -44,12 +78,6 @@ const cyl = (rt: number, rb: number, h: number, color: number, seg = 14, metal =
   new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), stdMat(color, { metal, rough: 0.6 }))
 
 /* --------------------------------------------------------------- textures -- */
-/*
- * Textures are procedural canvases rather than image files: the repo stays free
- * of binary assets. Only the surfaces the OUTSIDE world still uses are generated
- * here; the interior's wood, tile, plaster, fabric and screen textures went with
- * the furniture they belonged to.
- */
 
 function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) => void) {
   const cv = document.createElement('canvas')
@@ -60,18 +88,9 @@ function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) 
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
   tex.colorSpace = THREE.SRGBColorSpace
   tex.anisotropy = 8
-  tex.generateMipmaps = true
-  tex.minFilter = THREE.LinearMipmapLinearFilter
   return tex
 }
 
-/**
- * Turn a colour texture into a bump map.
- *
- * Deriving the bump from the luminance of a texture already generated costs one
- * small canvas and gives asphalt, pavement and soil an edge for the light to
- * catch instead of reading as flat paint.
- */
 function bumpFrom(source: THREE.Texture, strength = 0.5): THREE.Texture {
   const src = source.image as HTMLCanvasElement
   const cv = document.createElement('canvas')
@@ -89,12 +108,9 @@ function bumpFrom(source: THREE.Texture, strength = 0.5): THREE.Texture {
   g.putImageData(img, 0, 0)
   const tex = new THREE.CanvasTexture(cv)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-  tex.generateMipmaps = true
-  tex.minFilter = THREE.LinearMipmapLinearFilter
   return tex
 }
 
-/** Deterministic pseudo-random so a texture looks the same on every reload. */
 function rng(seed: number) {
   let s = seed >>> 0
   return () => {
@@ -103,22 +119,13 @@ function rng(seed: number) {
   }
 }
 
-/**
- * Earth: rough ground for everything beyond the paved plaza.
- *
- * Deliberately low-frequency: the signal is in patches, clumps and broad tonal
- * drift, because fine noise turns into uniform mush once the mip chain averages it.
- */
 function earthTexture(base: string, dark: string, light: string) {
   return canvasTex(512, (c, s) => {
     const rand = rng(211)
     c.fillStyle = base
     c.fillRect(0, 0, s, s)
     for (let i = 0; i < 26; i++) {
-      const g = c.createRadialGradient(
-        rand() * s, rand() * s, 8,
-        rand() * s, rand() * s, 60 + rand() * 120,
-      )
+      const g = c.createRadialGradient(rand() * s, rand() * s, 8, rand() * s, rand() * s, 60 + rand() * 120)
       g.addColorStop(0, rand() > 0.5 ? light : dark)
       g.addColorStop(1, 'rgba(0,0,0,0)')
       c.globalAlpha = 0.16 + rand() * 0.18
@@ -142,7 +149,6 @@ function earthTexture(base: string, dark: string, light: string) {
   })
 }
 
-/** Asphalt with aggregate and lane wear. */
 function asphaltTexture(base: string, grit: string) {
   return canvasTex(512, (c, s) => {
     const rand = rng(77)
@@ -156,18 +162,10 @@ function asphaltTexture(base: string, grit: string) {
       c.arc(rand() * s, rand() * s, r, 0, Math.PI * 2)
       c.fill()
     }
-    for (let i = 0; i < 5; i++) {
-      c.globalAlpha = 0.05
-      c.fillStyle = '#1f2225'
-      c.beginPath()
-      c.ellipse(rand() * s, rand() * s, 20 + rand() * 50, 14 + rand() * 40, rand() * 3, 0, Math.PI * 2)
-      c.fill()
-    }
     c.globalAlpha = 1
   })
 }
 
-/** Pavement slabs with expansion joints. */
 function pavementTexture(base: string, joint: string) {
   return canvasTex(512, (c, s) => {
     const rand = rng(13)
@@ -193,13 +191,101 @@ function pavementTexture(base: string, joint: string) {
       c.lineTo(s, i * t)
       c.stroke()
     }
-    for (let i = 0; i < 1400; i++) {
-      c.globalAlpha = 0.05
-      c.fillStyle = rand() > 0.5 ? '#fff' : '#000'
-      c.fillRect(rand() * s, rand() * s, 1.5, 1.5)
+  })
+}
+
+/** Grass for the courtyard garden beds. */
+function grassTexture(base: string, blade: string) {
+  return canvasTex(256, (c, s) => {
+    const rand = rng(97)
+    c.fillStyle = base
+    c.fillRect(0, 0, s, s)
+    for (let i = 0; i < 9000; i++) {
+      c.globalAlpha = 0.10 + rand() * 0.22
+      c.strokeStyle = rand() > 0.5 ? blade : base
+      c.lineWidth = 0.8
+      const x = rand() * s
+      const y = rand() * s
+      c.beginPath()
+      c.moveTo(x, y)
+      c.lineTo(x + (rand() - 0.5) * 3, y - 2 - rand() * 3)
+      c.stroke()
     }
     c.globalAlpha = 1
   })
+}
+
+/** A readable room-name plate: dark panel, gold serif text. */
+function signTexture(text: string, sub?: string) {
+  const cv = document.createElement('canvas')
+  cv.width = 512
+  cv.height = 128
+  const c = cv.getContext('2d')!
+  c.fillStyle = '#2a1f16'
+  c.fillRect(0, 0, 512, 128)
+  c.strokeStyle = '#c9a24a'
+  c.lineWidth = 6
+  c.strokeRect(8, 8, 496, 112)
+  c.fillStyle = '#e8cf8a'
+  c.font = 'bold 54px Georgia, serif'
+  c.textAlign = 'center'
+  c.textBaseline = 'middle'
+  c.fillText(text, 256, sub ? 50 : 64)
+  if (sub) {
+    c.fillStyle = '#a89a72'
+    c.font = '26px Georgia, serif'
+    c.fillText(sub, 256, 94)
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** The green whiteboard face — the office Kanban, now clickable. */
+function whiteboardTexture() {
+  const cv = document.createElement('canvas')
+  cv.width = 1024
+  cv.height = 512
+  const c = cv.getContext('2d')!
+  // A chalkboard green that still reads as GREEN from across the courtyard. The
+  // first pass used #2f6b4f, which the tone mapping crushed to near-black.
+  const grad = c.createLinearGradient(0, 0, 0, 512)
+  grad.addColorStop(0, '#4f9c6f')
+  grad.addColorStop(1, '#3d8058')
+  c.fillStyle = grad
+  c.fillRect(0, 0, 1024, 512)
+  // chalk column headings, evenly spaced
+  c.fillStyle = '#f2fff0'
+  c.font = 'bold 44px ui-monospace, monospace'
+  c.textAlign = 'center'
+  c.textBaseline = 'top'
+  const colW = 1024 / BOARD_COLUMNS.length
+  for (let i = 0; i < BOARD_COLUMNS.length; i++) {
+    c.fillText(BOARD_COLUMNS[i], colW * (i + 0.5), 24)
+    c.strokeStyle = 'rgba(242,255,240,0.45)'
+    c.lineWidth = 3
+    if (i > 0) {
+      c.beginPath()
+      c.moveTo(colW * i, 12)
+      c.lineTo(colW * i, 500)
+      c.stroke()
+    }
+  }
+  // a few chalk ticks, so it reads as a working board and not a coloured panel
+  const rand = rng(53)
+  c.strokeStyle = 'rgba(242,255,240,0.30)'
+  c.lineWidth = 2
+  for (let i = 0; i < 40; i++) {
+    const x = rand() * 1024
+    const y = 90 + rand() * 380
+    c.beginPath()
+    c.moveTo(x, y)
+    c.lineTo(x + 20 + rand() * 60, y)
+    c.stroke()
+  }
+  const tex = new THREE.CanvasTexture(cv)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
 }
 
 /* ------------------------------------------------------------------ build -- */
@@ -229,154 +315,1002 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     return t
   }
 
-  const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
-  asphaltTex.repeat.set(24, 3)
-  const pavementTex = track(pavementTexture('#9aa0a4', '#7f868b'))
-  const GROUND_EXTENT_HINT = 220
-  const earthTex = track(earthTexture('#6b7a56', '#4d5a3e', '#8a9a6c'))
-  earthTex.repeat.set(GROUND_EXTENT_HINT / 12, GROUND_EXTENT_HINT / 12)
+  /* --------------------------------------------------------------- textures */
+  const marbleMat = track(marbleLight())
+  const woodMat = track(woodWarm())
+  const glassMat = track(glassReal())
+  const stoneMat = track(stoneDark())
+  const plasterMat = track(plasterClean())
+  const panelMat = track(woodPanelDark())
+  const carpetMat = track(carpetGrey())
+  const goldMat = track(goldAccent())
+  const whiteboardMat = track(
+    new THREE.MeshStandardMaterial({
+      map: whiteboardTexture(),
+      roughness: 0.8,
+      // A touch of self-illumination so the board keeps its green under the
+      // interior lights instead of falling to near-black in shadow.
+      emissive: 0x2a5c3e,
+      emissiveIntensity: 0.35,
+    }),
+  )
+  const grassMat = track(
+    new THREE.MeshStandardMaterial({ map: grassTexture('#4f7a45', '#6da05c'), roughness: 1 }),
+  )
 
-  const earthBump = track(bumpFrom(earthTex, 0.55))
-  earthBump.repeat.copy(earthTex.repeat)
-  const asphaltBump = track(bumpFrom(asphaltTex, 0.7))
-  const pavementBump = track(bumpFrom(pavementTex, 0.5))
-  for (const [b, src] of [
-    [asphaltBump, asphaltTex],
-    [pavementBump, pavementTex],
-  ] as const) {
-    b.repeat.copy(src.repeat)
+  const monitors: THREE.Mesh[] = []
+  const lamps: THREE.PointLight[] = []
+  const streaks: THREE.Mesh[] = []
+
+  const add = (m: THREE.Object3D, y = 0) => {
+    m.position.y += y
+    group.add(m)
+    return m
   }
-  pavementTex.repeat.set(14, 14)
 
-  /* ------------------------------------------------------- kanban board --- */
-  // Free-standing display board on the open floor (the walls it used to hang on
-  // are gone). Held up by two posts; the card grid is pinned to `boardSurface`.
-  const boardSurface = box(1.6, KANBAN_BOARD.h, 0.14, 0x14313f, {
-    emissive: 0x0b3d2c,
-    rough: 0.4,
-  })
-  boardSurface.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z)
-  boardSurface.name = 'kanban-board'
-  group.add(boardSurface)
+  /* ------------------------------------------------------- level 0: floors */
+  // Marble slabs under each BAR. The courtyard gets its own treatment (deck +
+  // grass) because it is outdoors — that is the whole point of the U.
+  for (const bar of [BARS.west, BARS.north, BARS.east, BARS.lobby]) {
+    const w = bar.x2 - bar.x1
+    const d = bar.z2 - bar.z1
+    const slab = new THREE.Mesh(new THREE.PlaneGeometry(w, d), marbleMat)
+    slab.rotation.x = -Math.PI / 2
+    slab.position.set((bar.x1 + bar.x2) / 2, 0, (bar.z1 + bar.z2) / 2)
+    slab.receiveShadow = true
+    group.add(slab)
+  }
+
+  /* ------------------------------------------------------------ courtyard */
   {
-    // side panels, chord-aligned with the centre panel
-    for (const sx of [-2.05, 2.05]) {
-      const p = box(1.9, KANBAN_BOARD.h, 0.12, 0x14313f, { emissive: 0x0b3d2c, rough: 0.4 })
-      p.position.set(sx, KANBAN_BOARD.y, KANBAN_BOARD.z + 0.2)
-      p.rotation.y = sx < 0 ? 0.28 : -0.28
+    const c = BARS.courtyard
+    // Paved deck, drawn as FOUR slabs AROUND the pool so the basin is a real hole
+    // in the paving. One slab across the whole courtyard buried the water under
+    // the deck: the pool existed but was invisible.
+    const deckMat = track(new THREE.MeshStandardMaterial({ color: 0xcfc7b4, roughness: 0.9 }))
+    const px1 = POOL.x - POOL.w / 2 - 0.4
+    const px2 = POOL.x + POOL.w / 2 + 0.4
+    const pz1 = POOL.z - POOL.d / 2 - 0.4
+    const pz2 = POOL.z + POOL.d / 2 + 0.4
+    for (const [x1, x2, z1, z2] of [
+      [c.x1, c.x2, c.z1, pz1], // north of the pool
+      [c.x1, c.x2, pz2, c.z2], // south of the pool
+      [c.x1, px1, pz1, pz2], // west of the pool
+      [px2, c.x2, pz1, pz2], // east of the pool
+    ] as const) {
+      const w = x2 - x1
+      const d = z2 - z1
+      if (w <= 0.01 || d <= 0.01) continue
+      const slab = new THREE.Mesh(new THREE.PlaneGeometry(w, d), deckMat)
+      slab.rotation.x = -Math.PI / 2
+      slab.position.set((x1 + x2) / 2, 0.01, (z1 + z2) / 2)
+      slab.receiveShadow = true
+      group.add(slab)
+    }
+  }
+
+  /* ------------------------------------------------------------------ pool */
+  {
+    // basin: a recessed box, water plane, stone coping, and a deck edge
+    const { x, z, w, d } = POOL
+    const wallH = 0.5
+    const t = 0.35
+    // four side walls of the basin
+    for (const [sx, sz, sw, sd] of [
+      [x, z - d / 2 + t / 2, w, t],
+      [x, z + d / 2 - t / 2, w, t],
+      [x - w / 2 + t / 2, z, t, d],
+      [x + w / 2 - t / 2, z, t, d],
+    ] as const) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sw, wallH, sd), stoneMat)
+      m.position.set(sx, -wallH / 2 + 0.02, sz)
+      group.add(m)
+    }
+    // basin floor
+    const floorM = new THREE.Mesh(new THREE.BoxGeometry(w - t * 2, 0.12, d - t * 2), stoneMat)
+    floorM.position.set(x, -wallH + 0.06, z)
+    group.add(floorM)
+    // water: slightly transparent, low roughness so it catches the sky
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(w - t * 2, d - t * 2),
+      track(
+        new THREE.MeshPhysicalMaterial({
+          color: 0x2f8fb5,
+          roughness: 0.06,
+          metalness: 0.1,
+          transmission: 0.55,
+          thickness: 0.4,
+          transparent: true,
+          opacity: 0.85,
+        }),
+      ),
+    )
+    water.rotation.x = -Math.PI / 2
+    water.position.set(x, POOL.waterY - 0.06, z)
+    group.add(water)
+    // coping: a light stone lip all the way round
+    for (const [sx, sz, sw, sd] of [
+      [x, z - d / 2 - 0.18, w + 0.72, 0.36],
+      [x, z + d / 2 + 0.18, w + 0.72, 0.36],
+      [x - w / 2 - 0.18, z, 0.36, d],
+      [x + w / 2 + 0.18, z, 0.36, d],
+    ] as const) {
+      const m = box(sw, 0.09, sd, 0xd8d2c2, { rough: 0.7 })
+      m.position.set(sx, 0.045, sz)
+      group.add(m)
+    }
+    // pool ladder at the east end
+    for (const lz of [z - 0.5, z + 0.5]) {
+      const rail = cyl(0.035, 0.035, 1.1, 0xcfd6da, 10, 0.9)
+      rail.position.set(x + w / 2 - 0.2, 0.35, lz)
+      rail.rotation.z = 0.18
+      group.add(rail)
+    }
+  }
+
+  /* ------------------------------------------------- courtyard furniture -- */
+  // benches facing the water
+  for (const b of POOL_BENCHES) {
+    const g = new THREE.Group()
+    g.position.set(b.x, 0, b.z)
+    g.rotation.y = b.facing
+    const seat = new THREE.Mesh(rbox(1.6, 0.09, 0.52, 0.03), woodMat)
+    seat.position.y = 0.5
+    seat.castShadow = true
+    g.add(seat)
+    for (const lx of [-0.65, 0.65]) {
+      const leg = box(0.1, 0.46, 0.44, 0x8a8f95, { metal: 0.4 })
+      leg.position.set(lx, 0.23, 0)
+      g.add(leg)
+    }
+    group.add(g)
+  }
+  // loungers by the pool
+  for (const l of POOL_LOUNGERS) {
+    const g = new THREE.Group()
+    g.position.set(l.x, 0, l.z)
+    g.rotation.y = l.facing
+    const bed = new THREE.Mesh(rbox(0.62, 0.1, 1.7, 0.04), woodMat)
+    bed.position.y = 0.42
+    g.add(bed)
+    const back = new THREE.Mesh(rbox(0.62, 0.08, 0.6, 0.03), woodMat)
+    back.position.set(0, 0.62, -0.75)
+    back.rotation.x = -0.5
+    g.add(back)
+    for (const [lx, lz] of [
+      [-0.25, -0.7],
+      [0.25, -0.7],
+      [-0.25, 0.7],
+      [0.25, 0.7],
+    ] as const) {
+      const leg = cyl(0.03, 0.03, 0.4, 0x8a8f95, 8, 0.4)
+      leg.position.set(lx, 0.2, lz)
+      g.add(leg)
+    }
+    group.add(g)
+  }
+  // BBQ: a stone counter with a hooded grill
+  {
+    const g = new THREE.Group()
+    g.position.set(BBQ.x, 0, BBQ.z)
+    const base = new THREE.Mesh(rbox(1.8, 0.9, 1.1, 0.05), stoneMat)
+    base.position.y = 0.45
+    base.castShadow = true
+    g.add(base)
+    const top = box(1.9, 0.07, 1.2, 0x4a5054, { metal: 0.5, rough: 0.4 })
+    top.position.y = 0.93
+    g.add(top)
+    const grill = box(1.0, 0.16, 0.7, 0x2b2f33, { metal: 0.6 })
+    grill.position.set(-0.3, 1.04, 0)
+    g.add(grill)
+    const hood = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1.0, 16, 1, false, 0, Math.PI), stdMat(0x3a3f43, { metal: 0.6, rough: 0.35 }))
+    hood.rotation.z = Math.PI / 2
+    hood.position.set(0.45, 1.16, 0)
+    g.add(hood)
+    group.add(g)
+  }
+  // garden beds
+  {
+    const g = new THREE.Group()
+    g.position.set(GARDEN.x, 0, GARDEN.z)
+    const bed = new THREE.Mesh(rbox(2.4, 0.5, 1.8, 0.06), woodMat)
+    bed.position.y = 0.25
+    g.add(bed)
+    const soil = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.06, 1.6), stdMat(0x3b2f23))
+    soil.position.y = 0.52
+    g.add(soil)
+    const rand = rng(41)
+    for (let i = 0; i < 14; i++) {
+      const bush = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.18 + rand() * 0.14, 0),
+        stdMat(rand() > 0.5 ? 0x4f8b55 : 0x6da05c, { rough: 0.9 }),
+      )
+      bush.position.set((rand() - 0.5) * 1.9, 0.66 + rand() * 0.1, (rand() - 0.5) * 1.3)
+      g.add(bush)
+    }
+    group.add(g)
+  }
+  // grass patches beside the pool, so the courtyard is not all paving
+  for (const [gx, gz, gw, gd] of [
+    [-9.5, 8.5, 6, 4],
+    [9.5, 8.5, 6, 4],
+    [-9.5, 0.5, 4, 4],
+    [9.5, 0.5, 4, 4],
+  ] as const) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd), grassMat)
+    m.rotation.x = -Math.PI / 2
+    m.position.set(gx, 0.03, gz)
+    m.receiveShadow = true
+    group.add(m)
+  }
+
+  /* --------------------------------------------------------------- walls -- */
+  /** A wall slab with a door cut-out, drawn as two jambs plus a lintel. */
+  function wallRun(
+    x1: number,
+    z1: number,
+    x2: number,
+    z2: number,
+    level: 0 | 1,
+    mat: THREE.Material = plasterMat,
+    h = WALL_H,
+  ) {
+    const y0 = level * LEVEL_H
+    const horizontal = Math.abs(x2 - x1) > Math.abs(z2 - z1)
+    const len = horizontal ? Math.abs(x2 - x1) : Math.abs(z2 - z1)
+    const cx = (x1 + x2) / 2
+    const cz = (z1 + z2) / 2
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(horizontal ? len : WALL_T, h, horizontal ? WALL_T : len),
+      mat,
+    )
+    m.position.set(cx, y0 + h / 2, cz)
+    m.castShadow = true
+    m.receiveShadow = true
+    group.add(m)
+  }
+
+  // outer shell — DOLLHOUSE CUT at 1.6 m. At full height the shell turned the whole
+  // ground floor into a closed box: the three division rooms, the pantry, the
+  // leisure room and the lobby were all built and then hidden by their own walls.
+  // 1.6 m keeps every room edge, door and partition legible from the default
+  // camera while still reading as a building from outside.
+  const CUT_H = 1.6
+  const shell = (x1: number, z1: number, x2: number, z2: number) => {
+    const horizontal = Math.abs(x2 - x1) > Math.abs(z2 - z1)
+    const len = horizontal ? Math.abs(x2 - x1) : Math.abs(z2 - z1)
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(horizontal ? len : WALL_T, CUT_H, horizontal ? WALL_T : len),
+      plasterMat,
+    )
+    m.position.set((x1 + x2) / 2, CUT_H / 2, (z1 + z2) / 2)
+    m.castShadow = true
+    m.receiveShadow = true
+    group.add(m)
+  }
+  shell(-HALF_W, -HALF_D, HALF_W, -HALF_D) // north
+  shell(-HALF_W, -HALF_D, -HALF_W, HALF_D) // west
+  shell(HALF_W, -HALF_D, HALF_W, HALF_D) // east
+  shell(-HALF_W, HALF_D, -14, HALF_D) // south-west
+  shell(14, HALF_D, HALF_W, HALF_D) // south-east
+  shell(-14, HALF_D, DOOR.x - 2.2, HALF_D)
+  shell(DOOR.x + 2.2, HALF_D, 14, HALF_D)
+  // entrance transom (this one is full height: it is the doorway)
+  {
+    const m = box(4.4, 0.5, WALL_T, 0xe8eef2, { rough: 0.6 })
+    m.position.set(DOOR.x, 2.35, HALF_D)
+    group.add(m)
+  }
+  // courtyard-facing walls
+  shell(-14, -9, -14, HALF_D)
+  shell(14, -9, 14, HALF_D)
+  // lobby's courtyard side: two returns and a wide opening
+  shell(-14, 16, -4, 16)
+  shell(4, 16, 14, 16)
+  // division partitions (full length, cut height)
+  shell(-HALF_W, -6.9, -14, -6.9)
+  shell(-HALF_W, 6.9, -14, 6.9)
+  shell(14, 2, HALF_W, 2)
+  // door jambs on the courtyard-facing walls of the ground-floor rooms
+  for (const r of ROOMS.filter((x) => x.door && x.level === 0 && x.id !== 'lobby')) {
+    const d = r.door!
+    const xw = d.x < 0 ? -14 : 14
+    if (d.z - d.hd > r.z1 + 0.1) shell(xw, r.z1, xw, d.z - d.hd)
+    if (d.z + d.hd < r.z2 - 0.1) shell(xw, d.z + d.hd, xw, r.z2)
+  }
+
+  /* ------------------------------------------------------------ level 1 -- */
+  {
+    const n = BARS.north
+    // floor plate over the north bar only
+    const slab = new THREE.Mesh(new THREE.PlaneGeometry(n.x2 - n.x1, n.z2 - n.z1), marbleMat)
+    slab.rotation.x = -Math.PI / 2
+    slab.position.set((n.x1 + n.x2) / 2, LEVEL_H, (n.z1 + n.z2) / 2)
+    slab.receiveShadow = true
+    group.add(slab)
+    // the slab's south edge (seen from the courtyard) is a fascia
+    const fascia = box(n.x2 - n.x1, 0.45, WALL_T, 0xdfe6ea, { rough: 0.85 })
+    fascia.position.set(0, LEVEL_H - 0.22, n.z2)
+    group.add(fascia)
+  }
+  // level 1 outer walls (same footprint as level 0's north bar), dollhouse-cut to
+  // the same 1.6 m as the ground floor so the exec floor reads from above.
+  const shell1 = (x1: number, z1: number, x2: number, z2: number) => {
+    const horizontal = Math.abs(x2 - x1) > Math.abs(z2 - z1)
+    const len = horizontal ? Math.abs(x2 - x1) : Math.abs(z2 - z1)
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(horizontal ? len : WALL_T, CUT_H, horizontal ? WALL_T : len),
+      plasterMat,
+    )
+    m.position.set((x1 + x2) / 2, LEVEL_H + CUT_H / 2, (z1 + z2) / 2)
+    m.castShadow = true
+    m.receiveShadow = true
+    group.add(m)
+  }
+  shell1(-HALF_W, -HALF_D, HALF_W, -HALF_D)
+  shell1(-HALF_W, -HALF_D, -HALF_W, -9)
+  shell1(HALF_W, -HALF_D, HALF_W, -9)
+  // The whiteboard wall: Rinjani's north wall is kept FULL height behind the board,
+  // otherwise the green board would float above a 1.6 m parapet.
+  {
+    const r = roomById('rinjani')!
+    const m = new THREE.Mesh(new THREE.BoxGeometry(r.x2 - r.x1, WALL_H, WALL_T), plasterMat)
+    m.position.set((r.x1 + r.x2) / 2, LEVEL_H + WALL_H / 2, r.z1 + WALL_T / 2)
+    m.receiveShadow = true
+    group.add(m)
+  }
+  // The exec floor's south face (z=-9) is a GLASS BALUSTRADE, not a wall. This is
+  // the dollhouse cut: the corridor and all five meeting rooms sit behind it, and a
+  // full-height wall at this exact line hid every one of them from the default
+  // camera. A railing keeps the floor edge real (and `LEVEL_BOUNDS` still stops a
+  // walker) while letting the room read from above.
+  {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(HALF_W * 2, 1.0, 0.06), glassMat)
+    rail.position.set(0, LEVEL_H + 0.5, -9)
+    group.add(rail)
+    const cap = box(HALF_W * 2, 0.07, 0.12, 0x8a8f95, { metal: 0.6, rough: 0.35 })
+    cap.position.set(0, LEVEL_H + 1.0, -9)
+    group.add(cap)
+    // posts every 4 m, so it reads as a balustrade and not a floating pane
+    for (let x = -HALF_W + 1; x <= HALF_W - 1; x += 4) {
+      const post = cyl(0.04, 0.04, 1.0, 0x8a8f95, 8, 0.6)
+      post.position.set(x, LEVEL_H + 0.5, -9)
+      group.add(post)
+    }
+  }
+  // Interior partitions of the exec floor, drawn from the same footprints nav.ts
+  // collides with, so the walls and the walkable space cannot disagree. They are
+  // drawn at 1.5 m (half height) — a dollhouse cut. Full-height partitions turned
+  // the exec floor into a closed box with five invisible rooms inside it.
+  for (const f of FOOTPRINTS.filter((x) => x.level === 1 && x.kind === 'wall')) {
+    if (f.id.startsWith('stair-')) continue
+    const m = new THREE.Mesh(new THREE.BoxGeometry(f.hw * 2, 1.5, f.hd * 2), plasterMat)
+    m.position.set(f.x, LEVEL_H + 0.75, f.z)
+    m.castShadow = true
+    m.receiveShadow = true
+    group.add(m)
+  }
+  // door lintels over every exec-floor doorway
+  for (const r of ROOMS.filter((x) => x.level === 1 && x.door)) {
+    const d = r.door!
+    const lin = box(d.hw * 2, WALL_H - 2.15, WALL_T, 0xe8eef2, { rough: 0.7 })
+    lin.position.set(d.x, LEVEL_H + 2.15 + (WALL_H - 2.15) / 2, d.z)
+    group.add(lin)
+  }
+
+  /* --------------------------------------------------------- stairs -------- */
+  {
+    const sx = (STAIRS.x1 + STAIRS.x2) / 2
+    const sz = (STAIRS.z1 + STAIRS.z2) / 2
+    const w = STAIRS.x2 - STAIRS.x1
+    const d = STAIRS.z2 - STAIRS.z1
+    const steps = 12
+    for (let i = 0; i < steps; i++) {
+      const h = (LEVEL_H / steps) * (i + 1)
+      const step = box(w - 0.3, h, d / steps, 0xcfc7b4, { rough: 0.8 })
+      step.position.set(sx, h / 2, STAIRS.z1 + (d / steps) * (i + 0.5))
+      step.castShadow = true
+      step.receiveShadow = true
+      group.add(step)
+    }
+    // landings top and bottom
+    const top = box(w - 0.3, 0.14, 1.0, 0xcfc7b4, { rough: 0.8 })
+    top.position.set(sx, LEVEL_H - 0.07, STAIRS.z1 - 0.5)
+    group.add(top)
+    // railings both sides, level 0 and level 1
+    for (const rz of [STAIRS.z1 - 0.1, STAIRS.z2 + 0.1]) {
+      const rail = box(w, 0.08, 0.08, 0x8a8f95, { metal: 0.6 })
+      rail.position.set(sx, LEVEL_H + 0.95, rz)
+      group.add(rail)
+      for (let i = 0; i <= 4; i++) {
+        const post = cyl(0.035, 0.035, 1.0, 0x8a8f95, 8, 0.6)
+        post.position.set(STAIRS.x1 + (w / 4) * i, LEVEL_H + 0.5, rz)
+        group.add(post)
+      }
+    }
+  }
+
+  /* --------------------------------------------------- walkway (covered) -- */
+  // A canopy strip along the courtyard's three building sides, so moving between
+  // rooms does not mean walking in the rain. Columns only — no walls.
+  {
+    const c = BARS.courtyard
+    const off = 2.0
+    for (const [x, z] of [
+      // west edge
+      [c.x1 + off, -7], [c.x1 + off, -1], [c.x1 + off, 5], [c.x1 + off, 11], [c.x1 + off, 15],
+      // east edge
+      [c.x2 - off, -7], [c.x2 - off, -1], [c.x2 - off, 5], [c.x2 - off, 11], [c.x2 - off, 15],
+      // south edge (lobby side)
+      [-9, c.z2 - off], [-3, c.z2 - off], [3, c.z2 - off], [9, c.z2 - off],
+    ] as const) {
+      const post = cyl(0.1, 0.1, LEVEL_H, 0xe6e2d8, 10)
+      post.position.set(x, LEVEL_H / 2, z)
+      post.castShadow = true
+      group.add(post)
+    }
+    // canopy strips
+    for (const [cx, cz, cw, cd] of [
+      [c.x1 + off, 4, 3.2, c.z2 - c.z1],
+      [c.x2 - off, 4, 3.2, c.z2 - c.z1],
+      [0, c.z2 - off, c.x2 - c.x1, 3.2],
+    ] as const) {
+      const roof = box(cw, 0.16, cd, 0xe8eef2, { rough: 0.85 })
+      roof.position.set(cx, LEVEL_H - 0.08, cz)
+      roof.castShadow = true
+      group.add(roof)
+    }
+  }
+
+  /* --------------------------------------------------------------- roof --- */
+  {
+    // DOLLHOUSE: the roof is a THIN RIM around the north bar, not a lid. A solid
+    // roof hid the whole exec floor — the CEO suite, all five meeting rooms and the
+    // whiteboard were under an opaque slab. The rim keeps the building reading as a
+    // building from outside while leaving the interior visible from above.
+    const n = BARS.north
+    for (const [px, pz, pw, pd] of [
+      [0, -HALF_D - 0.3, HALF_W * 2 + 0.6, 0.6],
+      [0, -9 + 0.3, HALF_W * 2 + 0.6, 0.6],
+      [-HALF_W - 0.3, (n.z1 + n.z2) / 2, 0.6, n.z2 - n.z1 + 0.6],
+      [HALF_W + 0.3, (n.z1 + n.z2) / 2, 0.6, n.z2 - n.z1 + 0.6],
+    ] as const) {
+      const p = box(pw, 0.55, pd, 0x8f9aa0, { rough: 0.9 })
+      p.position.set(px, LEVEL_H * 2 + 0.35, pz)
+      p.castShadow = true
       group.add(p)
     }
   }
-  const boardFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(KANBAN_BOARD.w + 0.24, KANBAN_BOARD.h + 0.24, 0.1),
-    stdMat(0x2b3f49, { metal: 0.3, rough: 0.5 }),
-  )
-  boardFrame.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z - 0.06)
-  group.add(boardFrame)
-  // two posts down to the floor, so the board stands on its own
-  const postBaseY = KANBAN_BOARD.y - KANBAN_BOARD.h / 2
-  for (const px of [-KANBAN_BOARD.w / 2 + 0.3, KANBAN_BOARD.w / 2 - 0.3]) {
-    const post = box(0.16, postBaseY, 0.16, 0x394f5b, { metal: 0.4 })
-    post.position.set(KANBAN_BOARD.x + px, postBaseY / 2, KANBAN_BOARD.z - 0.02)
-    group.add(post)
-    const foot = box(0.5, 0.06, 0.5, 0x2b3f49, { metal: 0.3 })
-    foot.position.set(KANBAN_BOARD.x + px, 0.03, KANBAN_BOARD.z - 0.02)
-    group.add(foot)
+
+  /* ---------------------------------------------------- ceiling + lights -- */
+  // DOLLHOUSE: no ceiling SLAB anywhere. A slab over the west bar hid the three
+  // division rooms from above, and one over the east bar hid the pantry and the
+  // leisure room — the interior was built and then covered up. What remains is a
+  // perimeter BEAM (so the bars read as roofed) plus the light panels themselves,
+  // which hang in the open. The courtyard has no ceiling at all: that is what
+  // makes the pool outdoor.
+  for (const bar of [BARS.west, BARS.east, BARS.lobby]) {
+    const w = bar.x2 - bar.x1
+    const d = bar.z2 - bar.z1
+    const cx = (bar.x1 + bar.x2) / 2
+    const cz = (bar.z1 + bar.z2) / 2
+    // four thin beams around the bar's edge
+    for (const [bx, bz, bw, bd] of [
+      [cx, bar.z1 + 0.15, w, 0.3],
+      [cx, bar.z2 - 0.15, w, 0.3],
+      [bar.x1 + 0.15, cz, 0.3, d],
+      [bar.x2 - 0.15, cz, 0.3, d],
+    ] as const) {
+      const beam = box(bw, 0.34, bd, 0xf2f4f4, { rough: 0.95 })
+      beam.position.set(bx, LEVEL_H - 0.17, bz)
+      group.add(beam)
+    }
   }
-  // column dividers matching the four board columns
-  for (let i = 1; i < 4; i++) {
-    const div = box(0.04, KANBAN_BOARD.h - 0.5, 0.16, 0x1f5c46)
-    div.position.set(
-      KANBAN_BOARD.x - KANBAN_BOARD.w / 2 + (KANBAN_BOARD.w / 4) * i,
-      KANBAN_BOARD.y,
-      KANBAN_BOARD.z + 0.09,
-    )
-    group.add(div)
+  // hanging light panels over the exec floor (they are the `streaks` the palette
+  // dims at night) and over the division rooms.
+  const panelRows: { x: number; z: number; w: number; y: number }[] = [
+    // exec floor
+    { x: 0, z: -19, w: HALF_W * 2 - 4, y: LEVEL_H * 2 - 0.35 },
+    { x: 0, z: -15.5, w: HALF_W * 2 - 4, y: LEVEL_H * 2 - 0.35 },
+    // ground floor: one row per bar, hanging at the ceiling line
+    { x: -21, z: -13, w: 12, y: LEVEL_H - 0.35 },
+    { x: -21, z: 0, w: 12, y: LEVEL_H - 0.35 },
+    { x: -21, z: 13, w: 12, y: LEVEL_H - 0.35 },
+    { x: 21, z: -12, w: 12, y: LEVEL_H - 0.35 },
+    { x: 21, z: 8, w: 12, y: LEVEL_H - 0.35 },
+    { x: 0, z: 18, w: 20, y: LEVEL_H - 0.35 },
+  ]
+  for (const p of panelRows) {
+    const panel = box(p.w, 0.05, 0.4, 0xffffff, { emissive: 0xfff4e0, ei: 1 })
+    panel.position.set(p.x, p.y, p.z)
+    group.add(panel)
+    streaks.push(panel)
+    const l = new THREE.PointLight(0xfff6e6, 0.5, 22)
+    l.position.set(p.x, p.y - 0.4, p.z)
+    group.add(l)
   }
 
-  /* ----------------------------------------------------------- lighting --- */
-  // Ambient RENDAH + sun KUAT = shadows + contrast. A washed-out rig produced no
-  // visible shadow at all, and without a shadow nothing reads.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.22))
+  /* --------------------------------------------------------------- signs -- */
+  for (const s of ROOM_SIGNS) {
+    const tex = track(signTexture(s.text))
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 })
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.6), mat)
+    plate.position.set(s.x, s.level * LEVEL_H + 2.55, s.z)
+    // face into the room: south-facing signs look +Z, others look -Z
+    plate.rotation.y = 0
+    group.add(plate)
+    const backing = box(2.5, 0.7, 0.06, 0x2a1f16, { rough: 0.7 })
+    backing.position.set(s.x, s.level * LEVEL_H + 2.55, s.z + 0.04)
+    group.add(backing)
+  }
+
+  /* ------------------------------------------------------ division rooms -- */
+  const deskTopMat = woodMat
+  for (const d of DESKS) {
+    const g = new THREE.Group()
+    g.position.set(d.x, 0, d.z)
+    g.rotation.y = d.facing
+    // top (bevelled), so the edge catches a highlight
+    const top = new THREE.Mesh(rbox(1.7, 0.06, 1.0, 0.03), deskTopMat)
+    top.position.y = 0.72
+    top.castShadow = true
+    top.receiveShadow = true
+    g.add(top)
+    // legs: two trestles, not four sticks
+    for (const lx of [-0.62, 0.62]) {
+      const leg = box(0.08, 0.72, 0.86, 0xa9b7c1, { metal: 0.35, rough: 0.45 })
+      leg.position.set(lx, 0.36, 0)
+      g.add(leg)
+    }
+    // monitor, on a stand, facing the sitter (local -Z is the desk's far side)
+    const screen = box(0.86, 0.5, 0.04, 0x24343c, { emissive: 0x1d3b4a, ei: 0.55, rough: 0.35 })
+    screen.position.set(0, 1.12, -0.28)
+    screen.userData = { kind: 'monitor', deskIndex: d.index }
+    g.add(screen)
+    monitors[d.index] = screen
+    const stand = box(0.1, 0.26, 0.1, 0x3a4147, { metal: 0.5 })
+    stand.position.set(0, 0.86, -0.28)
+    g.add(stand)
+    const foot = box(0.34, 0.03, 0.2, 0x3a4147, { metal: 0.5 })
+    foot.position.set(0, 0.755, -0.28)
+    g.add(foot)
+    // desk lamp, warm at night
+    const arm = cyl(0.025, 0.025, 0.42, 0x6d7378, 8, 0.6)
+    arm.position.set(0.66, 0.94, -0.3)
+    g.add(arm)
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.16, 12, 1, true), stdMat(0xf0e2c4, { emissive: 0xffd89a, ei: hour >= 18 || hour < 6 ? 0.9 : 0.2 }))
+    shade.position.set(0.66, 1.12, -0.3)
+    shade.rotation.x = 0.5
+    g.add(shade)
+    const lamp = new THREE.PointLight(0xffdcae, hour >= 18 || hour < 6 ? 0.5 : 0.12, 4.5)
+    lamp.position.set(0.66, 1.05, -0.3)
+    g.add(lamp)
+    lamps.push(lamp)
+    // chair: seat, back, star base
+    const chair = new THREE.Group()
+    chair.position.set(DESK_CHAIR.x, 0, DESK_CHAIR.z)
+    const seat = new THREE.Mesh(rbox(0.5, 0.08, 0.48, 0.03), stdMat(0x5f7382, { rough: 0.85 }))
+    seat.position.y = 0.5
+    chair.add(seat)
+    const backr = new THREE.Mesh(rbox(0.48, 0.5, 0.08, 0.03), stdMat(0x5f7382, { rough: 0.85 }))
+    backr.position.set(0, 0.78, 0.28)
+    chair.add(backr)
+    const post = cyl(0.05, 0.05, 0.42, 0x8a8f95, 10, 0.6)
+    post.position.y = 0.26
+    chair.add(post)
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2
+      const arm = box(0.32, 0.04, 0.06, 0x8a8f95, { metal: 0.5 })
+      arm.position.set(Math.cos(a) * 0.16, 0.06, Math.sin(a) * 0.16)
+      arm.rotation.y = -a
+      chair.add(arm)
+    }
+    g.add(chair)
+    group.add(g)
+  }
+  // a carpet under each division's desk row, so the rooms read as rooms
+  for (const r of [roomById('dev')!, roomById('mkt')!, roomById('content')!]) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(r.x2 - r.x1 - 1.2, r.z2 - r.z1 - 1.2),
+      carpetMat,
+    )
+    m.rotation.x = -Math.PI / 2
+    m.position.set((r.x1 + r.x2) / 2, 0.02, (r.z1 + r.z2) / 2)
+    m.receiveShadow = true
+    group.add(m)
+  }
+
+  /* ------------------------------------------------------ meeting ----- */
+  let boardSurface: THREE.Mesh | null = null
+  for (const id of MEETING_ROOM_IDS) {
+    const t = MEETING_TABLES[id]
+    const y = LEVEL_H
+    const g = new THREE.Group()
+    g.position.set(t.x, y, t.z)
+    // oval table: a bevelled box reads as a boardroom table at this scale
+    const top = new THREE.Mesh(rbox(t.rx * 2, 0.07, t.rz * 2, 0.06), woodMat)
+    top.position.y = 0.74
+    top.castShadow = true
+    top.receiveShadow = true
+    g.add(top)
+    const ped = box(t.rx * 0.8, 0.7, t.rz * 0.8, 0x8a6a44, { rough: 0.6 })
+    ped.position.y = 0.35
+    g.add(ped)
+    // chairs on the ring
+    for (const s of MEETING_ROOMS[id].seats) {
+      const chair = new THREE.Group()
+      chair.position.set(s.x - t.x, 0, s.z - t.z)
+      chair.rotation.y = s.facing - Math.atan2(s.x - t.x, s.z - t.z)
+      const seat = new THREE.Mesh(rbox(0.48, 0.08, 0.46, 0.03), stdMat(0x6b7d8a, { rough: 0.85 }))
+      seat.position.y = 0.5
+      chair.add(seat)
+      const backr = new THREE.Mesh(rbox(0.46, 0.46, 0.07, 0.03), stdMat(0x6b7d8a, { rough: 0.85 }))
+      backr.position.set(0, 0.75, 0.25)
+      chair.add(backr)
+      for (const [lx, lz] of [
+        [-0.2, -0.2],
+        [0.2, -0.2],
+        [-0.2, 0.2],
+        [0.2, 0.2],
+      ] as const) {
+        const leg = cyl(0.025, 0.025, 0.48, 0x8a8f95, 8, 0.5)
+        leg.position.set(lx, 0.24, lz)
+        chair.add(leg)
+      }
+      g.add(chair)
+    }
+    group.add(g)
+  }
+  // the green whiteboard in Rinjani, on its north wall, facing INTO the room (+Z).
+  // Its face was pointing north into the wall, so the camera saw only the frame.
+  {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(KANBAN_BOARD.w, KANBAN_BOARD.h, 0.1), whiteboardMat)
+    board.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z + 0.08)
+    board.name = 'kanban-board'
+    board.userData = { kind: 'whiteboard' }
+    board.castShadow = true
+    group.add(board)
+    const frame = box(KANBAN_BOARD.w + 0.16, KANBAN_BOARD.h + 0.16, 0.08, 0x8a6a44, { rough: 0.6 })
+    frame.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z)
+    group.add(frame)
+    // chalk tray
+    const tray = box(KANBAN_BOARD.w, 0.06, 0.14, 0x6f5c45, { rough: 0.7 })
+    tray.position.set(KANBAN_BOARD.x, KANBAN_BOARD.y - KANBAN_BOARD.h / 2 - 0.08, KANBAN_BOARD.z + 0.06)
+    group.add(tray)
+    // expose the board mesh for scene.ts (it pins the card grid / raycast to it)
+    boardSurface = board
+  }
+
+  /* ------------------------------------------------------------ CEO suite -- */
+  {
+    const c = roomCentre('ceo')
+    const y = LEVEL_H
+    // desk: a wide executive top with a return
+    const desk = new THREE.Mesh(rbox(2.2, 0.07, 1.2, 0.04), woodMat)
+    desk.position.set(c.x, y + 0.74, c.z - 1.5)
+    desk.castShadow = true
+    group.add(desk)
+    for (const [lx, lz] of [
+      [-0.95, -0.5],
+      [0.95, -0.5],
+      [-0.95, 0.5],
+      [0.95, 0.5],
+    ] as const) {
+      const leg = box(0.1, 0.72, 0.1, 0x8a6a44, { rough: 0.6 })
+      leg.position.set(c.x + lx, y + 0.36, c.z - 1.5 + lz)
+      group.add(leg)
+    }
+    // chair
+    const chair = new THREE.Group()
+    chair.position.set(c.x, y, c.z - 0.4)
+    const seat = new THREE.Mesh(rbox(0.56, 0.1, 0.54, 0.04), stdMat(0x3f4a52, { rough: 0.8 }))
+    seat.position.y = 0.5
+    chair.add(seat)
+    const backr = new THREE.Mesh(rbox(0.54, 0.62, 0.1, 0.04), stdMat(0x3f4a52, { rough: 0.8 }))
+    backr.position.set(0, 0.85, 0.28)
+    chair.add(backr)
+    const post = cyl(0.05, 0.05, 0.42, 0x8a8f95, 10, 0.6)
+    post.position.y = 0.26
+    chair.add(post)
+    group.add(chair)
+    // guest sofa facing the desk
+    const sofa = new THREE.Group()
+    sofa.position.set(c.x, y, c.z + 2.6)
+    const sseat = new THREE.Mesh(rbox(2.2, 0.34, 0.9, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
+    sseat.position.y = 0.28
+    sofa.add(sseat)
+    const sback = new THREE.Mesh(rbox(2.2, 0.5, 0.24, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
+    sback.position.set(0, 0.6, 0.36)
+    sofa.add(sback)
+    group.add(sofa)
+    // a plant and a floor lamp, so the suite reads as a room not an office box
+    const pot = cyl(0.26, 0.2, 0.5, 0xa8674a, 14)
+    pot.position.set(c.x + 2.6, y + 0.25, c.z - 2.4)
+    group.add(pot)
+    for (let i = 0; i < 3; i++) {
+      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42 - i * 0.09, 0), stdMat(0x4f8b55, { rough: 0.9 }))
+      bush.position.set(c.x + 2.6, y + 0.72 + i * 0.34, c.z - 2.4)
+      bush.scale.set(1, 0.8, 1)
+      group.add(bush)
+    }
+  }
+
+  /* -------------------------------------------------------- corridor rug --- */
+  {
+    const r = roomById('corridor1')!
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(r.x2 - r.x1 - 1, 1.6), carpetMat)
+    m.rotation.x = -Math.PI / 2
+    m.position.set((r.x1 + r.x2) / 2, LEVEL_H + 0.02, (r.z1 + r.z2) / 2)
+    group.add(m)
+  }
+
+  /* ---------------------------------------------------------------- lobby -- */
+  {
+    // reception counter: an L, with a back panel and a chair
+    const g = new THREE.Group()
+    g.position.set(RECEPTION.x, 0, RECEPTION.z)
+    const top = new THREE.Mesh(rbox(3.6, 0.08, 0.9, 0.04), woodMat)
+    top.position.y = 1.05
+    top.castShadow = true
+    g.add(top)
+    const body = box(3.5, 0.98, 0.8, 0xe8e2d4, { rough: 0.85 })
+    body.position.y = 0.5
+    g.add(body)
+    // brass kick plate, the only gold in the room
+    const kick = box(3.52, 0.1, 0.82, 0xc9a24a, { metal: 0.8, rough: 0.3 })
+    kick.position.y = 0.06
+    g.add(kick)
+    group.add(g)
+    // staff chair behind the counter
+    const chair = new THREE.Group()
+    chair.position.set(RECEPTION.x, 0, RECEPTION.z - 1.15)
+    const seat = new THREE.Mesh(rbox(0.5, 0.08, 0.48, 0.03), stdMat(0x5f7382, { rough: 0.85 }))
+    seat.position.y = 0.5
+    chair.add(seat)
+    const backr = new THREE.Mesh(rbox(0.48, 0.5, 0.08, 0.03), stdMat(0x5f7382, { rough: 0.85 }))
+    backr.position.set(0, 0.78, -0.28)
+    chair.add(backr)
+    group.add(chair)
+    // waiting bench + planters
+    for (const bx of [-11.5, 11.5]) {
+      const bench = new THREE.Mesh(rbox(2.6, 0.4, 0.7, 0.06), stdMat(0x8f6f4a, { rough: 0.8 }))
+      bench.position.set(bx, 0.3, 18.5)
+      bench.castShadow = true
+      group.add(bench)
+    }
+    for (const [px, pz] of [
+      [-12.5, 20.4],
+      [12.5, 20.4],
+      [-3.5, 17.0],
+      [3.5, 17.0],
+    ] as const) {
+      const pot = cyl(0.3, 0.24, 0.6, 0xa8674a, 14)
+      pot.position.set(px, 0.3, pz)
+      group.add(pot)
+      for (let i = 0; i < 3; i++) {
+        const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.48 - i * 0.1, 0), stdMat(0x4f8b55, { rough: 0.9 }))
+        bush.position.set(px, 0.85 + i * 0.38, pz)
+        bush.scale.set(1, 0.8, 1)
+        group.add(bush)
+      }
+    }
+    // the entrance doors themselves: two glass leaves with frames
+    for (const side of [-1, 1]) {
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(1.9, 2.3, 0.06), glassMat)
+      leaf.position.set(DOOR.x + side * 1.0, 1.15, HALF_D)
+      group.add(leaf)
+      const frame = box(2.0, 2.4, 0.09, 0x2b3f49, { metal: 0.4, rough: 0.4 })
+      frame.position.set(DOOR.x + side * 1.0, 1.2, HALF_D + 0.02)
+      group.add(frame)
+      const inner = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 0.1), glassMat)
+      inner.position.set(DOOR.x + side * 1.0, 1.2, HALF_D)
+      group.add(inner)
+    }
+    // office name plate above the doors (edited through the UI, stored in the DB).
+    // It faces OUT (south, toward the street) so a visitor reads it on approach —
+    // facing north put the text on the inside face, invisible from the entrance.
+    const namePlate = box(6.2, 0.9, 0.12, 0x2a1f16, { rough: 0.6 })
+    namePlate.position.set(DOOR.x, 3.5, HALF_D + 0.08)
+    namePlate.name = 'office-name-plate'
+    group.add(namePlate)
+    const nameMat = new THREE.MeshStandardMaterial({ map: signTexture('HERMES OFFICE'), roughness: 0.55 })
+    const nameFace = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 0.8), nameMat)
+    nameFace.position.set(DOOR.x, 3.5, HALF_D + 0.15)
+    nameFace.name = 'office-name-face'
+    group.add(nameFace)
+    // canopy over the entrance, so the doorway reads from above
+    const canopy = box(7.0, 0.22, 2.6, 0xe8eef2, { rough: 0.85 })
+    canopy.position.set(DOOR.x, 3.1, HALF_D + 1.3)
+    canopy.castShadow = true
+    group.add(canopy)
+    for (const cx of [-3.2, 3.2]) {
+      const col = cyl(0.12, 0.12, 3.0, 0xe6e2d8, 10)
+      col.position.set(DOOR.x + cx, 1.5, HALF_D + 2.4)
+      col.castShadow = true
+      group.add(col)
+    }
+    // a carpet runner from the doors into the lobby, so the axis reads
+    const runner = new THREE.Mesh(new THREE.PlaneGeometry(4.0, 3.4), carpetMat)
+    runner.rotation.x = -Math.PI / 2
+    runner.position.set(DOOR.x, 0.03, HALF_D - 1.8)
+    runner.receiveShadow = true
+    group.add(runner)
+  }
+
+  /* --------------------------------------------------------------- pantry -- */
+  {
+    const g = new THREE.Group()
+    g.position.set(PANTRY.x, 0, PANTRY.z)
+    // counter along the wall
+    const body = box(0.9, 0.9, 6.4, 0xe8e2d4, { rough: 0.85 })
+    body.position.y = 0.45
+    g.add(body)
+    const top = new THREE.Mesh(rbox(1.0, 0.08, 6.5, 0.04), marbleMat)
+    top.position.y = 0.94
+    g.add(top)
+    // sink: a recessed box with a tap
+    const sink = box(0.7, 0.14, 0.9, 0xb9c4cb, { metal: 0.7, rough: 0.3 })
+    sink.position.set(0, 0.9, -1.4)
+    g.add(sink)
+    const tap = cyl(0.03, 0.03, 0.4, 0xcfd6da, 8, 0.9)
+    tap.position.set(-0.28, 1.15, -1.4)
+    g.add(tap)
+    // fridge at the north end
+    const fridge = box(0.85, 1.9, 0.8, 0xd7dee2, { metal: 0.4, rough: 0.35 })
+    fridge.position.set(0, 0.95, -3.0)
+    g.add(fridge)
+    // wall shelves
+    for (let i = 0; i < 3; i++) {
+      const shelf = box(0.4, 0.05, 3.2, 0x8f6f4a, { rough: 0.7 })
+      shelf.position.set(-0.55, 1.35 + i * 0.42, 1.6)
+      g.add(shelf)
+    }
+    group.add(g)
+    // stools at the counter, on the room side
+    for (const sz of PANTRY_STOOLS) {
+      const g2 = new THREE.Group()
+      g2.position.set(PANTRY.x + PANTRY_STOOL_GAP, 0, sz)
+      const seat = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.07, 16), stdMat(0x8f6f4a, { rough: 0.7 }))
+      seat.position.y = 0.64
+      g2.add(seat)
+      const stem = cyl(0.035, 0.045, 0.62, 0x8a8f95, 10, 0.6)
+      stem.position.y = 0.32
+      g2.add(stem)
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.02, 6, 16), stdMat(0x8a8f95, { metal: 0.6 }))
+      ring.rotation.x = Math.PI / 2
+      ring.position.y = 0.24
+      g2.add(ring)
+      group.add(g2)
+    }
+  }
+
+  /* -------------------------------------------------------------- leisure -- */
+  {
+    const g = new THREE.Group()
+    g.position.set(LOUNGE.x, 0, LOUNGE.z)
+    // sofa facing the courtyard glass
+    const seat = new THREE.Mesh(rbox(2.8, 0.34, 1.0, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
+    seat.position.y = 0.28
+    g.add(seat)
+    const back = new THREE.Mesh(rbox(2.8, 0.52, 0.26, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
+    back.position.set(0, 0.62, 0.4)
+    g.add(back)
+    for (const ax of [-1.42, 1.42]) {
+      const arm = new THREE.Mesh(rbox(0.24, 0.4, 0.98, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
+      arm.position.set(ax, 0.5, 0)
+      g.add(arm)
+    }
+    // coffee table
+    const table = new THREE.Mesh(rbox(1.2, 0.06, 0.6, 0.03), woodMat)
+    table.position.set(0, 0.42, -1.4)
+    g.add(table)
+    for (const [lx, lz] of [
+      [-0.5, -1.25],
+      [0.5, -1.25],
+      [-0.5, -1.55],
+      [0.5, -1.55],
+    ] as const) {
+      const leg = cyl(0.03, 0.03, 0.42, 0x8a6a44, 8)
+      leg.position.set(lx, 0.21, lz)
+      g.add(leg)
+    }
+    // TV on the wall opposite
+    const tv = box(1.8, 1.0, 0.08, 0x1b2226, { metal: 0.3, rough: 0.3 })
+    tv.position.set(0, 1.5, -3.4)
+    g.add(tv)
+    const tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
+    tvScreen.position.set(0, 1.5, -3.34)
+    g.add(tvScreen)
+    group.add(g)
+  }
+
+  /* ------------------------------------------------------------ lighting -- */
+  scene.add(new THREE.AmbientLight(0xffffff, 0.24))
   const sun = new THREE.DirectionalLight(0xfff4e2, 2.6)
-  sun.position.set(26, 20, 16)
+  sun.position.set(30, 24, 18)
   scene.add(sun)
   const fill = new THREE.HemisphereLight(0xdfeaf7, 0x8a7a5f, 0.45)
   scene.add(fill)
 
-  // No ceiling and no ceiling fixtures: the building is a bare open plot now.
-  // `streaks` stays in the contract (applyPalette dims it at night) but is empty.
-  const streaks: THREE.Mesh[] = []
-
   /* -------------------------------------------------- outside environment -- */
-  // The office sits in a street: pavement, road, trees and neighbouring blocks,
-  // so zooming out does not reveal an empty void.
   const streetGroup = new THREE.Group()
   scene.add(streetGroup)
 
-  /**
-   * Ground: a wide, darker earth plane well beyond the furthest building, with the
-   * paved plaza laid on top of it. One pale slab that stops dead reads as sky, not
-   * as ground.
-   */
+  const asphaltTex = track(asphaltTexture('#5a5f63', '#8b9095'))
+  asphaltTex.repeat.set(24, 3)
+  const pavementTex = track(pavementTexture('#9aa0a4', '#7f868b'))
+  const earthTex = track(earthTexture('#6b7a56', '#4d5a3e', '#8a9a6c'))
+  earthTex.repeat.set(18, 18)
+  const earthBump = track(bumpFrom(earthTex, 0.55))
+  const asphaltBump = track(bumpFrom(asphaltTex, 0.7))
+  const pavementBump = track(bumpFrom(pavementTex, 0.5))
+
   const GROUND_EXTENT = 220
   const earth = new THREE.Mesh(
     new THREE.PlaneGeometry(GROUND_EXTENT, GROUND_EXTENT),
-    new THREE.MeshStandardMaterial({
-      color: 0x6f7a5e,
-      map: earthTex,
-      bumpMap: earthBump,
-      bumpScale: 0.5,
-      roughness: 1,
-    }),
+    new THREE.MeshStandardMaterial({ color: 0x6f7a5e, map: earthTex, bumpMap: earthBump, bumpScale: 0.5, roughness: 1 }),
   )
   earth.rotation.x = -Math.PI / 2
   earth.position.y = -0.12
   earth.receiveShadow = true
   streetGroup.add(earth)
 
-  const plazaW = 120
-  const plazaD = 110
   const pavement = new THREE.Mesh(
-    new THREE.PlaneGeometry(plazaW, plazaD),
-    new THREE.MeshStandardMaterial({
-      map: pavementTex,
-      bumpMap: pavementBump,
-      bumpScale: 0.25,
-      roughness: 0.95,
-    }),
+    new THREE.PlaneGeometry(150, 130),
+    new THREE.MeshStandardMaterial({ map: pavementTex, bumpMap: pavementBump, bumpScale: 0.25, roughness: 0.95 }),
   )
   pavement.rotation.x = -Math.PI / 2
-  pavement.position.set(0, -0.06, 6)
+  pavement.position.set(0, -0.06, 0)
   pavement.receiveShadow = true
   streetGroup.add(pavement)
 
   const road = new THREE.Mesh(
-    new THREE.PlaneGeometry(120, 9),
+    new THREE.PlaneGeometry(150, 9),
     new THREE.MeshStandardMaterial({ map: asphaltTex, bumpMap: asphaltBump, bumpScale: 0.4, roughness: 0.98 }),
   )
   road.rotation.x = -Math.PI / 2
   road.position.set(0, -0.05, HALF_D + 14)
   streetGroup.add(road)
-  // centre line + zebra crossing in front of the entrance
-  for (let i = -8; i <= 8; i++) {
+  for (let i = -10; i <= 10; i++) {
     const dash = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.18), stdMat(0xd8d2b8, { rough: 0.9 }))
     dash.rotation.x = -Math.PI / 2
     dash.position.set(i * 7, -0.04, HALF_D + 14)
     streetGroup.add(dash)
   }
 
-  // No trees and no neighbouring buildings: the plot stands on its own until the
-  // new office is built. `foliage` stays (animateStreet sways it) but is empty.
   const foliage: { group: THREE.Group; phase: number }[] = []
+  const tree = (x: number, z: number, scale = 1) => {
+    const t = new THREE.Group()
+    t.position.set(x, 0, z)
+    const trunk = cyl(0.14 * scale, 0.2 * scale, 2.0 * scale, 0x6b5138, 8)
+    trunk.position.y = 1.0 * scale
+    t.add(trunk)
+    const canopyMat = stdMat(0x4f8b55, { rough: 0.9 })
+    for (const [ox, oy, oz, r] of [
+      [0, 2.4, 0, 1.05],
+      [0.5, 2.0, 0.3, 0.75],
+      [-0.45, 2.1, -0.3, 0.7],
+    ]) {
+      const leafM = new THREE.Mesh(new THREE.IcosahedronGeometry(r * scale, 0), canopyMat)
+      leafM.position.set(ox * scale, oy * scale, oz * scale)
+      t.add(leafM)
+    }
+    streetGroup.add(t)
+    foliage.push({ group: t, phase: Math.abs(x * 0.17 + z * 0.11) })
+  }
+  // palms along the frontage, so the entrance has a boulevard
+  for (const [tx, tz] of [
+    [-34, 26], [-22, 26], [22, 26], [34, 26],
+    [-42, 6], [42, 6], [-42, -14], [42, -14],
+  ]) {
+    tree(tx, tz, 1.3)
+  }
 
-
-  // kerb and street lamps
-  const kerb = box(FLOOR.width + 26, 0.12, 0.3, 0xb9bec2, { rough: 0.9 })
+  const kerb = box(FLOOR.width + 40, 0.12, 0.3, 0xb9bec2, { rough: 0.9 })
   kerb.position.set(0, -0.02, HALF_D + 9.2)
   streetGroup.add(kerb)
 
-  for (const lx of [-16, 16]) {
+  for (const lx of [-20, 20]) {
     const lampZ = HALF_D + 6.4
     const post = cyl(0.07, 0.09, 5.4, 0x6d7378, 8, 0.5)
     post.position.set(lx, 2.7, lampZ)
@@ -392,11 +1326,8 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup.add(lamp)
   }
 
-  /* --------------------------------------------------- living street ------ */
-  // Pedestrians and traffic animated from the scene tick. They are collected in
-  // arrays the caller advances each frame, so nothing here needs a timer.
+  /* --------------------------------------------------------- living street */
   const ROW_SPEED = [1.55, 1.05] as const
-  /** Minimum spacing between walkers sharing a row. */
   const PED_GAP = 3.2
   const walkers: {
     obj: THREE.Group
@@ -445,24 +1376,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const PED_COLORS = [0xc9553f, 0x3f6fc9, 0x4f9a63, 0xd8a83f, 0x8a5fc9, 0x3fa8a8]
   for (let i = 0; i < 6; i++) {
     const { g, legs } = makeWalker(PED_COLORS[i % PED_COLORS.length])
-    // Sidewalk band: from the building face out to the kerb at HALF_D+9.2, NOT
-    // the road. Two rows so it reads as a path; one speed per row so a walker
-    // only ever catches someone in the OTHER row.
     const row = i % 2
     const sidewalkZ = HALF_D + (row === 0 ? 2.5 : 5.5)
-    const from = -34 + i * 11
+    const from = -40 + i * 13
     g.position.set(from, 0, sidewalkZ)
     streetGroup.add(g)
-    walkers.push({
-      obj: g,
-      legs,
-      from,
-      to: 38,
-      z: sidewalkZ,
-      speed: ROW_SPEED[row],
-      row,
-      t: i * 0.7,
-    })
+    walkers.push({ obj: g, legs, from, to: 44, z: sidewalkZ, speed: ROW_SPEED[row], row, t: i * 0.7 })
   }
 
   const makeVehicle = (color: number) => {
@@ -484,7 +1403,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       wheel.position.set(wx, 0.34, wz)
       c.add(wheel)
     }
-    // headlights so the night read is a street, not a box
     for (const hx of [-2.0, 2.0]) {
       const lamp = new THREE.Mesh(
         new THREE.BoxGeometry(0.12, 0.16, 0.3),
@@ -496,22 +1414,15 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     return c
   }
 
-  // Lane centres 4.0 m apart (the car body is 1.8 m wide), so the two directions
-  // do not overlap: each lane is 2.6 m from the kerb side.
-  const LANE_NORTH = HALF_D + 11.5 // nearer the building, eastbound
-  const LANE_SOUTH = HALF_D + 15.5 // far side, westbound
+  const LANE_NORTH = HALF_D + 11.5
+  const LANE_SOUTH = HALF_D + 15.5
   const CAR_COLORS = [0xb9563f, 0x3f6fb9, 0xd8d3c4, 0x4f7a5f, 0x8a8f95]
-  // One speed per lane, and cars are spaced evenly along the lane, so the gap is
-  // fixed for good and a car can never lap another in the same lane.
   const LANE_SPEED = { [LANE_NORTH]: 7, [LANE_SOUTH]: 9 } as Record<number, number>
-  const CAR_GAP = 13
   const perLane = [0, 0]
   for (let i = 0; i < 5; i++) {
     const forward = i % 2 === 0
     const c = makeVehicle(CAR_COLORS[i % CAR_COLORS.length])
     const z = forward ? LANE_NORTH : LANE_SOUTH
-    // The body's length is its LOCAL X. A car travelling east needs no rotation
-    // and one travelling west is turned 180°.
     c.rotation.y = forward ? 0 : Math.PI
     const laneIdx = forward ? 0 : 1
     const slot = perLane[laneIdx]++
@@ -524,18 +1435,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streetGroup.add(c)
     vehicles.push({ obj: c, x0, x1, z, speed: LANE_SPEED[z] })
   }
-  void CAR_GAP
 
-  /** Advance the street. Called from the scene tick with the frame delta. */
   function animateStreet(dt: number, t: number) {
     for (const { group: g, phase } of foliage) {
       g.rotation.z = Math.sin(t * 0.8 + phase) * 0.018
       g.rotation.x = Math.sin(t * 0.55 + phase) * 0.012
     }
-
-    // ---- pedestrians: lane discipline ----
-    // Two walkers must not occupy the same stretch of the same row. Sorted by x,
-    // each walker is held back to PED_GAP behind the one ahead of it in its row.
     const byRow: number[][] = [[], []]
     walkers.forEach((w, i) => byRow[w.row].push(i))
     for (const row of byRow) {
@@ -555,7 +1460,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       w.obj.position.x = w.from + span * w.t
       w.obj.position.z = w.z + Math.sin(w.obj.position.x * 0.3) * 0.14
       w.obj.rotation.y = Math.PI / 2
-      w.obj.visible = true
       const swing = Math.sin(t * 6.5 + w.obj.position.x * 0.9) * 0.5
       w.legs[0].rotation.x = swing
       w.legs[1].rotation.x = -swing
@@ -563,21 +1467,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       arms[0].rotation.x = -swing * 0.7
       arms[1].rotation.x = swing * 0.7
     }
-    // Re-apply the spacing after movement, and re-home anything pushed out of its
-    // span so the two rows cannot overlap at the wrap boundary.
-    for (const row of byRow) {
-      row.sort((a, b) => walkers[a].obj.position.x - walkers[b].obj.position.x)
-      for (let k = 1; k < row.length; k++) {
-        const behind = walkers[row[k - 1]]
-        const ahead = walkers[row[k]]
-        const gap = ahead.obj.position.x - behind.obj.position.x
-        if (gap < PED_GAP) {
-          behind.obj.position.x = ahead.obj.position.x - PED_GAP
-          behind.t = (behind.obj.position.x - behind.from) / (behind.to - behind.from)
-        }
-      }
-    }
-
     for (const v of vehicles) {
       const span = v.x1 - v.x0
       const dir = Math.sign(span)
@@ -606,11 +1495,25 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const d of disposables) d.dispose()
   }
 
-  // No interior furniture left to build. `monitors` and `lamps` stay in the
-  // contract (scene.ts reads both) and are simply empty until the rebuild.
-  const monitors: THREE.Mesh[] = []
-  const lamps: THREE.PointLight[] = []
   void pal
+  void panelMat
+  void goldMat
+  void CEILING_Y
+  void CONFERENCE
+  void FOOTPRINTS
+  void KANBAN_BOARD
+  void STAIRS
 
-  return { group, monitors, lamps, boardSurface, streaks, streetGroup, animateStreet, sun, applyPalette, dispose }
+  return {
+    group,
+    monitors,
+    lamps,
+    boardSurface: boardSurface as THREE.Mesh,
+    streaks,
+    streetGroup,
+    animateStreet,
+    sun,
+    applyPalette,
+    dispose,
+  }
 }

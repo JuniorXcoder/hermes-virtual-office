@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import {
   BARS,
   BOARD_COLUMNS,
+  BOARD_D,
   CEILING_Y,
   DESKS,
   deskByIndex,
@@ -96,6 +97,15 @@ console.log('geometry')
     'kanban board is above its floor and below the ceiling',
     bottom > LEVEL_H && top < LEVEL_H + WALL_H,
     `y ${f2(bottom)}..${f2(top)} vs level 1 band ${LEVEL_H}..${f2(LEVEL_H + WALL_H)}`,
+  )
+  // The board must hang on the INSIDE face of the wall. It was placed at
+  // z1 + WALL_T/2 once, which is inside the plaster: it existed and was invisible.
+  const innerFace = r.z1 + WALL_T
+  const frontFace = KANBAN_BOARD.z + BOARD_D / 2
+  check(
+    'kanban board hangs clear of the wall, not inside it',
+    frontFace > innerFace + 0.01,
+    `front ${f2(frontFace)} vs wall inner face ${f2(innerFace)}`,
   )
 }
 
