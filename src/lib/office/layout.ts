@@ -888,42 +888,95 @@ export const FOOTPRINTS: Footprint[] = [
 export type IdleSpot = {
   x: number
   z: number
-  act: 'idle' | 'sofa' | 'garden' | 'read' | 'coffee' | 'pool'
+  act: 'idle' | 'sofa' | 'garden' | 'read' | 'coffee' | 'pool' | 'gym' | 'bbq' | 'meeting'
   seated?: boolean
   face: number
   level: 0 | 1
 }
 
 /**
- * Where an idle agent goes, and which way it faces on arrival. With the pool, the
- * BBQ, the pantry and the leisure room there are enough distinct spots that a
- * handful of agents spread out — and idle agents WALK between them rather than
- * standing still, which is what keeps the office alive without spending a token.
+ * Every place an idle body can go — one spot per piece of usable furniture, plus
+ * open standing room.
+ *
+ * The rule: if the office built it, somebody should be able to enjoy it. A dummy
+ * that has not been spawned yet and an agent with no task both wander this list,
+ * so the courtyard, the gym, the BBQ, the pantry and the executive floor all see
+ * traffic instead of only the desks.
+ *
+ * `seated` marks a spot ON a seat: the mover then ignores seat footprints so the
+ * body can actually step onto the chair (see `goingToSeat` in scene.ts).
  */
 export const IDLE_SPOTS: IdleSpot[] = [
+  /* ---- poolside: the south benches and the west daybeds ------------------ */
   ...POOL_BENCHES.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
-  ...POOL_LOUNGERS.map((l) => ({ x: l.x, z: l.z, act: 'pool' as const, seated: true, face: l.facing, level: 0 as const })),
-  { x: BBQ.x, z: BBQ.z + 1.3, act: 'idle', face: Math.PI, level: 0 },
-  // The gym: stand on the mat, and one spot at the pull-up rig.
-  { x: GYM.rack.x + 1.5, z: GYM.rack.z, act: 'idle', face: -Math.PI / 2, level: 0 },
-  { x: GYM.rig.x + GYM.rig.span / 2 + 0.6, z: GYM.rig.z, act: 'idle', face: Math.PI, level: 0 },
-  // The planting band: two spots to stand among the greenery.
+  ...SUNBEDS.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
+
+  /* ---- the gym: stand on the mat, or hang off the rig -------------------- */
+  { x: GYM.rack.x + 1.7, z: GYM.rack.z + 0.9, act: 'gym', face: -Math.PI / 2, level: 0 },
+  { x: GYM.rack.x + 0.6, z: GYM.rack.z + 1.6, act: 'gym', face: Math.PI, level: 0 },
+  { x: GYM.dumbbells.x - 0.9, z: GYM.dumbbells.z + 1.4, act: 'gym', face: Math.PI, level: 0 },
+  { x: GYM.rig.x, z: GYM.rig.z + 1.1, act: 'gym', face: Math.PI, level: 0 },
+  { x: GYM.rig.x + GYM.rig.span / 2 + 0.7, z: GYM.rig.z, act: 'gym', face: -Math.PI / 2, level: 0 },
+
+  /* ---- the BBQ: stand at the counter, and at the prep end ---------------- */
+  { x: BBQ.x - 1.5, z: BBQ.z, act: 'bbq', face: Math.PI / 2, level: 0 },
+  { x: BBQ.x, z: BBQ.z + 1.5, act: 'bbq', face: Math.PI, level: 0 },
+  { x: BBQ.x + 1.4, z: BBQ.z + 0.9, act: 'bbq', face: Math.PI, level: 0 },
+
+  /* ---- the planting band ------------------------------------------------ */
   { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
+  { x: (PLANTING.x1 + PLANTING.x2) / 2, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
   { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
-  { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[0], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
-  { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[1], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
-  { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[2], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
-  // ON the sofa, facing the TV (north). `seated` + `allowSeat` lets a body occupy
-  // a seat footprint; the point is the sofa's own centre so the avatar is visibly
-  // sitting on it, not next to it.
+
+  /* ---- pantry: the three stools ---------------------------------------- */
+  ...PANTRY_STOOLS.map((z) => ({
+    x: PANTRY.x + PANTRY_STOOL_GAP,
+    z,
+    act: 'coffee' as const,
+    seated: true,
+    face: -Math.PI / 2,
+    level: 0 as const,
+  })),
+
+  /* ---- the leisure room: the sofa, facing the TV ------------------------- */
   { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: 0, level: 0 },
+
+  /* ---- open standing room in the courtyard and the lobby ---------------- */
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
   { x: 10, z: 12.6, act: 'idle', face: -Math.PI / 2, level: 0 },
   { x: -10, z: 12.6, act: 'idle', face: Math.PI / 2, level: 0 },
-  { x: -20, z: -12, act: 'idle', face: 0, level: 0 },
-  { x: 20, z: -12, act: 'idle', face: 0, level: 0 },
+  { x: 0, z: -8.2, act: 'idle', face: Math.PI, level: 0 },
   { x: -4, z: 18.5, act: 'idle', face: 0, level: 0 },
+  { x: 4, z: 18.5, act: 'idle', face: 0, level: 0 },
+
+  /* ---- the executive floor: the corridor and every meeting room ---------- */
+  // The meeting chairs are real furniture on a floor that used to have no idle
+  // spots at all, so an agent with nothing to do never went upstairs. The seats
+  // are only used when no meeting is live (a live meeting claims them first).
+  { x: roomCentre('corridor1').x - 6, z: roomCentre('corridor1').z, act: 'idle', face: 0, level: 1 },
+  { x: roomCentre('corridor1').x + 6, z: roomCentre('corridor1').z, act: 'idle', face: 0, level: 1 },
+  ...MEETING_ROOM_IDS.flatMap((id) =>
+    MEETING_ROOMS[id].seats.slice(0, 2).map((s) => ({
+      x: s.x,
+      z: s.z,
+      act: 'meeting' as const,
+      seated: true,
+      face: s.facing,
+      level: 1 as const,
+    })),
+  ),
+  // The CEO suite: the chair at the desk and the sofa facing the window. Both were
+  // furniture an idle body could see but never use — the coverage assert in the
+  // self-test compares every enjoyable seat against this list.
+  { x: roomCentre('ceo').x, z: roomCentre('ceo').z - 0.4, act: 'idle', seated: true, face: 0, level: 1 },
+  { x: roomCentre('ceo').x, z: roomCentre('ceo').z + 2.6, act: 'idle', seated: true, face: Math.PI, level: 1 },
 ]
+
+/*
+ * The old single-floor idle list lived here. It was replaced by the list above,
+ * which covers the same furniture plus the gym, the BBQ, the planting band and the
+ * executive floor — so an idle body now uses the whole building.
+ */
 
 /* -------------------------------------------------------------- openings -- */
 

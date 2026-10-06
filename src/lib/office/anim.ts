@@ -44,6 +44,10 @@ export type Activity =
   | 'coffee'
   /** Sitting on a poolside bench, watching the water. */
   | 'pool'
+  /** Working out on the gym mat. */
+  | 'gym'
+  /** Cooking at the grill. */
+  | 'bbq'
 
 export type AnimAgent = {
   avatar: Avatar
@@ -309,6 +313,72 @@ function sofa(a: AnimAgent, t: number) {
   av.hips.position.y = 0.54 + wave(t, 1.1, a.phase) * 0.01
 }
 
+/**
+ * Working out: at the rack, arms up on the bar, with a slow press motion.
+ *
+ * Standing, not sitting — the mat is a floor spot, and the gym reads as a place
+ * you USE rather than a decoration if bodies visibly exercise on it.
+ */
+function gym(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  // feet apart, slight crouch
+  standLegs(a, t)
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.z = sign * m(7 * D)
+    leg.elbow.rotation.x = m(16 * D)
+  }
+  av.hips.position.y = HIP_STAND - 0.05 * k
+  // torso leans back a touch, as under a bar
+  av.chest.rotation.x = m(-8 * D)
+  av.chest.rotation.y = 0
+  av.neck.rotation.x = m(-6 * D)
+  av.head.rotation.x = m(-10 * D)
+  av.head.rotation.y = wave(t, 0.4, a.phase) * 6 * D
+  const [L, R] = av.arms
+  // the PRESS: a slow up/down cycle, both arms together
+  const press = (Math.sin(t * 1.15 + a.phase) + 1) / 2
+  L.shoulder.rotation.x = m(-96 * D) + press * 62 * D
+  L.shoulder.rotation.z = m(-16 * D)
+  L.elbow.rotation.x = m(-52 * D) + press * 44 * D
+  R.shoulder.rotation.x = m(-96 * D) + press * 62 * D
+  R.shoulder.rotation.z = m(16 * D)
+  R.elbow.rotation.x = m(-52 * D) + press * 44 * D
+}
+
+/**
+ * At the grill: leaning slightly forward, one arm turning something.
+ *
+ * The hand does a small repeated rotation — the read is "cooking", not "standing
+ * next to a counter".
+ */
+function bbq(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  standLegs(a, t)
+  av.hips.position.y = HIP_STAND
+  av.chest.rotation.x = m(16 * D)
+  av.chest.rotation.y = wave(t, 0.3, a.phase) * 4 * D
+  av.neck.rotation.x = m(10 * D)
+  av.head.rotation.x = m(14 * D)
+  av.head.rotation.y = wave(t, 0.45, a.phase) * 10 * D
+  const [L, R] = av.arms
+  // left hand steadies the counter
+  L.shoulder.rotation.x = m(-52 * D)
+  L.shoulder.rotation.z = m(-14 * D)
+  L.elbow.rotation.x = m(-58 * D)
+  // right hand turns the tongs
+  const turn = Math.sin(t * 1.9 + a.phase)
+  R.shoulder.rotation.x = m(-58 * D) + turn * 10 * D
+  R.shoulder.rotation.z = m(12 * D)
+  R.elbow.rotation.x = m(-64 * D) + turn * 18 * D
+}
+
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   idle: (a, t) => {
     standLegs(a, t)
@@ -334,6 +404,8 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   read,
   coffee,
   pool,
+  gym,
+  bbq,
 }
 
 /** Apply the pose for this frame. `dt` ramps `ease` so transitions are not snaps. */

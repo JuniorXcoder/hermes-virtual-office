@@ -53,6 +53,15 @@ export type SceneAgent = AnimAgent & {
   level: Level
   /** Position the DB last reported (used to restore, not to move). */
   target: THREE.Vector3 | null
+  /**
+   * Which floor the TARGET is on.
+   *
+   * This must be stored separately from `level` (the body's current floor). The
+   * route was computed with `level: a.level` for the DESTINATION too, so an idle
+   * body sent to an upstairs spot walked to those coordinates on the ground floor
+   * and never took the stair — all twelve level-1 idle spots were unreachable.
+   */
+  targetLevel: Level
   /** Remaining waypoints from A*; movement follows these, not the raw target. */
   path: Waypoint[]
   destKey: string
@@ -73,6 +82,15 @@ export type SceneAgent = AnimAgent & {
   /** Pose an anchored body holds: the activity and facing from the DB. */
   anchorActivity: Activity
   anchorFacing: number
+  /**
+   * Which idle spot this body is heading to / holding, as `x,z`.
+   *
+   * Kept SEPARATE from `target` because the resting branch clears `target` (leaving
+   * it set made the loop re-arm the rest timer every frame and the body froze
+   * forever). With only `target` in the claim set, a resting body released its spot
+   * and another body walked onto it — two avatars in the same chair.
+   */
+  spotKey: string
   /** Which idle spot this body is heading to / holding. */
   wanderIndex: number
   /** Seconds to stay put before wandering again. */
@@ -289,6 +307,8 @@ export function createScene(
       ease: 0,
       phase: Math.random() * Math.PI * 2,
       target: null,
+      targetLevel: 0,
+      spotKey: '',
       path: [],
       destKey: '',
       face: row.facing ?? 0,
@@ -346,15 +366,48 @@ export function createScene(
    * A name present in BOTH is a real agent (roster status wins). A name present
    * only in the DB is a dummy: it walks and idles but has no task and costs
    * nothing.
+   *
+   * AN AGENT WITH NO DB ROW STILL GETS A BODY. Rows are only ever written by the
+   * scene, so a freshly spawned agent — one that has never been saved — had no row
+   * and therefore no avatar: you spawned `jun` as CEO and the floor stayed empty.
+   * The roster is the authority on WHO exists; the DB only remembers WHERE they
+   * were. A missing row now means "walk in through the front door", which is
+   * exactly what spawning should look like.
    */
   function syncAvatars(rows: AvatarState[], agents: Agent[]) {
     avatarRows = rows
     agentRows = agents
     const agentByName = new Map(agents.map((a) => [a.name, a]))
 
-    // Drop bodies the DB no longer lists, UNLESS they are real agents leaving.
+    // Every roster name needs a row. Synthesise one at the entrance for any agent
+    // the DB has never seen, and feed it through the same path as the rest.
+    const known = new Set(rows.map((r) => r.name))
+    const missing: AvatarState[] = agents
+      .filter((a) => !known.has(a.name))
+      .map((a) => ({
+        avatarId: `agent:${a.name}`,
+        name: a.name,
+        // `division` is null for a profile with no SOUL marker. Falling back to
+        // 'tech' would seat the CEO with the developers, so the fallback is 'exec':
+        // an unknown agent is unplaced, not a developer.
+        division: a.division ?? 'exec',
+        kind: 'agent' as const,
+        // start at the door so the body walks in, rather than appearing at a desk
+        x: DOOR.x,
+        z: DOOR.z - 1.2,
+        level: 0,
+        activity: 'idle',
+        facing: Math.PI,
+        spawned: true,
+        anchored: false,
+        updatedAt: new Date().toISOString(),
+      }))
+    const all = missing.length ? [...rows, ...missing] : rows
+
+    // Drop bodies the DB no longer lists AND the roster no longer has, UNLESS they
+    // are real agents leaving.
     for (const [name, a] of [...byName]) {
-      const stillThere = rows.some((r) => r.name === name)
+      const stillThere = all.some((r) => r.name === name)
       if (!stillThere && a.kind === 'agent' && !a.leaving) {
         a.leaving = true
         a.path = []
@@ -364,7 +417,7 @@ export function createScene(
       }
     }
 
-    for (const row of rows) {
+    for (const row of all) {
       const existing = byName.get(row.name)
       const data = agentByName.get(row.name) ?? dummyAgent(row)
       const kind: 'dummy' | 'agent' = agentByName.has(row.name) ? 'agent' : 'dummy'
@@ -383,7 +436,13 @@ export function createScene(
           setLabel(existing)
         }
       } else {
-        makeAvatar(row, data)
+        const fresh = makeAvatar(row, data)
+        // A synthesised row means "this agent has just arrived": give it the walk
+        // in through the door, the same entrance a spawned dummy gets.
+        if (missing.some((m) => m.name === row.name)) {
+          fresh.spawnGate = 0.6
+          fresh.leaving = false
+        }
       }
     }
     restored = true
@@ -430,6 +489,7 @@ export function createScene(
     // FIRST, so nothing below can hand this body a target.
     if (a.anchored) {
       a.target = null
+      a.spotKey = ''
       // Keep the activity and facing the DB remembers — the receptionist keeps
       // typing at the counter, facing the door, forever.
       a.activity = a.anchorActivity
@@ -446,6 +506,8 @@ export function createScene(
     }
     if (a.leaving) {
       a.target = new THREE.Vector3(DOOR.x, 0, DOOR.z)
+      a.targetLevel = 0
+      a.spotKey = ''
       a.activity = 'idle'
       return
     }
@@ -464,6 +526,7 @@ export function createScene(
     if (meeting && meetingLive && meeting.participants.includes(a.data.name)) {
       const idx = meeting.participants.indexOf(a.data.name)
       a.target = meetingSeat(idx)
+      a.targetLevel = 1
       a.seatYaw = meetingSeatYaw(idx)
       a.activity = 'meeting'
       a.meetingTalking = meeting.currentSpeaker === a.data.name
@@ -476,6 +539,8 @@ export function createScene(
       if (desk) {
         const v = visitorSpot(desk)
         a.target = new THREE.Vector3(v.x, 0, v.z)
+        // every desk is on the ground floor
+        a.targetLevel = 0
         a.activity = 'idle'
         a.seatYaw = Math.atan2(desk.x - v.x, desk.z - v.z)
         return
@@ -487,6 +552,7 @@ export function createScene(
       const desk = deskByIndex(a.data.deskIndex)
       if (desk) {
         a.target = deskTarget(desk)
+        a.targetLevel = 0
         a.seatYaw = deskSeatYaw(desk)
         a.activity = 'typing'
         return
@@ -494,18 +560,30 @@ export function createScene(
     }
 
     // 4. idle: WANDER. Rotate to the next free spot, walk there, rest, repeat.
-    //    A dummy at its desk keeps typing; only a body with nothing to do walks.
+    //
+    // ALREADY UNDER WAY? KEEP GOING. `retarget()` runs EVERY FRAME, so picking a
+    // fresh spot here re-rolled the destination sixty times a second: wanderIndex
+    // advanced on each call, the destination key changed, the path was recomputed,
+    // and the body vibrated in place without ever arriving. That is the reported
+    // "Content, MKT, dev nge glitch" — it was never a rendering problem, it was the
+    // destination being re-drawn before the body could reach it.
+    if (a.target && a.path.length) return
+
     if (!IDLE_SPOTS.length) {
       a.target = null
       a.activity = isDummy ? 'typing' : 'idle'
       return
     }
     // Claim a spot no other body holds.
-    const taken = new Set(
-      avatars
-        .filter((x) => x !== a && x.target)
-        .map((x) => `${x.target!.x.toFixed(1)},${x.target!.z.toFixed(1)}`),
-    )
+    // A spot is claimed if a body is WALKING to it (`target`) or SITTING on it
+    // (`spotKey`, which survives the rest period). Reserving only `target` let a
+    // resting body's chair be re-taken by someone else.
+    const taken = new Set<string>()
+    for (const x of avatars) {
+      if (x === a) continue
+      if (x.target) taken.add(`${x.target.x.toFixed(1)},${x.target.z.toFixed(1)}`)
+      if (x.spotKey) taken.add(x.spotKey)
+    }
     let spot: IdleSpot | null = null
     for (let k = 0; k < IDLE_SPOTS.length; k++) {
       const cand = IDLE_SPOTS[(a.wanderIndex + k) % IDLE_SPOTS.length]
@@ -517,10 +595,13 @@ export function createScene(
     }
     if (!spot) {
       a.target = null
+      a.spotKey = ''
       a.activity = isDummy ? 'typing' : 'idle'
       return
     }
     a.target = new THREE.Vector3(spot.x, 0, spot.z)
+    a.targetLevel = spot.level
+    a.spotKey = `${spot.x.toFixed(1)},${spot.z.toFixed(1)}`
     a.activity = spot.act
     a.seatYaw = spot.face
   }
@@ -627,9 +708,9 @@ export function createScene(
           // LEVEL-AWARE: crossing floors goes through the stair shaft.
           a.path = routeBetween(
             { x: g.position.x, z: g.position.z, level: a.level },
-            { x: a.target.x, z: a.target.z, level: a.level },
+            { x: a.target.x, z: a.target.z, level: a.targetLevel },
           )
-          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z, level: a.level }]
+          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z, level: a.targetLevel }]
         }
 
         const leg = a.path[0]
@@ -661,7 +742,27 @@ export function createScene(
           // on; everyone else is stopped by it (A* never routes through the flight,
           // so only a body explicitly sent up or down is ever inside this box).
           const climbing = onStairArea(g.position.x, g.position.z)
-          if (!blocked(nx, nz, BODY_R * 0.9, { level: a.level, onStair: climbing })) {
+          // SEATS ARE ENTERABLE. A body heading for a chair has to be able to step
+          // ONTO it; without this the seat footprint refuses the final step, the
+          // mover falls through to the 0.05 m/frame creep below, and the body
+          // judders against the chair forever instead of sitting down.
+          //
+          // The last metre is `settling`: there, ALL furniture is ignored (walls
+          // still apply). A desk chair is tucked under the desk and a meeting chair
+          // is covered by its table's footprint, so the seat is INSIDE furniture by
+          // construction — collision cannot be what decides whether you can reach
+          // it. A* has already proved a legal route exists; this is the doorway at
+          // the end of it.
+          const goingToSeat = a.seatYaw !== undefined
+          const settling = goingToSeat && dist < 1.3
+          if (
+            !blocked(nx, nz, BODY_R * 0.9, {
+              level: a.level,
+              onStair: climbing,
+              allowSeat: goingToSeat,
+              settling,
+            })
+          ) {
             g.position.set(nx, g.position.y, nz)
           } else {
             g.position.x += tmp.x * Math.min(0.05, step)

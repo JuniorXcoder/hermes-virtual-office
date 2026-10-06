@@ -125,15 +125,24 @@ export function onStairArea(x: number, z: number): boolean {
  * Point test used by the mover. `pad` is the body radius, so callers get
  * "would my centre at (x,z) put my body inside something".
  *
- * `opts.allowSeat` ignores chair/sofa footprints: a SEATED IDLE SPOT is by
- * definition ON a seat, so validating those with seats solid discarded every
- * sit-down spot.
+ * Three exemptions, each for a specific real situation:
+ *
+ *   - `allowSeat` ignores chair/sofa footprints: a SEATED IDLE SPOT is by
+ *     definition ON a seat, so validating those with seats solid discarded every
+ *     sit-down spot.
+ *   - `onStair` lets a body walking the stair pass the ramp it is standing on.
+ *   - `settling` ignores ALL furniture (never walls). This is the final approach
+ *     to a seat: a chair at a desk is tucked UNDER the desk, and a meeting chair
+ *     sits close enough to the table that the table's own footprint covers it. So
+ *     "is the seat reachable" cannot be asked with furniture solid — the seat is
+ *     inside the furniture by construction. Without this, meeting participants
+ *     could never reach their chairs.
  */
 export function blocked(
   x: number,
   z: number,
   pad = BODY_R,
-  opts: { allowSeat?: boolean; level?: Level; onStair?: boolean } = {},
+  opts: { allowSeat?: boolean; level?: Level; onStair?: boolean; settling?: boolean } = {},
 ): boolean {
   const level: Level = opts.level ?? 0
   const b = LEVEL_BOUNDS[level]
@@ -160,6 +169,8 @@ export function blocked(
   for (const w of wallsByLevel[level]) {
     if (inside(w, x, z, pad) && !inOpening(x, z, pad, level)) return true
   }
+  // Settling onto a seat: furniture is what you are stepping onto, not an obstacle.
+  if (opts.settling) return false
   for (const p of propsByLevel[level]) {
     if (opts.allowSeat && p.kind === 'seat') continue
     if (inside(p, x, z, pad)) return true

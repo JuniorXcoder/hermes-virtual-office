@@ -490,12 +490,27 @@ console.log('geometry')
 // `floor-lamp`, one inside `lng-planter` — so only one agent could ever tend the
 // planter and the "by the water cooler" spot never existed. The filter is silent, so
 // the data is asserted here instead.
+//
+// A SEATED spot is allowed to sit inside furniture: a desk chair is tucked under its
+// desk and a meeting chair is covered by its table. That is what a seat IS, so the
+// test uses the same `settling` exemption the mover uses on its final approach.
 {
-  const dead = IDLE_SPOTS.filter((p) => blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
+  const problems: string[] = []
+  const dead = IDLE_SPOTS.filter((p) =>
+    blocked(p.x, p.z, BODY_R, { allowSeat: p.seated, settling: p.seated, level: p.level }),
+  )
+  for (const p of dead) {
+    problems.push(`(${p.x.toFixed(1)},${p.z.toFixed(1)}) L${p.level} ${p.act} is inside furniture`)
+  }
+  // A standing spot must additionally be reachable on foot from the lobby.
+  for (const p of IDLE_SPOTS.filter((s) => !s.seated)) {
+    const legs = routeBetween({ x: DOOR.x, z: DOOR.z - 1.5, level: 0 }, { x: p.x, z: p.z, level: p.level })
+    if (!legs.length) problems.push(`(${p.x.toFixed(1)},${p.z.toFixed(1)}) L${p.level} ${p.act} has no route`)
+  }
   check(
     'every idle spot is reachable',
-    dead.length === 0,
-    dead.map((p) => `(${p.x},${p.z}) ${p.act}`).join(' | '),
+    problems.length === 0,
+    problems.join(' | '),
   )
 }
 
@@ -1052,6 +1067,112 @@ console.log('geometry')
 
   check('the four courtyard zones are coherent: gym north, planting between, daybeds west, seats south, BBQ east',
     problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TWO WAYS A BODY COULD FAIL TO APPEAR OR MOVE.
+//
+// Both are source-level assertions because the behaviour lives in the render loop,
+// which the self-test cannot run. They guard the exact lines that were wrong.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const problems: string[] = []
+  const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+
+  // (1) AN AGENT WITH NO DB ROW STILL GETS A BODY.
+  // Rows are only written by the scene, so a freshly spawned agent had none and
+  // therefore never appeared — you spawned `jun` as CEO and the floor stayed empty.
+  if (!/const missing: AvatarState\[\] = agents/.test(scene)) {
+    problems.push('syncAvatars does not synthesise rows for roster names missing from the DB')
+  }
+  if (!/missing\.length \? \[\.\.\.rows, \.\.\.missing\] : rows/.test(scene)) {
+    problems.push('the synthesised rows are not merged into the reconcile list')
+  }
+  // and the division fallback must not seat an unknown agent with the developers
+  if (/division: a\.division \?\? 'tech'/.test(scene)) {
+    problems.push("an unknown agent's division falls back to 'tech' — the CEO would sit with the devs")
+  }
+
+  // (2) WANDER MUST NOT RE-ROLL THE DESTINATION EVERY FRAME.
+  // retarget() runs each frame; picking a fresh spot there advanced wanderIndex 60x
+  // a second, so the path was recomputed before the body could arrive and it
+  // vibrated in place — the reported "nge glitch".
+  if (!/if \(a\.target && a\.path\.length\) return/.test(scene)) {
+    problems.push('retarget() can re-roll an in-progress wander destination — the body will judder')
+  }
+
+  // (3) THE SEAT APPROACH MUST IGNORE FURNITURE, or a meeting chair (covered by its
+  // table's footprint) and a desk chair (tucked under the desk) are unreachable.
+  if (!/settling = goingToSeat && dist < 1\.3/.test(scene)) {
+    problems.push('the mover has no settling exemption for the final approach to a seat')
+  }
+  const nav = readFileSync(new URL('../src/lib/office/nav.ts', import.meta.url), 'utf8')
+  if (!/if \(opts\.settling\) return false/.test(nav)) {
+    problems.push('blocked() ignores the settling flag')
+  }
+  // but settling must never let a body through a WALL
+  const settlingAt = nav.indexOf('if (opts.settling) return false')
+  const wallLoopAt = nav.indexOf('for (const w of wallsByLevel')
+  if (settlingAt < 0 || wallLoopAt < 0 || settlingAt < wallLoopAt) {
+    problems.push('settling is checked BEFORE the wall loop — a body could walk through a wall')
+  }
+
+  check('a spawned agent always gets a body, and a walking body keeps its destination',
+    problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POIN 3: EVERY PIECE OF FURNITURE IS SOMEWHERE AN IDLE BODY CAN GO.
+//
+// The user asked that the existing furniture become idle spots so idle agents and
+// not-yet-agents circulate and enjoy it. A list of coordinates cannot be trusted to
+// keep up with the furniture, so this is a DIFF: every enjoyable seat footprint must
+// have a spot standing on it.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const problems: string[] = []
+  // Work furniture (the dev desks) and the anchored receptionist's chair are claimed
+  // by other branches; meeting chairs are claimed by a live meeting first.
+  const enjoyable = FOOTPRINTS.filter(
+    (f) =>
+      f.kind === 'seat' &&
+      !f.id.startsWith('chair-') &&
+      !f.id.startsWith('mchair-') &&
+      f.id !== 'reception-chair',
+  )
+  for (const f of enjoyable) {
+    const near = IDLE_SPOTS.some(
+      (s) => s.level === f.level && Math.hypot(s.x - f.x, s.z - f.z) < Math.max(f.hw, f.hd) + 0.6,
+    )
+    if (!near) problems.push(`${f.id} (L${f.level}) has no idle spot — nobody will ever use it`)
+  }
+  // Both floors must offer somewhere to go, or every idle body crowds the ground floor.
+  for (const lv of [0, 1] as const) {
+    if (IDLE_SPOTS.filter((s) => s.level === lv).length < 5) {
+      problems.push(`level ${lv} has fewer than 5 idle spots`)
+    }
+  }
+  check('every enjoyable piece of furniture is an idle spot', problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A DESTINATION ON ANOTHER FLOOR MUST BE ROUTED THROUGH THE STAIR.
+//
+// The route was computed with `level: a.level` for the TARGET as well as the body, so
+// an idle body sent to an upstairs spot walked to those coordinates on the ground
+// floor and never climbed: all twelve level-1 spots were unreachable, and the body
+// then juddered against whatever it hit. The target floor is state now.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+  const problems: string[] = []
+  if (!/targetLevel: Level/.test(scene)) problems.push('SceneAgent has no targetLevel field')
+  if (!/a\.targetLevel = spot\.level/.test(scene)) problems.push('an idle spot does not record its floor')
+  if (!/a\.targetLevel = 1\b/.test(scene)) problems.push('a meeting seat does not record floor 1')
+  if (!/level: a\.targetLevel \}/.test(scene)) {
+    problems.push('the route still uses the body floor for the destination — upstairs spots are unreachable')
+  }
+  check('a destination on another floor routes through the stair', problems.length === 0, problems.join(' | '))
 }
 
 // The receptionist is ANCHORED: a body that never moves (poin 2).
