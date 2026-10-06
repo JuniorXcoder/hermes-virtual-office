@@ -6,9 +6,9 @@ import { useOffice } from '@/lib/store'
 import { columnOf } from '@/lib/office/board'
 import { NIGHT_PALETTE, paletteFor } from '@/lib/office/layout'
 import {
-  BARS, BBQ, DESKS, DOOR, FOOTPRINTS, GARDEN, HALF_D, HALF_W,
+  BARS, BBQ, DESKS, DOOR, FOOTPRINTS, GARDEN_BEDS, GYM, HALF_D, HALF_W,
   IDLE_SPOTS, KANBAN_BOARD, LEVEL_H, LOUNGE, MEETING_ROOMS, MEETING_ROOM_IDS,
-  MEETING_TABLES, PANTRY, PANTRY_STOOLS, PANTRY_STOOL_GAP, POOL, POOL_BENCHES,
+  MEETING_TABLES, PANTRY, PANTRY_STOOLS, PANTRY_STOOL_GAP, PLANTING, POOL, POOL_BENCHES,
   POOL_LOUNGERS, RECEPTION, ROLE_COLORS, STAIRS, WALL_T,
   deskSeatWorld, meetingRoomFor, roomCentre, visitorSpot,
 } from '@/lib/office/layout'
@@ -245,15 +245,78 @@ function buildStatic(): HTMLCanvasElement {
     const c = roomCentre('ceo')
     push(c.x, c.z, () => solid(ctx, c.x, c.z - 1.5, 2.2, 1.2, 0.74, C.woodTop, C.wood))
   }
-  // poolside benches + loungers, BBQ, garden
+  // ---- courtyard zones: gym mat + weights, planting band, daybeds, benches,
+  // BBQ, decorative beds. Read from the same constants the 3D view uses.
+  {
+    // the gym mat, as a flat quad you can see the equipment standing on
+    const gw = GYM.x2 - GYM.x1
+    const gd = GYM.z2 - GYM.z1
+    push((GYM.x1 + GYM.x2) / 2, (GYM.z1 + GYM.z2) / 2, () =>
+      flat(ctx, (GYM.x1 + GYM.x2) / 2, (GYM.z1 + GYM.z2) / 2, gw, gd, '#3d6b4b'),
+    )
+    // barbell rack: two uprights + a bar with plates
+    push(GYM.rack.x, GYM.rack.z, () => {
+      for (const ux of [-0.55, 0.55]) solid(ctx, GYM.rack.x + ux, GYM.rack.z, 0.16, 0.16, 1.35, '#2f3438', '#22262a')
+      const [bx, by] = at(GYM.rack.x, GYM.rack.z, 1.32)
+      ctx.fillStyle = '#b9c0c6'
+      ctx.fillRect(bx - 26, by - 3, 52, 6)
+      for (const off of [-20, -15, -10, 10, 15, 20]) {
+        const [px2] = at(GYM.rack.x + off / 26, GYM.rack.z, 1.32)
+        ctx.fillStyle = '#24282c'
+        ctx.beginPath()
+        ctx.arc(px2, by, 5, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    })
+    // dumbbell rack
+    push(GYM.dumbbells.x, GYM.dumbbells.z, () => {
+      for (const ty of [0.45, 0.75]) solid(ctx, GYM.dumbbells.x, GYM.dumbbells.z, 1.9, 0.3, ty, '#2f3438', '#22262a')
+      for (let i = 0; i < 6; i++) {
+        const dx = -0.72 + i * 0.29
+        const dz = i < 3 ? 0.16 : -0.16
+        const [cx2, cy2] = at(GYM.dumbbells.x + dx, GYM.dumbbells.z + dz, i < 3 ? 0.56 : 0.86)
+        ctx.fillStyle = '#24282c'
+        ctx.beginPath()
+        ctx.arc(cx2, cy2, 4, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    })
+    // pull-up rig: two posts + the bar
+    push(GYM.rig.x, GYM.rig.z, () => {
+      for (const px2 of [-GYM.rig.span / 2, GYM.rig.span / 2]) {
+        solid(ctx, GYM.rig.x + px2, GYM.rig.z, 0.16, 0.16, 2.45, '#2f3438', '#22262a')
+      }
+      const [rx1, ry1] = at(GYM.rig.x - GYM.rig.span / 2, GYM.rig.z, 2.39)
+      const [rx2] = at(GYM.rig.x + GYM.rig.span / 2, GYM.rig.z, 2.39)
+      ctx.strokeStyle = '#b9c0c6'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(rx1, ry1)
+      ctx.lineTo(rx2, ry1)
+      ctx.stroke()
+    })
+    // planting band between gym and pool
+    push((PLANTING.x1 + PLANTING.x2) / 2, (PLANTING.z1 + PLANTING.z2) / 2, () =>
+      flat(
+        ctx,
+        (PLANTING.x1 + PLANTING.x2) / 2,
+        (PLANTING.z1 + PLANTING.z2) / 2,
+        PLANTING.x2 - PLANTING.x1,
+        PLANTING.z2 - PLANTING.z1,
+        '#5b7f4a',
+      ),
+    )
+  }
   for (const b of POOL_BENCHES) {
-    push(b.x, b.z, () => solid(ctx, b.x, b.z, 1.6, 0.52, 0.5, C.woodTop, C.wood))
+    push(b.x, b.z, () => solid(ctx, b.x, b.z, 1.7, 0.5, 0.46, C.woodTop, C.wood))
   }
   for (const l of POOL_LOUNGERS) {
-    push(l.x, l.z, () => solid(ctx, l.x, l.z, 0.62, 1.7, 0.42, C.woodTop, C.wood))
+    push(l.x, l.z, () => solid(ctx, l.x, l.z, 1.0, 2.1, 0.42, C.woodTop, C.wood))
   }
-  push(BBQ.x, BBQ.z, () => solid(ctx, BBQ.x, BBQ.z, 1.8, 1.1, 0.95, '#4a5054', '#2f3336'))
-  push(GARDEN.x, GARDEN.z, () => solid(ctx, GARDEN.x, GARDEN.z, 2.4, 1.8, 0.5, '#8a6a45', '#6a4f34'))
+  push(BBQ.x, BBQ.z, () => solid(ctx, BBQ.x, BBQ.z, 2.0, 1.15, 0.95, '#4a5054', '#2f3336'))
+  for (const bed of GARDEN_BEDS) {
+    push(bed.x, bed.z, () => solid(ctx, bed.x, bed.z, bed.w, bed.d, 0.5, '#8a6a45', '#6a4f34'))
+  }
   // reception counter + chair
   push(RECEPTION.x, RECEPTION.z, () => solid(ctx, RECEPTION.x, RECEPTION.z, 3.6, 0.9, 1.05, C.woodTop, C.wood))
   push(RECEPTION.x, RECEPTION.z - 1.15, () => solid(ctx, RECEPTION.x, RECEPTION.z - 1.15, 0.6, 0.6, 0.5, C.metal, '#3f4a52'))

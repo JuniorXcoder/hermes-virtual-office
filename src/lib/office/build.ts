@@ -32,7 +32,10 @@ import {
   DOOR,
   FLOOR,
   FOOTPRINTS,
-  GARDEN,
+  GARDEN_BEDS,
+  GYM,
+  PLANTING,
+  SUNBEDS,
   HALF_D,
   HALF_W,
   KANBAN_BOARD,
@@ -454,116 +457,316 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   /* ------------------------------------------------- courtyard furniture -- */
-  // benches facing the water
-  for (const b of POOL_BENCHES) {
-    const g = new THREE.Group()
-    g.position.set(b.x, 0, b.z)
-    g.rotation.y = b.facing
-    const seat = new THREE.Mesh(rbox(1.6, 0.09, 0.52, 0.03), woodMat)
-    seat.position.y = 0.5
-    seat.castShadow = true
-    g.add(seat)
-    for (const lx of [-0.65, 0.65]) {
-      const leg = box(0.1, 0.46, 0.44, 0x8a8f95, { metal: 0.4 })
-      leg.position.set(lx, 0.23, 0)
-      g.add(leg)
-    }
-    group.add(g)
-  }
-  // Loungers on the pool deck, HEAD AWAY FROM THE POOL and lying surface looking
-  // ACROSS the water.
-  //
-  // The mesh builds its head rest at local -z, so with rotation 0 the head points
-  // north (-z). The two loungers sit EAST of the pool and used to be rotated
-  // -PI/2, which swung the head rest to point EAST — away from the pool — while
-  // the flat bed faced the water. That is the "bed faces one way, head faces the
-  // other" bug: the lounger was rotated as a whole, so head and bed could not
-  // disagree, but the head ended up on the far side from the pool.
-  //
-  // They now face WEST (-PI/2 turns local -z to -x), so the head is on the east
-  // side and the body lies looking west across the pool — the way a sun lounger
-  // is actually used.
-  for (const l of POOL_LOUNGERS) {
-    const g = new THREE.Group()
-    g.position.set(l.x, 0, l.z)
-    g.rotation.y = l.facing
-    const bed = new THREE.Mesh(rbox(0.62, 0.1, 1.7, 0.04), woodMat)
-    bed.position.y = 0.42
-    g.add(bed)
-    const back = new THREE.Mesh(rbox(0.62, 0.08, 0.6, 0.03), woodMat)
-    back.position.set(0, 0.62, -0.75)
-    // TILT SIGN. The back rest sits at the -z end of the bed, so its far edge
-    // (further -z) must be the HIGH one or the head rest slopes down into the deck
-    // and the bed reads as being on the wrong side of it. Rotating about X by +0.5
-    // lifts the -z edge; -0.5 dropped it, which is the reported "the bed has its
-    // back to the chair" bug.
-    back.rotation.x = 0.5
-    g.add(back)
-    for (const [lx, lz] of [
-      [-0.25, -0.7],
-      [0.25, -0.7],
-      [-0.25, 0.7],
-      [0.25, 0.7],
+  // FOUR ZONES, read from layout.ts so the meshes, the footprints and the idle
+  // spots cannot disagree. The old furniture (three green lawns, six benches, two
+  // loungers, a raised planter) is gone — it was replaced wholesale.
+
+  /* ---- ZONE 1 · NORTH · the GYM ------------------------------------------ */
+  {
+    // The mat: a green rubber surface you STAND on, so it is a rug, not a blocker.
+    const w = GYM.x2 - GYM.x1
+    const d = GYM.z2 - GYM.z1
+    const mat = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      stdMat(0x3d6b4b, { rough: 0.98 }),
+    )
+    mat.rotation.x = -Math.PI / 2
+    mat.position.set((GYM.x1 + GYM.x2) / 2, 0.035, (GYM.z1 + GYM.z2) / 2)
+    mat.receiveShadow = true
+    group.add(mat)
+    // a painted border, so the mat reads as a mat and not as lawn
+    for (const [bx, bz, bw, bd] of [
+      [GYM.x1, (GYM.z1 + GYM.z2) / 2, 0.12, d],
+      [GYM.x2, (GYM.z1 + GYM.z2) / 2, 0.12, d],
+      [(GYM.x1 + GYM.x2) / 2, GYM.z1, w, 0.12],
+      [(GYM.x1 + GYM.x2) / 2, GYM.z2, w, 0.12],
     ] as const) {
-      const leg = cyl(0.03, 0.03, 0.4, 0x8a8f95, 8, 0.4)
-      leg.position.set(lx, 0.2, lz)
-      g.add(leg)
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(bw, bd), stdMat(0xd8d2c4, { rough: 0.9 }))
+      edge.rotation.x = -Math.PI / 2
+      edge.position.set(bx, 0.04, bz)
+      group.add(edge)
     }
-    group.add(g)
+
+    // --- BARBELL RACK: a squat stand with a loaded bar on it -----------------
+    {
+      const g = new THREE.Group()
+      g.position.set(GYM.rack.x, 0, GYM.rack.z)
+      // two uprights
+      for (const ux of [-0.55, 0.55]) {
+        const post = box(0.11, 1.35, 0.11, 0x2f3438, { metal: 0.7 })
+        post.position.set(ux, 0.675, 0)
+        post.castShadow = true
+        g.add(post)
+        // feet
+        const foot = box(0.14, 0.09, 0.9, 0x2f3438, { metal: 0.7 })
+        foot.position.set(ux, 0.045, 0)
+        g.add(foot)
+      }
+      // the bar, resting in the hooks
+      const bar = cyl(0.035, 0.035, 2.2, 0xb9c0c6, 12, 0.85)
+      bar.rotation.z = Math.PI / 2
+      bar.position.set(0, 1.32, 0)
+      g.add(bar)
+      // plates, biggest inboard
+      for (const side of [-1, 1]) {
+        for (const [off, r] of [
+          [0.78, 0.22],
+          [0.88, 0.19],
+          [0.97, 0.15],
+        ] as const) {
+          const plate = cyl(r, r, 0.07, 0x24282c, 18, 0.55)
+          plate.rotation.z = Math.PI / 2
+          plate.position.set(side * off, 1.32, 0)
+          g.add(plate)
+        }
+      }
+      // a bench under the bar
+      const pad = new THREE.Mesh(rbox(0.36, 0.12, 1.25, 0.03), stdMat(0x1f2427, { rough: 0.85 }))
+      pad.position.set(0, 0.46, 0.05)
+      g.add(pad)
+      for (const pz of [-0.42, 0.52]) {
+        const leg = box(0.3, 0.4, 0.1, 0x2f3438, { metal: 0.7 })
+        leg.position.set(0, 0.2, pz)
+        g.add(leg)
+      }
+      group.add(g)
+    }
+
+    // --- DUMBBELL RACK ------------------------------------------------------
+    {
+      const g = new THREE.Group()
+      g.position.set(GYM.dumbbells.x, 0, GYM.dumbbells.z)
+      // two-tier A-frame
+      for (const [ty, tz] of [
+        [0.42, 0.16],
+        [0.72, -0.16],
+      ] as const) {
+        const shelf = box(1.9, 0.06, 0.3, 0x2f3438, { metal: 0.7 })
+        shelf.position.set(0, ty, tz)
+        shelf.castShadow = true
+        g.add(shelf)
+      }
+      for (const sx of [-0.88, 0, 0.88]) {
+        for (const sgn of [-1, 1]) {
+          const leg = box(0.07, 0.78, 0.07, 0x2f3438, { metal: 0.7 })
+          leg.position.set(sx, 0.39, sgn * 0.14)
+          leg.rotation.x = sgn * 0.2
+          g.add(leg)
+        }
+      }
+      // the dumbbells themselves, graded
+      for (let i = 0; i < 6; i++) {
+        const x = -0.72 + i * 0.29
+        const tier = i < 3 ? 0.45 : 0.75
+        const z = i < 3 ? 0.16 : -0.16
+        const r = 0.1 + (i % 3) * 0.022
+        const handle = cyl(0.022, 0.022, 0.2, 0x9aa2a8, 8, 0.85)
+        handle.rotation.z = Math.PI / 2
+        handle.position.set(x, tier + 0.11, z)
+        g.add(handle)
+        for (const hx of [-0.09, 0.09]) {
+          const head = cyl(r, r, 0.09, 0x24282c, 14, 0.55)
+          head.rotation.z = Math.PI / 2
+          head.position.set(x + hx, tier + 0.11, z)
+          g.add(head)
+        }
+      }
+      group.add(g)
+    }
+
+    // --- PULL-UP RIG --------------------------------------------------------
+    {
+      const g = new THREE.Group()
+      g.position.set(GYM.rig.x, 0, GYM.rig.z)
+      const H = 2.45
+      for (const px of [-GYM.rig.span / 2, GYM.rig.span / 2]) {
+        const post = box(0.12, H, 0.12, 0x2f3438, { metal: 0.7 })
+        post.position.set(px, H / 2, 0)
+        post.castShadow = true
+        g.add(post)
+        const foot = box(0.18, 0.1, 1.0, 0x2f3438, { metal: 0.7 })
+        foot.position.set(px, 0.05, 0)
+        g.add(foot)
+      }
+      // the bar you hang from
+      const bar = cyl(0.032, 0.032, GYM.rig.span + 0.12, 0xb9c0c6, 12, 0.85)
+      bar.rotation.z = Math.PI / 2
+      bar.position.set(0, H - 0.06, 0)
+      g.add(bar)
+      // a lower cross-bar, so it reads as a rig and not a doorway
+      const low = cyl(0.026, 0.026, GYM.rig.span, 0x8f979d, 10, 0.8)
+      low.rotation.z = Math.PI / 2
+      low.position.set(0, H - 0.75, 0)
+      g.add(low)
+      // two hanging grips
+      for (const gx of [-0.5, 0.5]) {
+        const strap = box(0.05, 0.42, 0.05, 0x3a4045, { rough: 0.9 })
+        strap.position.set(gx, H - 0.27, 0)
+        g.add(strap)
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 8, 16), stdMat(0x9aa2a8, { metal: 0.8 }))
+        ring.position.set(gx, H - 0.52, 0)
+        g.add(ring)
+      }
+      group.add(g)
+    }
   }
-  // BBQ: a stone counter with a hooded grill
+
+  /* ---- ZONE 2 · PLANTING BAND (between gym and pool) --------------------- */
   {
     const g = new THREE.Group()
-    g.position.set(BBQ.x, 0, BBQ.z)
-    const base = new THREE.Mesh(rbox(1.8, 0.9, 1.1, 0.05), stoneMat)
-    base.position.y = 0.45
-    base.castShadow = true
-    g.add(base)
-    const top = box(1.9, 0.07, 1.2, 0x4a5054, { metal: 0.5, rough: 0.4 })
-    top.position.y = 0.93
-    g.add(top)
-    const grill = box(1.0, 0.16, 0.7, 0x2b2f33, { metal: 0.6 })
-    grill.position.set(-0.3, 1.04, 0)
-    g.add(grill)
-    const hood = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1.0, 16, 1, false, 0, Math.PI), stdMat(0x3a3f43, { metal: 0.6, rough: 0.35 }))
-    hood.rotation.z = Math.PI / 2
-    hood.position.set(0.45, 1.16, 0)
-    g.add(hood)
-    group.add(g)
-  }
-  // garden beds
-  {
-    const g = new THREE.Group()
-    g.position.set(GARDEN.x, 0, GARDEN.z)
-    const bed = new THREE.Mesh(rbox(2.4, 0.5, 1.8, 0.06), woodMat)
-    bed.position.y = 0.25
-    g.add(bed)
-    const soil = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.06, 1.6), stdMat(0x3b2f23))
-    soil.position.y = 0.52
+    const cx = (PLANTING.x1 + PLANTING.x2) / 2
+    const cz = (PLANTING.z1 + PLANTING.z2) / 2
+    const w = PLANTING.x2 - PLANTING.x1
+    const d = PLANTING.z2 - PLANTING.z1
+    // a low planter kerb along the band
+    const kerb = new THREE.Mesh(rbox(w, 0.34, d, 0.05), stoneMat)
+    kerb.position.set(cx, 0.17, cz)
+    kerb.castShadow = true
+    kerb.receiveShadow = true
+    g.add(kerb)
+    const soil = new THREE.Mesh(new THREE.BoxGeometry(w - 0.16, 0.06, d - 0.16), stdMat(0x3b2f23))
+    soil.position.set(cx, 0.36, cz)
     g.add(soil)
-    const rand = rng(41)
-    for (let i = 0; i < 14; i++) {
+    // shrubs + a couple of small trees, seeded so the layout is stable
+    const rand = rng(77)
+    for (let i = 0; i < PLANTING.count; i++) {
+      const t = (i + 0.5) / PLANTING.count
+      const px = PLANTING.x1 + t * w
+      const pz = cz + (rand() - 0.5) * (d - 0.5)
+      const big = i % 3 === 0
+      const h = big ? 0.95 : 0.5
       const bush = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.18 + rand() * 0.14, 0),
-        stdMat(rand() > 0.5 ? 0x4f8b55 : 0x6da05c, { rough: 0.9 }),
+        new THREE.IcosahedronGeometry(big ? 0.42 : 0.28, 0),
+        stdMat(big ? 0x4f8b55 : 0x6da05c, { rough: 0.9 }),
       )
-      bush.position.set((rand() - 0.5) * 1.9, 0.66 + rand() * 0.1, (rand() - 0.5) * 1.3)
+      bush.position.set(px, 0.4 + h / 2, pz)
+      bush.scale.set(1, big ? 1.15 : 0.85, 1)
+      bush.castShadow = true
       g.add(bush)
     }
     group.add(g)
   }
-  // grass patches beside the pool, so the courtyard is not all paving
-  for (const [gx, gz, gw, gd] of [
-    [-9.5, 8.5, 6, 4],
-    [9.5, 8.5, 6, 4],
-    [-9.5, 0.5, 4, 4],
-    [9.5, 0.5, 4, 4],
-  ] as const) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(gw, gd), grassMat)
-    m.rotation.x = -Math.PI / 2
-    m.position.set(gx, 0.03, gz)
-    m.receiveShadow = true
-    group.add(m)
+
+  /* ---- ZONE 3 · WEST · TIMBER DAYBEDS facing the water ------------------- */
+  for (const b of SUNBEDS) {
+    const g = new THREE.Group()
+    g.position.set(b.x, 0, b.z)
+    g.rotation.y = b.facing
+    // a proper daybed: platform, mattress, head rest, four legs
+    const frame = new THREE.Mesh(rbox(1.0, 0.12, 2.1, 0.04), woodMat)
+    frame.position.y = 0.36
+    frame.castShadow = true
+    frame.receiveShadow = true
+    g.add(frame)
+    const mattress = new THREE.Mesh(rbox(0.9, 0.14, 1.95, 0.05), stdMat(0xe8e2d2, { rough: 0.95 }))
+    mattress.position.y = 0.49
+    g.add(mattress)
+    // head rest at the -z end, tilted up
+    const head = new THREE.Mesh(rbox(0.9, 0.1, 0.62, 0.04), stdMat(0xe8e2d2, { rough: 0.95 }))
+    head.position.set(0, 0.66, -0.72)
+    head.rotation.x = 0.5
+    head.castShadow = true
+    g.add(head)
+    for (const [lx, lz] of [
+      [-0.4, -0.92],
+      [0.4, -0.92],
+      [-0.4, 0.92],
+      [0.4, 0.92],
+    ] as const) {
+      const leg = box(0.09, 0.36, 0.09, 0x8a6a44, { rough: 0.8 })
+      leg.position.set(lx, 0.18, lz)
+      g.add(leg)
+    }
+    group.add(g)
+  }
+
+  /* ---- ZONE 4 · SOUTH · PLAIN WOODEN SEATS facing the water -------------- */
+  for (const b of POOL_BENCHES) {
+    const g = new THREE.Group()
+    g.position.set(b.x, 0, b.z)
+    g.rotation.y = b.facing
+    // seat slab
+    const seat = new THREE.Mesh(rbox(1.7, 0.09, 0.5, 0.03), woodMat)
+    seat.position.y = 0.46
+    seat.castShadow = true
+    g.add(seat)
+    // slatted back, so it is clearly a bench and not a table
+    for (const [by, tilt] of [
+      [0.72, 0.22],
+      [0.9, 0.28],
+    ] as const) {
+      const slat = new THREE.Mesh(rbox(1.7, 0.1, 0.05, 0.02), woodMat)
+      slat.position.set(0, by, 0.26)
+      slat.rotation.x = -tilt
+      g.add(slat)
+    }
+    for (const lx of [-0.7, 0.7]) {
+      const leg = box(0.09, 0.42, 0.42, 0x8a6a44, { rough: 0.8 })
+      leg.position.set(lx, 0.21, 0.02)
+      g.add(leg)
+    }
+    group.add(g)
+  }
+
+  /* ---- ZONE 5 · EAST · the BBQ ------------------------------------------- */
+  {
+    const g = new THREE.Group()
+    g.position.set(BBQ.x, 0, BBQ.z)
+    // stone counter
+    const base = new THREE.Mesh(rbox(2.0, 0.9, 1.15, 0.05), stoneMat)
+    base.position.y = 0.45
+    base.castShadow = true
+    g.add(base)
+    const top = box(2.1, 0.07, 1.25, 0x4a5054, { metal: 0.5, rough: 0.4 })
+    top.position.y = 0.93
+    g.add(top)
+    // the grill, set into the counter
+    const grill = box(1.05, 0.18, 0.72, 0x2b2f33, { metal: 0.6 })
+    grill.position.set(-0.35, 1.03, 0)
+    g.add(grill)
+    // hood
+    const hood = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35, 0.35, 1.05, 16, 1, false, 0, Math.PI),
+      stdMat(0x3a3f43, { metal: 0.6, rough: 0.35 }),
+    )
+    hood.rotation.z = Math.PI / 2
+    hood.position.set(-0.35, 1.12, 0)
+    g.add(hood)
+    // a small prep shelf on the other end
+    const shelf = box(0.62, 0.05, 0.8, 0xb9b2a2, { rough: 0.8 })
+    shelf.position.set(0.62, 0.98, 0)
+    g.add(shelf)
+    // side burner knob strip, so it reads as equipment
+    for (let i = 0; i < 3; i++) {
+      const knob = cyl(0.045, 0.045, 0.05, 0x24282c, 10, 0.6)
+      knob.rotation.x = Math.PI / 2
+      knob.position.set(0.35 + i * 0.22, 0.72, 0.6)
+      g.add(knob)
+    }
+    group.add(g)
+  }
+
+  /* ---- decorative planting beds, tucked along the courtyard edges -------- */
+  for (const bed of GARDEN_BEDS) {
+    const g = new THREE.Group()
+    g.position.set(bed.x, 0, bed.z)
+    const box0 = new THREE.Mesh(rbox(bed.w, 0.42, bed.d, 0.05), woodMat)
+    box0.position.y = 0.21
+    box0.castShadow = true
+    g.add(box0)
+    const soil = new THREE.Mesh(new THREE.BoxGeometry(bed.w - 0.14, 0.06, bed.d - 0.14), stdMat(0x3b2f23))
+    soil.position.y = 0.44
+    g.add(soil)
+    const rand = rng(41)
+    for (let i = 0; i < 12; i++) {
+      const bush = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.16 + rand() * 0.12, 0),
+        stdMat(rand() > 0.5 ? 0x4f8b55 : 0x6da05c, { rough: 0.9 }),
+      )
+      bush.position.set((rand() - 0.5) * (bed.w - 0.5), 0.56 + rand() * 0.08, (rand() - 0.5) * (bed.d - 0.5))
+      g.add(bush)
+    }
+    group.add(g)
   }
 
   /* --------------------------------------------------------------- walls -- */

@@ -450,25 +450,83 @@ export function stairHeightAt(x: number, z: number): number | null {
 export const COURTYARD = BARS.courtyard
 export const WALKWAY_W = 2.5
 export const POOL = { x: 0, z: 4, w: 12, d: 7, waterY: 0.05, deck: 1.2 }
-export const BBQ = { x: -8.5, z: 11.5 }
-export const GARDEN = { x: 8.5, z: 12.5 }
-/** Benches along the pool, facing the water. */
+
+/* ------------------------------------------------------- courtyard zones -- */
+
+/**
+ * The courtyard is organised as FOUR named zones around the pool.
+ *
+ * These are the single source of truth: the meshes, the collision footprints and
+ * the idle spots all read them, so a bench can never again end up drawn in one
+ * place and walked to in another.
+ *
+ *   NORTH  (z -9.3 .. -2.3)  the GYM      — big green mat, weights, pull-up rig
+ *   EAST   (x  6.8 .. 10.1)  the BBQ      — grill counter, north end of the strip
+ *   WEST   (x -12.0 .. -7.4) the SUNBEDS  — timber daybeds facing the water
+ *   SOUTH  (z  8.2 .. 10.4)  the LOUNGE   — plain wooden seats facing the water
+ *   plus a PLANTING band between the gym and the pool (z -2.6 .. -0.7).
+ *
+ * All of it is inside the courtyard bounds (x -14..14, z -9..16), clear of the
+ * pool (x -6..6, z 0.5..7.5) and clear of the stair foot (z -3.2).
+ */
+
+/** The gym: a green rubber mat with weights under it and a pull-up rig on it. */
+export const GYM = {
+  /** Mat rectangle — 13 x 7 m of open courtyard north of the pool. */
+  x1: -6.5, x2: 6.5, z1: -9.0, z2: -2.4,
+  /** The barbell rack, on the mat's west half. */
+  rack: { x: -4.2, z: -5.6 },
+  /** Dumbbell rack, on the mat's east half. */
+  dumbbells: { x: 4.2, z: -5.6 },
+  /** Pull-up rig: two posts and a bar, across the mat's north edge. */
+  rig: { x: 0, z: -7.6, span: 3.0 },
+}
+
+/**
+ * The planting band between the gym and the pool's north edge.
+ *
+ * `z1` must be >= the gym's `z2`, or the band overlaps the mat. It was -2.6 while
+ * the gym ended at -2.4, so the two interpenetrated by 0.2 m.
+ */
+export const PLANTING = { x1: -6.0, x2: 6.2, z1: -2.4, z2: -0.8, count: 9 }
+
+/** Timber daybeds on the pool's west side, facing the water (east). */
+export const SUNBEDS: { x: number; z: number; facing: number }[] = [
+  // facing +PI/2 turns the lounger's head (local -z) to point WEST (-x), so the
+  // body lies looking EAST across the pool. The daybeds are west of the pool, so
+  // this is "head away from the water, looking at it".
+  { x: -9.6, z: 1.4, facing: Math.PI / 2 },
+  { x: -9.6, z: 4.0, facing: Math.PI / 2 },
+  { x: -9.6, z: 6.6, facing: Math.PI / 2 },
+]
+
+/** Plain wooden seats on the pool's south side, facing the water (north). */
 export const POOL_BENCHES: { x: number; z: number; facing: number }[] = [
-  { x: -7.6, z: 1.5, facing: Math.PI / 2 },
-  { x: -7.6, z: 4.0, facing: Math.PI / 2 },
-  { x: -7.6, z: 6.5, facing: Math.PI / 2 },
-  { x: -2.0, z: 9.0, facing: 0 },
-  { x: 2.0, z: 9.0, facing: 0 },
-  { x: 6.0, z: 9.0, facing: 0 },
+  // Rotation 0 already faces NORTH (-z), because the bench mesh puts its back
+  // slats at local +z. These sit SOUTH of the pool, so rotation 0 looks across the
+  // water. `Math.PI` swung them to face away from it — the self-test caught it.
+  { x: -3.6, z: 9.3, facing: 0 },
+  { x: 0.0, z: 9.3, facing: 0 },
+  { x: 3.6, z: 9.3, facing: 0 },
 ]
-export const POOL_LOUNGERS: { x: number; z: number; facing: number }[] = [
-  // East of the pool, head on the far (east) side, body lying towards the water.
-  // -PI/2 turns the head rest (local -z) to point EAST, so the lounger looks WEST
-  // across the pool. `facing` is the yaw of the GROUP, and the mesh's head rest is
-  // at local -z — see the note in build.ts.
-  { x: 8.2, z: 1.5, facing: -Math.PI / 2 },
-  { x: 8.2, z: 4.0, facing: -Math.PI / 2 },
+
+/** The BBQ: a grill counter at the north end of the east strip. */
+export const BBQ = { x: 8.4, z: -6.4 }
+
+/**
+ * Decorative planting, replacing the old free-standing planter box.
+ *
+ * The old GARDEN was a 2.4 x 1.8 m raised bed that read as a stray object. These
+ * are low beds tucked along the courtyard edges, so the greenery frames the space
+ * instead of standing in it.
+ */
+export const GARDEN_BEDS: { x: number; z: number; w: number; d: number }[] = [
+  { x: 8.4, z: 12.6, w: 3.0, d: 1.6 },
+  { x: -8.4, z: 12.6, w: 3.0, d: 1.6 },
 ]
+
+/** The poolside daybeds, kept as a named export for the model and the self-test. */
+export const POOL_LOUNGERS = SUNBEDS
 
 /* ------------------------------------------------------------------ desks -- */
 
@@ -781,10 +839,31 @@ export const FOOTPRINTS: Footprint[] = [
   fp('pool-basin', POOL.x, POOL.z, POOL.w / 2, POOL.d / 2, 0.62, 'prop'),
 
   /* ---------------------------------------------------------- courtyard --- */
-  fp('bbq', BBQ.x, BBQ.z, 0.9, 0.6, 0.95),
-  fp('garden-bed', GARDEN.x, GARDEN.z, 1.2, 0.9, 0.5),
+  // BBQ counter, north end of the east strip.
+  fp('bbq', BBQ.x, BBQ.z, 0.95, 0.62, 0.95),
+  // Decorative planting beds, low enough to be walked around, not through.
+  ...GARDEN_BEDS.map((g, i) => fp(`garden-bed-${i}`, g.x, g.z, g.w / 2, g.d / 2, 0.5)),
+  // The planting band along the pool's north edge.
+  fp(
+    'planting-band',
+    (PLANTING.x1 + PLANTING.x2) / 2,
+    (PLANTING.z1 + PLANTING.z2) / 2,
+    (PLANTING.x2 - PLANTING.x1) / 2,
+    (PLANTING.z2 - PLANTING.z1) / 2,
+    // 0.62, not 0.45: `blockingFootprints()` keeps only h > 0.5, so at 0.45 the
+    // band was invisible to collision and avatars walked through the shrubs.
+    0.62,
+  ),
+  // The gym: the mat is a RUG (not a blocker — you stand on it), but the equipment
+  // on it is solid.
+  fp('gym-rack', GYM.rack.x, GYM.rack.z, 0.7, 0.9, 1.25),
+  fp('gym-dumbbells', GYM.dumbbells.x, GYM.dumbbells.z, 1.1, 0.45, 0.95),
+  // the pull-up rig: two posts, so a body can walk between them
+  fp('gym-rig-w', GYM.rig.x - GYM.rig.span / 2, GYM.rig.z, 0.12, 0.12, 2.45),
+  fp('gym-rig-e', GYM.rig.x + GYM.rig.span / 2, GYM.rig.z, 0.12, 0.12, 2.45),
+  // Benches and daybeds.
   ...POOL_BENCHES.map((b, i) => fp(`bench-${i}`, b.x, b.z, 0.55, 0.22, 0.5, 'seat')),
-  ...POOL_LOUNGERS.map((l, i) => fp(`lounger-${i}`, l.x, l.z, 0.22, 0.55, 0.5, 'seat')),
+  ...POOL_LOUNGERS.map((l, i) => fp(`lounger-${i}`, l.x, l.z, 0.45, 0.85, 0.5, 'seat')),
 
   /* --------------------------------------------------------- lobby/rooms -- */
   fp('reception', RECEPTION.x, RECEPTION.z, 1.8, 0.45, 1.05, 'desk'),
@@ -824,9 +903,13 @@ export type IdleSpot = {
 export const IDLE_SPOTS: IdleSpot[] = [
   ...POOL_BENCHES.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
   ...POOL_LOUNGERS.map((l) => ({ x: l.x, z: l.z, act: 'pool' as const, seated: true, face: l.facing, level: 0 as const })),
-  { x: BBQ.x + 1.6, z: BBQ.z, act: 'idle', face: -Math.PI / 2, level: 0 },
-  { x: GARDEN.x, z: GARDEN.z + 1.6, act: 'garden', face: Math.PI, level: 0 },
-  { x: GARDEN.x - 1.8, z: GARDEN.z + 1.2, act: 'garden', face: Math.PI, level: 0 },
+  { x: BBQ.x, z: BBQ.z + 1.3, act: 'idle', face: Math.PI, level: 0 },
+  // The gym: stand on the mat, and one spot at the pull-up rig.
+  { x: GYM.rack.x + 1.5, z: GYM.rack.z, act: 'idle', face: -Math.PI / 2, level: 0 },
+  { x: GYM.rig.x + GYM.rig.span / 2 + 0.6, z: GYM.rig.z, act: 'idle', face: Math.PI, level: 0 },
+  // The planting band: two spots to stand among the greenery.
+  { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
+  { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[0], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[1], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[2], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
@@ -835,8 +918,8 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // sitting on it, not next to it.
   { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: 0, level: 0 },
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
-  { x: -6.2, z: -5, act: 'idle', face: Math.PI / 2, level: 0 },
-  { x: 10, z: -5, act: 'idle', face: -Math.PI / 2, level: 0 },
+  { x: 10, z: 12.6, act: 'idle', face: -Math.PI / 2, level: 0 },
+  { x: -10, z: 12.6, act: 'idle', face: Math.PI / 2, level: 0 },
   { x: -20, z: -12, act: 'idle', face: 0, level: 0 },
   { x: 20, z: -12, act: 'idle', face: 0, level: 0 },
   { x: -4, z: 18.5, act: 'idle', face: 0, level: 0 },

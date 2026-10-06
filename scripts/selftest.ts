@@ -31,11 +31,16 @@ import {
   MEETING_ROOM_IDS,
   meetingRoomFor,
   POOL,
+  BBQ,
+  GYM,
   LOUNGE,
   LOUNGE_TABLE,
   LOUNGE_TV,
   MEETING_TABLES,
+  PLANTING,
+  POOL_BENCHES,
   POOL_LOUNGERS,
+  SUNBEDS,
   ROOMS,
   STAIRS,
   STAIR_FLIGHT_TOP,
@@ -54,7 +59,7 @@ import {
 import { BODY_R, blocked, onStairArea, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { dummyRoster } from '../src/lib/office/dummy-roster'
 import { buildOffice } from '../src/lib/office/build'
-import type { MeetingRoomId } from '../src/lib/office/layout'
+import type { IdleSpot, MeetingRoomId } from '../src/lib/office/layout'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
@@ -934,6 +939,118 @@ console.log('geometry')
     }
   }
   check('the leisure group is coherent (TV on the wall, table between, sofa faces the TV) and the loungers face the pool',
+    problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FOUR COURTYARD ZONES.
+//
+// The user redefined the pool surround: a gym mat with weights and a pull-up rig
+// north of the pool, planting between them, timber daybeds west of the pool, plain
+// wooden seats south, and the BBQ on the east strip. Every one of those positions
+// is a claim that has to hold in the MESH, the FOOTPRINTS and the IDLE SPOTS at
+// once — three lists that have drifted apart before.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const problems: string[] = []
+
+  // 1. THE GYM is north of the pool and clear of the water, the stair foot, and
+  //    the courtyard edge.
+  if (!(GYM.z2 <= POOL.z - POOL.d / 2)) {
+    problems.push(`the gym (z2=${GYM.z2}) overlaps the pool (north edge ${POOL.z - POOL.d / 2})`)
+  }
+  if (GYM.z1 < -9) problems.push(`the gym (z1=${GYM.z1}) pokes past the courtyard edge (-9)`)
+  if (GYM.x1 < -14 || GYM.x2 > 14) problems.push('the gym runs outside the courtyard in x')
+  // the stair foot stands at z=-3.2 in x -10..-8.6; the gym must not fence it in
+  if (GYM.x1 < -8.6 && GYM.z1 < -3.2) {
+    problems.push('the gym overlaps the stair foot')
+  }
+  // the mat itself is walkable (it is a rug, not a wall)
+  if (blocked((GYM.x1 + GYM.x2) / 2, (GYM.z1 + GYM.z2) / 2, BODY_R, { level: 0 })) {
+    problems.push('the gym mat centre is blocked — the mat must be walkable')
+  }
+  // each piece of equipment is solid
+  for (const [name, p] of [['rack', GYM.rack], ['dumbbells', GYM.dumbbells]] as const) {
+    if (!blocked(p.x, p.z, BODY_R, { level: 0 })) problems.push(`the gym ${name} is not solid`)
+  }
+  if (!blocked(GYM.rig.x - GYM.rig.span / 2, GYM.rig.z, BODY_R, { level: 0 })) {
+    problems.push('the pull-up rig post is not solid')
+  }
+  // but you can walk THROUGH the rig, between its posts
+  if (blocked(GYM.rig.x, GYM.rig.z, BODY_R, { level: 0 })) {
+    problems.push('the pull-up rig blocks its own centre — you cannot walk through it')
+  }
+
+  // 2. THE PLANTING BAND sits between the gym and the pool, and is solid.
+  if (!(PLANTING.z1 >= GYM.z2 - 0.05 && PLANTING.z2 <= POOL.z - POOL.d / 2 + 0.05)) {
+    problems.push(`the planting band (z ${PLANTING.z1}..${PLANTING.z2}) is not between the gym and the pool`)
+  }
+  if (!blocked((PLANTING.x1 + PLANTING.x2) / 2, (PLANTING.z1 + PLANTING.z2) / 2, BODY_R, { level: 0 })) {
+    problems.push('the planting band is walkable — it should be solid')
+  }
+
+  // 3. THE DAYBEDS are west of the pool and their long axis points at the water.
+  for (const [i, b] of SUNBEDS.entries()) {
+    if (!(b.x < POOL.x - POOL.w / 2)) problems.push(`daybed ${i} is not west of the pool`)
+    // the bed is long in local Z; rotation t sends local +z to (sin t, cos t)
+    const axX = Math.sin(b.facing)
+    const axZ = Math.cos(b.facing)
+    const toX = POOL.x - b.x
+    const toZ = POOL.z - b.z
+    const len = Math.hypot(toX, toZ) || 1
+    const dot = Math.abs((axX * toX + axZ * toZ) / len)
+    if (dot < 0.85) problems.push(`daybed ${i} does not lie facing the pool (dot=${dot.toFixed(2)})`)
+    // and the head must be AWAY from the water, so you lie looking at it
+    const headDot = ((-axX * toX) + (-axZ * toZ)) / len
+    if (headDot > 0) problems.push(`daybed ${i} has its head on the water side`)
+    if (blocked(b.x, b.z, BODY_R, { level: 0, allowSeat: true })) {
+      problems.push(`daybed ${i} is not reachable`)
+    }
+  }
+
+  // 4. THE SOUTH SEATS face the water (north) and sit south of the pool.
+  for (const [i, b] of POOL_BENCHES.entries()) {
+    if (!(b.z > POOL.z + POOL.d / 2)) problems.push(`bench ${i} is not south of the pool`)
+    // the seat faces local -z after rotation PI, i.e. the look vector is -sin/-cos
+    const lookX = -Math.sin(b.facing)
+    const lookZ = -Math.cos(b.facing)
+    const toZ = POOL.z - b.z
+    if (lookZ * toZ <= 0) problems.push(`bench ${i} does not face the pool`)
+    void lookX
+  }
+
+  // 5. THE BBQ is on the east strip, north of the pool, and solid.
+  if (!(BBQ.x > POOL.x + POOL.w / 2)) problems.push('the BBQ is not east of the pool')
+  if (BBQ.z > POOL.z - POOL.d / 2) problems.push('the BBQ is not north of the pool')
+  if (!blocked(BBQ.x, BBQ.z, BODY_R, { level: 0 })) problems.push('the BBQ is not solid')
+
+  // 6. NOTHING IN THE COURTYARD STANDS IN THE WATER.
+  for (const f of FOOTPRINTS) {
+    if (f.level !== 0 || f.kind === 'wall') continue
+    if (f.id === 'pool-basin') continue
+    const inX = Math.abs(f.x - POOL.x) < POOL.w / 2 + f.hw
+    const inZ = Math.abs(f.z - POOL.z) < POOL.d / 2 + f.hd
+    if (inX && inZ && f.h > 0.05) {
+      problems.push(`${f.id} stands in the pool`)
+    }
+  }
+
+  // 7. AND EVERY ZONE HAS AT LEAST ONE IDLE SPOT, or nobody ever goes there.
+  const inZone = (s: IdleSpot, x1: number, x2: number, z1: number, z2: number) =>
+    s.x >= x1 && s.x <= x2 && s.z >= z1 && s.z <= z2
+  const zones: [string, number, number, number, number][] = [
+    ['gym', GYM.x1, GYM.x2, GYM.z1, GYM.z2],
+    ['daybeds', -12, -7.4, 0.3, 7.4],
+    ['south seats', -6, 6, 8.2, 10.4],
+    ['bbq', 7, 10.5, -9.3, -3.5],
+  ]
+  for (const [name, x1, x2, z1, z2] of zones) {
+    if (!IDLE_SPOTS.some((s) => inZone(s, x1, x2, z1, z2))) {
+      problems.push(`no idle spot in the ${name} zone — avatars never go there`)
+    }
+  }
+
+  check('the four courtyard zones are coherent: gym north, planting between, daybeds west, seats south, BBQ east',
     problems.length === 0, problems.join(' | '))
 }
 
