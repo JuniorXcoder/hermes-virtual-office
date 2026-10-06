@@ -535,13 +535,24 @@ function swim(a: AnimAgent, t: number) {
   av.neck.rotation.x = m(-38 * D)
   av.head.rotation.x = m(-26 * D)
   av.head.rotation.y = wave(t, 1.4, a.phase) * 24 * D
-  // LEGS: flutter kick, straight out behind. They hang from the hips, so a -90 rotation
-  // lays them along the body.
+  // LEGS: flutter kick, TRAILING BEHIND the body.
+  //
+  // This was -90 and it was wrong, exactly as reported: the legs came out UNDER the chest
+  // instead of behind it, so the body and legs occupied the same strip and the legs were
+  // hidden by the torso. The old comment said "-90 lays them along the body" — it does,
+  // but along it TOWARD THE HEAD: the waist is already pitched +90 to lie the torso flat,
+  // and the legs hang below that, so they need the OPPOSITE sign to point the other way.
+  //
+  // Measured, hip at z=4.00 and the head at z=3.34 (0.66 forward):
+  //     leg pitch  -90  ->  knee at z 3.52, i.e. 0.48 FORWARD  (under the chest — the bug)
+  //     leg pitch  +90  ->  knee at z 4.48, i.e. 0.48 BEHIND   (trailing, correct)
+  // The sweep is symmetric: +45 and +135 both give 0.34 behind, and the kick rides on top
+  // of that.
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = m(-90 * D) + wave(t, 5.5, a.phase + (sign > 0 ? Math.PI : 0)) * 12 * D
+    leg.shoulder.rotation.x = m(90 * D) + wave(t, 5.5, a.phase + (sign > 0 ? Math.PI : 0)) * 12 * D
     leg.shoulder.rotation.z = sign * m(3 * D)
     leg.elbow.rotation.x = m(6 * D)
   }

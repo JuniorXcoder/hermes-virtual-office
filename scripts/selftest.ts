@@ -2124,6 +2124,50 @@ void (async () => {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // A SWIMMER'S LEGS MUST TRAIL BEHIND THE HEAD, not fold under the chest.
+  //
+  // Reported: "the legs are hidden behind the body, so the body and legs are aligned in
+  // the same position". The leg pitch was -90 with the note "-90 lays them along the
+  // body" — true, but along it TOWARD THE HEAD, because the waist is already pitched +90
+  // to lie the torso flat. Measured in the body's own frame: head at z +0.66, knees at
+  // -0.47 with the fix, and both at the same end without it.
+  //
+  // Checked BEHAVIOURALLY: build a real avatar, run the real swim pose, and require the
+  // legs to be on the opposite side of the hips from the head.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const av = buildAvatar('backend')
+    const a = { avatar: av, activity: 'swim' as Activity, ease: 1, phase: 0, meetingTalking: false }
+    // settle a few frames so the pose is fully applied
+    for (let i = 0; i < 6; i++) animate(a, i * 0.1, 0)
+    av.group.updateMatrixWorld(true)
+    const root = new THREE.Vector3()
+    av.group.getWorldPosition(root)
+    const yaw = av.group.rotation.y
+    const rel = (obj: THREE.Object3D) => {
+      const v = new THREE.Vector3()
+      obj.getWorldPosition(v)
+      v.sub(root)
+      const c = Math.cos(-yaw)
+      const s = Math.sin(-yaw)
+      return new THREE.Vector3(v.x * c - v.z * s, v.y, v.x * s + v.z * c)
+    }
+    const head = rel(av.head)
+    const knee = rel(av.legs[0].elbow)
+    // head leads (one sign), legs trail (the other). Require a real separation.
+    const opposite = head.z * knee.z < 0
+    const apart = Math.abs(head.z - knee.z) > 0.4
+    if (!opposite) {
+      problems.push(`the legs are on the SAME side as the head (head.z ${head.z.toFixed(2)}, knee.z ${knee.z.toFixed(2)}) — they fold under the chest and hide behind the torso`)
+    }
+    if (!apart) {
+      problems.push(`head and legs are only ${Math.abs(head.z - knee.z).toFixed(2)} m apart along the body — a swimmer must be extended, not folded`)
+    }
+    check("a swimmer's legs trail behind its head, not under its chest", problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // WHAT THE AUDIT FOUND UNGUARDED (6 holes), now closed.
   //
   // A mutation audit reverses each feature and checks the suite notices. Six did not:
