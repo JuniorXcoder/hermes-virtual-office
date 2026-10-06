@@ -11,8 +11,13 @@ import AgentSpawnPanel from './AgentSpawnPanel'
 import CronPanel from './CronPanel'
 import ChatPanel from './ChatPanel'
 import NewTaskDialog from './NewTaskDialog'
+import KanbanModal from './KanbanModal'
+import QaPanel from './QaPanel'
+import DummySpawnDialog from './DummySpawnDialog'
+import OfficeNameDialog from './OfficeNameDialog'
 import { startPolling, useOffice } from '@/lib/store'
 import type { OfficeScene } from '@/lib/office/scene'
+import type { AgentDivision } from '@/types/hermes'
 
 /**
  * The 3D scene is the only consumer of three.js, which is the bulk of this app's
@@ -42,6 +47,13 @@ export default function OfficeApp() {
   const [agentOpen, setAgentOpen] = useState(false)
   const [cronOpen, setCronOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const [boardOpen, setBoardOpen] = useState(false)
+  const [qaOpen, setQaOpen] = useState(false)
+  const [nameOpen, setNameOpen] = useState(false)
+  /** Slot of a dummy avatar that was clicked, if any. */
+  const [spawnSlot, setSpawnSlot] = useState<{ avatarId: string; division: AgentDivision } | null>(null)
+  const qaOpen_count = useOffice((s) => Object.keys(s.qaOpen).length)
+  const loadOffice = useOffice((s) => s.loadOffice)
 
   useEffect(() => startPolling(), [])
 
@@ -90,7 +102,12 @@ export default function OfficeApp() {
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-[#0f1418]">
       {view === '3d' ? (
-        <Scene3D onScene={(s) => (sceneRef.current = s)} />
+        <Scene3D
+          onScene={(s) => (sceneRef.current = s)}
+          onDummy={(avatarId, division) => setSpawnSlot({ avatarId, division })}
+          onBoard={() => setBoardOpen(true)}
+          onName={() => setNameOpen(true)}
+        />
       ) : view === 'sprite' ? (
         <SpriteOffice onSelect={select} />
       ) : (
@@ -117,6 +134,9 @@ export default function OfficeApp() {
           </button>
           <button className="vp-btn vp-btn-ghost" onClick={() => setCronOpen(true)}>
             Cron
+          </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setQaOpen(true)}>
+            Q&amp;A{qaOpen_count ? ` (${qaOpen_count})` : ''}
           </button>
           <button className="vp-btn vp-btn-ghost" onClick={() => setChatOpen(true)}>
             Chat
@@ -163,6 +183,19 @@ export default function OfficeApp() {
         onAgentCreated={() => void loadTasks()}
       />
       <NewTaskDialog />
+      {boardOpen && <KanbanModal onClose={() => setBoardOpen(false)} />}
+      {qaOpen && <QaPanel onClose={() => setQaOpen(false)} />}
+      {nameOpen && <OfficeNameDialog onClose={() => setNameOpen(false)} />}
+      {spawnSlot && (
+        <DummySpawnDialog
+          avatarId={spawnSlot.avatarId}
+          division={spawnSlot.division}
+          onClose={() => {
+            setSpawnSlot(null)
+            void loadOffice()
+          }}
+        />
+      )}
 
       {error && (
         <div className="vp-banner">

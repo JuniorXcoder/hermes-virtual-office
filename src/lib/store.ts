@@ -35,6 +35,12 @@ type State = {
   load: () => Promise<void>
   loadOffice: () => Promise<void>
   setOfficeName: (name: string) => Promise<void>
+  /** Batch position flush from the 3D scene — the DB write behind idle wander. */
+  saveAvatars: (list: AvatarState[]) => Promise<void>
+  /** Create a Q&A thread (staff asking their manager, or anyone asking the CEO). */
+  askQuestion: (asker: string, responsible: string, question: string) => Promise<boolean>
+  /** Answer a thread. An OPEN thread is the responsible's outstanding to-do. */
+  answerQuestion: (id: number, answer: string) => Promise<boolean>
   setView: (v: '3d' | '2d' | 'sprite') => void
   setPeek: (desk: number | null) => void
   openTask: (taskId: string | null) => void
@@ -101,6 +107,37 @@ export const useOffice = create<State>((set) => ({
       body: JSON.stringify({ action: 'setName', name }),
     })
     if (res.ok && res.data?.name) set({ officeName: res.data.name })
+  },
+
+  /**
+   * Position flush from the 3D scene. Fire-and-forget on purpose: the scene calls
+   * this every few seconds and a failed write must never stall the render loop.
+   * The next flush retries whatever moved.
+   */
+  async saveAvatars(list: AvatarState[]) {
+    if (!list.length) return
+    await fetchJson('/api/hermes/office', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'saveAvatars', list }),
+    })
+  },
+
+  async askQuestion(asker: string, responsible: string, question: string) {
+    const res = await fetchJson('/api/hermes/office', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'askQuestion', asker, responsible, question }),
+    })
+    if (res.ok) await useOffice.getState().loadOffice()
+    return res.ok
+  },
+
+  async answerQuestion(id: number, answer: string) {
+    const res = await fetchJson('/api/hermes/office', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'answerQuestion', id, answer }),
+    })
+    if (res.ok) await useOffice.getState().loadOffice()
+    return res.ok
   },
 
   async refreshMeeting() {

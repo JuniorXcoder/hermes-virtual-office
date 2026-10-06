@@ -175,6 +175,49 @@ export function saveAvatars(list: AvatarWrite[]): number {
   return list.length
 }
 
+/* ---------------------------------------------------------------- seeding -- */
+
+/**
+ * The office ships with DUMMY avatars, not agents (poin 3 + 4): three per division
+ * (one manager, two staff) plus a receptionist, all parked at their workstations.
+ * They cost nothing — they are rows in this table and meshes in the scene, and no
+ * model is ever called for them. Clicking one offers to spawn a REAL agent in its
+ * place.
+ *
+ * Seeding runs once, when the table is empty, and is idempotent afterwards: a
+ * dummy that has been spawned keeps `kind: 'agent'` and is never re-created.
+ */
+export type DummySpec = {
+  avatarId: string
+  name: string
+  division: AgentDivision
+  x: number
+  z: number
+  level: number
+  activity: string
+  facing: number
+}
+
+export function seedAvatars(specs: DummySpec[]): number {
+  const d = officeDb()
+  const existing = d.prepare(`SELECT COUNT(*) AS n FROM avatar_state`).get() as { n: number }
+  if (existing.n > 0) return 0
+  return saveAvatars(
+    specs.map((s) => ({
+      avatarId: s.avatarId,
+      name: s.name,
+      division: s.division,
+      kind: 'dummy' as const,
+      x: s.x,
+      z: s.z,
+      level: s.level,
+      activity: s.activity,
+      facing: s.facing,
+      spawned: false,
+    })),
+  )
+}
+
 /* --------------------------------------------------------------------- qa -- */
 
 type QaRow = {

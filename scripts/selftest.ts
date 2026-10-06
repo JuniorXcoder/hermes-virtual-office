@@ -40,6 +40,9 @@ import {
   WALL_T,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, route, routeBetween, stairCentre } from '../src/lib/office/nav'
+import { dummyRoster } from '../src/lib/office/dummy-roster'
+import { meetingRoomFor } from '../src/lib/office/scene'
+import type { MeetingRoomId } from '../src/lib/office/layout'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
@@ -614,6 +617,88 @@ console.log('geometry')
 
   check('street is layered: sidewalk outside the building, lanes inside the road',
     problems.length === 0, problems.join(' | '))
+}
+
+// Idle must be FREE. The scene renders and moves avatars from state it already
+// has; the only code paths that may call a model are the ones a person triggers
+// (chat, dispatch). If a render module ever imports the chat bridge, idle avatars
+// would start costing tokens — which is exactly what poin 10 forbids.
+{
+  const offenders: string[] = []
+  for (const f of ['src/lib/office/scene.ts', 'src/lib/office/build.ts', 'src/lib/office/dummy-roster.ts']) {
+    const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8')
+    if (/from ['"].*hermes\/chat['"]/.test(src)) offenders.push(`${f} imports the chat bridge`)
+    if (/sendChatMessage|officeChatArgs/.test(src)) offenders.push(`${f} calls the chat bridge`)
+  }
+  check('idle avatars never call a model (no chat bridge in the render path)',
+    offenders.length === 0, offenders.join(' | '))
+}
+
+// Dummy avatars must be seeded for every division: 3 per division + a receptionist.
+// An empty building on first load reads as a broken render.
+{
+  const problems: string[] = []
+  const roster = dummyRoster()
+  if (roster.length !== 10) problems.push(`roster has ${roster.length}, want 10`)
+  // Ids must be UNIQUE: two staff desks sharing an id silently dropped a dummy
+  // (7 rows were written instead of 10, and the missing ones were invisible).
+  const ids = new Set(roster.map((r) => r.avatarId))
+  if (ids.size !== roster.length) problems.push(`only ${ids.size} unique ids for ${roster.length} dummies`)
+  for (const div of ['tech', 'growth', 'content'] as const) {
+    const n = roster.filter((r) => r.division === div).length
+    if (n !== 3) problems.push(`${div} has ${n} dummies, want 3`)
+  }
+  if (!roster.some((r) => r.name === 'Resepsionis')) problems.push('no receptionist dummy')
+  // A dummy sits AT its desk. A desk chair is tucked UNDER the desk top, so the
+  // seated position is legitimately inside BOTH the chair's footprint and the
+  // desk's — that is what "sitting at a desk" means. So the check is not "is this
+  // free floor" (it must not be); it is:
+  //   1. the spot matches a real chair footprint, and
+  //   2. ignoring seats, the ONLY thing it overlaps is that chair's own desk.
+  const seats = FOOTPRINTS.filter((f) => f.kind === 'seat')
+  const desks = FOOTPRINTS.filter((f) => f.kind === 'desk')
+  for (const r of roster) {
+    const chair = seats.find((s) => Math.hypot(s.x - r.x, s.z - r.z) < 0.4)
+    if (!chair) {
+      problems.push(`dummy ${r.avatarId} is not seated at a chair`)
+      continue
+    }
+    const overDesk = desks.some(
+      (d) => Math.abs(r.x - d.x) < d.hw + BODY_R && Math.abs(r.z - d.z) < d.hd + BODY_R,
+    )
+    // The receptionist's chair sits BEHIND the counter, not tucked under it — a
+    // receptionist faces the door, so their chair is on the far side by design.
+    const isReception = r.avatarId.includes('reception')
+    if (!overDesk && !isReception) problems.push(`dummy ${r.avatarId} sits at a chair with no desk`)
+  }
+  check('dummy roster: 3 per division + receptionist, all standing on free floor',
+    problems.length === 0, problems.join(' | '))
+}
+
+// Meetings are routed by division: one division → its own room; managers+CEO →
+// Merapi; a full cross-division meeting → Rinjani (the ten-seat room).
+{
+  const problems: string[] = []
+  const div = new Map<string, 'tech' | 'growth' | 'content' | 'exec'>([
+    ['dev1', 'tech'],
+    ['dev2', 'tech'],
+    ['mkt1', 'growth'],
+    ['c1', 'content'],
+    ['ceo', 'exec'],
+    ['boss', 'exec'],
+  ])
+  const cases: [string[], MeetingRoomId][] = [
+    [['dev1', 'dev2'], 'bromo'],
+    [['mkt1'], 'semeru'],
+    [['c1'], 'cikurai'],
+    [['ceo', 'boss'], 'merapi'],
+    [['dev1', 'mkt1', 'c1', 'ceo', 'boss'], 'rinjani'],
+  ]
+  for (const [participants, want] of cases) {
+    const got = meetingRoomFor(participants, div)
+    if (got !== want) problems.push(`${participants.join('+')} -> ${got}, want ${want}`)
+  }
+  check('meeting rooms are routed by division', problems.length === 0, problems.join(' | '))
 }
 
 /* ---------------------------------------------------------------- movement -- */

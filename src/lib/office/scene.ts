@@ -1,6 +1,19 @@
 /**
- * Scene controller: owns the Three.js world and drives agent avatars from
- * office state. React only pushes new state in and receives clicks out.
+ * Scene controller: owns the Three.js world and drives every avatar.
+ *
+ * Two sources feed this scene and they are NOT the same thing:
+ *
+ *   - **avatars** (`data/office.db`) — where each body stands, what it was doing
+ *     last, and whether it is still a DUMMY or a real agent. Dummies are free:
+ *     they never call a model.
+ *   - **agents** (the Hermes roster) — who is working on what. A real agent
+ *     overrides its avatar's status; a dummy has none.
+ *
+ * Movement is LEVEL-AWARE. The building is split level, so a walker carries a
+ * `level` and the stairs are the only way between floors (`routeBetween`).
+ *
+ * Idle avatars WANDER: they rotate through the idle spots and their position is
+ * written back to the DB, so a reload puts everyone back where they were.
  */
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
@@ -9,26 +22,37 @@ import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRe
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
-import { buildBoardCards } from './board'
-import { blocked, route, BODY_R } from './nav'
+import { blocked, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
 import {
-  CONFERENCE,
   CONFERENCE_CHAIRS,
-  deskByIndex,
   DOOR,
-  KANBAN_BOARD,
+  DESKS,
+  deskByIndex,
   deskSeatWorld,
+  MEETING_ROOMS,
+  MEETING_ROOM_IDS,
+  DIVISION_MEETING_ROOM,
+  ROOM_SIGNS,
   visitorSpot,
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
   type Desk,
+  type IdleSpot,
+  type MeetingRoomId,
 } from './layout'
-import type { Agent, Meeting, Task } from '@/types/hermes'
+import type { Agent, AgentDivision, AgentRole, Meeting, Task } from '@/types/hermes'
+import type { AvatarState } from './types'
 
 export type SceneAgent = AnimAgent & {
   data: Agent
+  /** Row id in `avatar_state` — what the DB writes are keyed on. */
+  avatarId: string
+  kind: 'dummy' | 'agent'
+  /** Which floor this body is on. */
+  level: Level
+  /** Position the DB last reported (used to restore, not to move). */
   target: THREE.Vector3 | null
   /** Remaining waypoints from A*; movement follows these, not the raw target. */
-  path: { x: number; z: number }[]
+  path: Waypoint[]
   destKey: string
   face: number
   /** Facing to adopt at a seat; set when a desk target is chosen. */
@@ -42,25 +66,27 @@ export type SceneAgent = AnimAgent & {
   spawnGate?: number
   /** Set when the agent is leaving: walk out of the door, then despawn. */
   leaving?: boolean
+  /** Which idle spot this body is heading to / holding. */
+  wanderIndex: number
+  /** Seconds to stay put before wandering again. */
+  restUntil: number
 }
 
 export type SceneEvents = {
   onMonitorClick?: (deskIndex: number) => void
   onAvatarClick?: (name: string) => void
-  /** A card on the 3D Kanban wall was clicked. */
+  /** A card on the 3D board was clicked (kept for compatibility). */
   onTaskClick?: (taskId: string) => void
+  /** The green whiteboard was clicked — open the full Kanban modal. */
+  onBoardClick?: () => void
+  /** A DUMMY avatar was clicked — offer to spawn a real agent in its place. */
+  onDummyClick?: (avatarId: string, division: AgentDivision) => void
+  /** The office name plate was clicked — open the rename field. */
+  onNameClick?: () => void
+  /** Periodic position/activity flush, batched (the scene throttles this). */
+  onSaveAvatars?: (list: AvatarState[]) => void
 }
 
-
-/**
- * Enable shadows only on the objects that matter.
- *
- * A full-scene shadow pass roughly doubles the draw calls and this scene has 551
- * meshes. The sun is the only caster, so the filter takes solids above a size
- * threshold (walls, furniture, vehicles, roof plant) and leaves small trim —
- * frames, sills, rungs — out of the pass. Those contribute almost nothing to the
- * shadow silhouette but cost a full render each.
- */
 const SHADOW_MIN = 0.6
 function selectiveShadow(root: THREE.Object3D, light: THREE.DirectionalLight) {
   const bb = new THREE.Box3()
@@ -76,29 +102,20 @@ function selectiveShadow(root: THREE.Object3D, light: THREE.DirectionalLight) {
   })
   light.castShadow = true
   const cam = light.shadow.camera as THREE.OrthographicCamera
-  // Area dipersempit ke gedung saja (FLOOR 34x26 + teras). Sebelumnya +-34
-  // membuang ~60% resolusi shadow map ke jalan/lingkungan yang tidak perlu,
-  // sehingga bayangan interior jadi kabur dan tidak terbaca.
   // The plot is 56 x 42 m and the building is a U around a courtyard, so the
-  // shadow camera must cover the WHOLE footprint — at +-22 the east and west bars
-  // fell outside it and cast no shadow at all.
+  // shadow camera must cover the WHOLE footprint.
   cam.left = -34
   cam.right = 34
   cam.top = 30
   cam.bottom = -30
   cam.near = 1
-  cam.far = 90
+  cam.far = 110
   cam.updateProjectionMatrix()
   light.shadow.mapSize.set(2048, 2048)
   light.shadow.bias = -0.0004
   light.shadow.normalBias = 0.02
 }
 
-/**
- * Vertical sky gradient. A flat background colour gives the scene no atmosphere:
- * the horizon should be pale and the zenith deeper, which is also what lets the
- * roofline and the distant blocks read against it.
- */
 function skyGradientTexture(stops = ['#9dc4e8', '#c6dcef', '#e2edf6', '#eef4f8']): THREE.Texture {
   const c = document.createElement('canvas')
   c.width = 2
@@ -117,32 +134,19 @@ function skyGradientTexture(stops = ['#9dc4e8', '#c6dcef', '#e2edf6', '#eef4f8']
   return t
 }
 
-/**
- * Environment map KONTRAS untuk pantulan realistis.
- *
- * RoomEnvironment adalah kotak abu yang seragam: dipantulkan oleh marmer/kaca
- * hasilnya abu rata — secara visual identik dengan permukaan matte, itulah
- * sebabnya lantai tetap terlihat kartun meski roughness-nya 0.08.
- *
- * Peta ini menaruh langit terang di atas, horizon hangat, lantai gelap di
- * bawah, dan beberapa panel lampu yang SANGAT terang. Panel-panel itulah yang
- * muncul sebagai highlight memanjang di permukaan glossy.
- */
 function envContrastTexture(): THREE.Texture {
   const c = document.createElement('canvas')
   c.width = 512
   c.height = 256
   const g = c.getContext('2d')!
-  // langit -> horizon -> lantai
   const grad = g.createLinearGradient(0, 0, 0, 256)
-  grad.addColorStop(0, '#dfefff') // zenith terang
+  grad.addColorStop(0, '#dfefff')
   grad.addColorStop(0.42, '#bcd6ea')
-  grad.addColorStop(0.5, '#f4e6cf') // horizon hangat
+  grad.addColorStop(0.5, '#f4e6cf')
   grad.addColorStop(0.62, '#6a6152')
-  grad.addColorStop(1, '#241f1a') // lantai gelap
+  grad.addColorStop(1, '#241f1a')
   g.fillStyle = grad
   g.fillRect(0, 0, 512, 256)
-  // panel lampu sangat terang (sumber highlight)
   const panels: [number, number, number, number][] = [
     [40, 30, 70, 26],
     [190, 22, 90, 30],
@@ -164,6 +168,19 @@ function envContrastTexture(): THREE.Texture {
   return t
 }
 
+/** Pick the meeting room for a participant list, from their divisions. */
+export function meetingRoomFor(participants: string[], divisions: Map<string, AgentDivision>): MeetingRoomId {
+  const divs = new Set(participants.map((p) => divisions.get(p) ?? 'tech'))
+  // One division only → that division's room.
+  if (divs.size === 1) {
+    const only = [...divs][0]
+    if (only !== 'exec') return DIVISION_MEETING_ROOM[only]
+  }
+  // Managers + CEO (small, exec-heavy) → Merapi. Everyone → Rinjani.
+  if (participants.length <= 4 && divs.has('exec')) return 'merapi'
+  return 'rinjani'
+}
+
 export function createScene(
   canvas: HTMLCanvasElement,
   labelHost: HTMLElement,
@@ -171,22 +188,13 @@ export function createScene(
 ) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-  // Shadows on, but filtered: a 551-mesh scene cannot afford every object in the
-  // shadow pass, so selectiveShadow() keeps the large solids and drops the trim.
   renderer.shadowMap.enabled = true
   renderer.shadowMap.type = THREE.PCFSoftShadowMap
-  // Without an explicit tone mapping + exposure the standard materials render
-  // flat and muddy, which is what made the office look dim and lifeless.
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.1
   renderer.outputColorSpace = THREE.SRGBColorSpace
 
-  // Image-based lighting. Without an environment map every metal and glass surface
-  // renders flat and near-black — metalness has nothing to reflect — which is what
-  // made the building look like painted cardboard. The room environment is
-  // generated, so it costs no asset files.
   const pmrem = new THREE.PMREMGenerator(renderer)
-  // KONTRAS, bukan RoomEnvironment: env seragam membuat glossy tampak matte.
   const envRT = pmrem.fromEquirectangular(envContrastTexture())
   envRT.texture.mapping = THREE.EquirectangularReflectionMapping
 
@@ -197,30 +205,23 @@ export function createScene(
 
   const scene = new THREE.Scene()
   scene.environment = envRT.texture
-  // REALISTIS: env lebih kuat supaya marmer/kaca/metal benar-benar memantul.
-  // 0.55 membuat semua permukaan glossy render seperti matte.
   scene.environmentIntensity = 1.0
   pmrem.dispose()
-  // A vertical gradient reads as atmosphere; a flat colour reads as paper.
   scene.background = skyGradientTexture()
-  // Depth cue: distant blocks wash toward the sky, so the street has depth.
-  scene.fog = new THREE.Fog(0xd3e2ef, 70, 190)
+  scene.fog = new THREE.Fog(0xd3e2ef, 80, 220)
 
   let hour = Number(
     new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' })
       .format(new Date()),
   )
   const office: OfficeProps = buildOffice(scene, hour)
-  // REALISTIS: bayangan lembut radius 4 (shadow.radius) + exposure filmic 1.1
-  // supaya highlight material (marmer/kayu) kelihatan, bukan flat.
   office.sun.shadow.radius = 4
   selectiveShadow(office.group, office.sun)
   selectiveShadow(office.streetGroup, office.sun)
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 400)
   // Looking down the courtyard from the south-east: the U, the pool and the open
-  // division rooms all read from here. The old (0,21,24) was framed for the small
-  // square building and now sits inside the west bar.
+  // division rooms all read from here.
   camera.position.set(14, 34, 40)
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.target.set(0, 1.5, -2)
@@ -228,35 +229,47 @@ export function createScene(
   controls.dampingFactor = 0.08
   controls.maxPolarAngle = Math.PI / 2.35
   controls.minDistance = 6
-  // Clamp zoom-out to the building itself: letting the camera escape shows the
-  // empty world box behind the set dressing.
-  // Far enough to see the whole plot (56 x 42) with the street around it.
   controls.maxDistance = 95
   controls.enablePan = true
   controls.screenSpacePanning = false
 
-  // ---- Kanban board title. Column headers are built inside board.ts so that the
-  // labels and the card grid share one flex layout and cannot drift apart.
-  {
-    const titleEl = document.createElement('div')
-    titleEl.className = 'vp-board-title'
-    titleEl.textContent = 'SPRINT · PAPAN KANBAN'
-    const title = new CSS2DObject(titleEl)
-    title.position.set(0, KANBAN_BOARD.h / 2 + 0.26, 0.09)
-    office.boardSurface.add(title)
+  /* ---------------------------------------------------------- avatars ------ */
+
+  const avatars: SceneAgent[] = []
+  const byName = new Map<string, SceneAgent>()
+  /** Division per name, so a meeting can be routed to the right room. */
+  const divisionOf = new Map<string, AgentDivision>()
+  /** Latest avatar rows from the DB (positions restored on first sync). */
+  let avatarRows: AvatarState[] = []
+  /** Latest Hermes roster. */
+  let agentRows: Agent[] = []
+  let restored = false
+
+  const DUMMY_ROLES: Record<AgentDivision, AgentRole> = {
+    tech: 'backend',
+    growth: 'marketing',
+    content: 'content',
+    exec: 'orchestrator',
   }
 
-  // ---- cards pinned to the wall board (child of the board mesh)
-  const board = buildBoardCards(office.boardSurface, (taskId) => events.onTaskClick?.(taskId))
+  /** Build the `Agent` view of a dummy so labels and poses have something to read. */
+  function dummyAgent(row: AvatarState): Agent {
+    return {
+      name: row.name,
+      displayName: row.name,
+      role: DUMMY_ROLES[row.division] ?? 'backend',
+      division: row.division,
+      soulExists: false,
+      deskIndex: null,
+      status: 'idle',
+    }
+  }
 
-  const agents: SceneAgent[] = []
-  const byName = new Map<string, SceneAgent>()
-
-  // ---- agent lifecycle -------------------------------------------------------
-
-  function makeAgent(data: Agent): SceneAgent {
+  function makeAvatar(row: AvatarState, data: Agent): SceneAgent {
     const av = buildAvatar(data.role)
-    av.group.userData.agentName = data.name   // picked by the raycaster
+    av.group.userData.agentName = row.name
+    av.group.userData.avatarId = row.avatarId
+    av.group.userData.kind = row.kind
     scene.add(av.group)
 
     const bubbleEl = document.createElement('div')
@@ -274,14 +287,17 @@ export function createScene(
 
     const a: SceneAgent = {
       data,
+      avatarId: row.avatarId,
+      kind: row.kind,
+      level: row.level as Level,
       avatar: av,
-      activity: 'idle',
+      activity: (row.activity as Activity) || 'idle',
       ease: 0,
       phase: Math.random() * Math.PI * 2,
       target: null,
       path: [],
       destKey: '',
-      face: 0,
+      face: row.facing ?? 0,
       walking: 0,
       meetingTalking: false,
       bubble,
@@ -289,16 +305,18 @@ export function createScene(
       bubbleTimer: 0,
       spawnGate: 0,
       leaving: false,
+      wanderIndex: Math.floor(Math.random() * OFFICE_IDLE_SPOTS.length),
+      restUntil: 0,
     }
-    agents.push(a)
-    byName.set(data.name, a)
+    avatars.push(a)
+    byName.set(row.name, a)
+    divisionOf.set(row.name, row.division)
     setLabel(a)
-    // Spawn just INSIDE the doorway: the threshold itself is outside the walkable
-    // band, so an avatar placed on it could never path anywhere. `spawnGate` below
-    // turns this into a real entrance walk — the agent steps in through the door
-    // and walks to its station instead of materialising at it.
-    av.group.position.set(DOOR.x, 0, DOOR.z - 0.9)
-    a.spawnGate = 1.6   // seconds of "just walked in" before it heads to work
+
+    // Place the body at the position the DB remembers — that is the whole point
+    // of storing it. Only a body with no stored position enters through the door.
+    av.group.position.set(row.x, row.level * 3.4, row.z)
+    av.group.rotation.y = row.facing ?? 0
     return a
   }
 
@@ -307,136 +325,114 @@ export function createScene(
     el.textContent = a.data.displayName
     el.dataset.status = a.data.status
     el.dataset.role = a.data.role
+    el.dataset.kind = a.kind
   }
 
-  function removeAgent(a: SceneAgent) {
-    // Detach the CSS2D label and bubble FIRST, explicitly.
-    //
-    // These are CSS2DObject children of the avatar group. `scene.remove(group)`
-    // fires three.js's 'removed' event on the GROUP only — the label and bubble are
-    // descendants, so their handler never runs and their DOM elements stay in the
-    // overlay forever, frozen at the last projected position. Every killed agent
-    // left a nameplate stacked at the doorway. Removing the element by hand is the
-    // only reliable way; relying on the 'removed' event does not reach children.
+  function removeAvatar(a: SceneAgent) {
+    // Detach the CSS2D label and bubble FIRST, explicitly: `scene.remove(group)`
+    // fires 'removed' on the GROUP only, so a descendant's handler never runs and
+    // its DOM element stays in the overlay forever.
     for (const c of [a.label, a.bubble]) {
       c.removeFromParent()
       const el = c.element as HTMLElement
       el.remove()
     }
     scene.remove(a.avatar.group)
-    const i = agents.indexOf(a)
-    if (i >= 0) agents.splice(i, 1)
+    const i = avatars.indexOf(a)
+    if (i >= 0) avatars.splice(i, 1)
     byName.delete(a.data.name)
   }
 
-  /** Reconcile the avatar list with the latest agent roster. */
-  function syncAgents(list: Agent[]) {
-    // Removal is deferred: an agent that disappears from the list first walks out
-    // of the door, and only despawns once it arrives. `leaving` is what turns a
-    // kill into an exit rather than a vanish.
+  /**
+   * Reconcile the world with the DB rows + the Hermes roster.
+   *
+   * A name present in BOTH is a real agent (roster status wins). A name present
+   * only in the DB is a dummy: it walks and idles but has no task and costs
+   * nothing.
+   */
+  function syncAvatars(rows: AvatarState[], agents: Agent[]) {
+    avatarRows = rows
+    agentRows = agents
+    const agentByName = new Map(agents.map((a) => [a.name, a]))
+
+    // Drop bodies the DB no longer lists, UNLESS they are real agents leaving.
     for (const [name, a] of [...byName]) {
-      if (!list.some((x) => x.name === name) && !a.leaving) {
+      const stillThere = rows.some((r) => r.name === name)
+      if (!stillThere && a.kind === 'agent' && !a.leaving) {
         a.leaving = true
         a.path = []
         a.destKey = ''
+      } else if (!stillThere && a.kind === 'dummy') {
+        removeAvatar(a)
       }
     }
-    for (const data of list) {
-      const existing = byName.get(data.name)
-      if (existing && existing.leaving) {
-        // It came back before finishing its exit — cancel the exit.
-        existing.leaving = false
-      }
+
+    for (const row of rows) {
+      const existing = byName.get(row.name)
+      const data = agentByName.get(row.name) ?? dummyAgent(row)
+      const kind: 'dummy' | 'agent' = agentByName.has(row.name) ? 'agent' : 'dummy'
       if (existing) {
+        if (existing.leaving) existing.leaving = false
         const changed =
           existing.data.status !== data.status ||
           existing.data.deskIndex !== data.deskIndex ||
-          existing.data.currentTaskId !== data.currentTaskId
+          existing.data.currentTaskId !== data.currentTaskId ||
+          existing.kind !== kind
         existing.data = data
+        existing.kind = kind
+        existing.avatar.group.userData.kind = kind
         if (changed) {
           existing.ease = 0
           setLabel(existing)
         }
       } else {
-        makeAgent(data)
+        makeAvatar(row, data)
       }
     }
+    restored = true
   }
 
   // ---- destination resolution ------------------------------------------------
 
   function deskTarget(desk: Desk) {
-    // MUST match the chair drawn in build.ts, which reads the same constant.
     const seat = deskSeatWorld(desk)
     return new THREE.Vector3(seat.x, 0, seat.z)
   }
 
-  /**
-   * Seat facing so a sitter squares up to the monitor.
-   *
-   * Derived from geometry, not from a `+Math.PI` guess: the chair is at local
-   * +z of the desk and the monitor at local -z, so the facing is simply the
-   * direction from the seat to the monitor. The avatar rig's forward is local
-   * +Z, which is why this is `atan2(dx, dz)` and not the atan2(x, z) form used
-   * for camera-space headings.
-   */
   function deskSeatYaw(desk: Desk) {
     const chair = deskSeatWorld(desk)
-    // monitor world position: local (0, -0.28) rotated by the desk's facing
     const mx = desk.x + -0.28 * Math.sin(desk.facing)
     const mz = desk.z + -0.28 * Math.cos(desk.facing)
     return Math.atan2(mx - chair.x, mz - chair.z)
   }
 
-  /** Must mirror the chair ring drawn in build.ts — a mismatch parks agents on bare floor. */
+  /** Meeting room currently in use, chosen from the participants' divisions. */
+  let meetingRoom: MeetingRoomId = 'rinjani'
+
   function meetingSeat(i: number) {
-    const a = CONFERENCE_CHAIRS.offset + (i % CONFERENCE_CHAIRS.count) * (Math.PI * 2 / CONFERENCE_CHAIRS.count)
-    return new THREE.Vector3(
-      CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring,
-      0,
-      CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring,
-    )
+    const room = MEETING_ROOMS[meetingRoom]
+    const s = room.seats[i % room.seats.length]
+    return new THREE.Vector3(s.x, 0, s.z)
   }
 
-  /** Facing for a conference chair: toward the table centre, same convention as the desk seat. */
   function meetingSeatYaw(i: number) {
-    const a = CONFERENCE_CHAIRS.offset + (i % CONFERENCE_CHAIRS.count) * (Math.PI * 2 / CONFERENCE_CHAIRS.count)
-    const cx = CONFERENCE.x + Math.cos(a) * CONFERENCE_CHAIRS.ring
-    const cz = CONFERENCE.z + Math.sin(a) * CONFERENCE_CHAIRS.ring
-    return Math.atan2(CONFERENCE.x - cx, CONFERENCE.z - cz)
+    const room = MEETING_ROOMS[meetingRoom]
+    return room.seats[i % room.seats.length].facing
   }
 
-  // Idle lounging spots. Each MUST be walkable — `nav.blocked()` validates them
-  // at startup and drops any that land inside furniture, so an agent can never
-  // be assigned a destination it cannot reach.
-  // Each entry pairs a POSITION with the pose that belongs there, and the prop at
-  // that position exists in build.ts. A pose without its prop (or a spot inside
-  // furniture) reads as an agent staring at a blank wall.
-  // `face` is the heading the agent must hold once it arrives: the avatar's
-  // forward is local +Z, so `atan2(dx, dz)` aims it at (dx, dz). Every seated spot
-  // needs one, and so does every standing spot — without it the agent keeps the
-  // direction it walked in with, which is how a sitter ended up facing the sofa's
-  // backrest and the gardener ended up facing a wall.
-  // Idle spots come from layout.ts as DATA, so the self-test can assert every one of
-  // them is actually reachable — two were silently dead here. The filter stays: an
-  // unreachable spot is dropped rather than parking an agent inside furniture.
-  const IDLE_SPOTS = OFFICE_IDLE_SPOTS.filter((p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated }))
+  const IDLE_SPOTS: IdleSpot[] = OFFICE_IDLE_SPOTS.filter(
+    (p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated, level: p.level }),
+  )
 
   /** Decide activity + destination for the coming frames. */
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
-    // Clear the previous destination's heading first. Each branch below sets it
-    // when its target defines one; the wander fallbacks do not, and would
-    // otherwise inherit the heading of wherever the agent was before — the pose
-    // layer would then snap it to a stale direction on arrival.
     a.seatYaw = undefined
 
-    // 0. entering / leaving: hold at the doorway until the walk completes. This
-    //    is what makes spawn and kill read as "walks in / walks out" rather than
-    //    popping into existence at a desk.
+    // 0. entering / leaving: hold at the doorway until the walk completes.
     if (a.spawnGate && a.spawnGate > 0) {
       a.target = null
       a.activity = 'idle'
-      a.seatYaw = Math.PI // face into the room (door is on the south wall)
+      a.seatYaw = Math.PI
       return
     }
     if (a.leaving) {
@@ -445,17 +441,20 @@ export function createScene(
       return
     }
 
-    const st = a.data.status
+    // 0b. a body that has arrived and is resting stays put (and keeps its pose).
+    if (a.restUntil > t && !a.path.length) {
+      a.target = null
+      return
+    }
 
-    // 1. meeting wins over everything — but ONLY while it is actually live. A
-    //    finished OR failed meeting must release its seats, otherwise every
-    //    participant stays parked at the table forever after a provider error.
+    const st = a.data.status
+    const isDummy = a.kind === 'dummy'
+
+    // 1. meeting wins over everything — but ONLY while it is actually live.
     const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
     if (meeting && meetingLive && meeting.participants.includes(a.data.name)) {
       const idx = meeting.participants.indexOf(a.data.name)
-      const seat = meetingSeat(idx)
-      a.target = seat
-      // Face the table (the pose layer applies this on arrival).
+      a.target = meetingSeat(idx)
       a.seatYaw = meetingSeatYaw(idx)
       a.activity = 'meeting'
       a.meetingTalking = meeting.currentSpeaker === a.data.name
@@ -463,58 +462,54 @@ export function createScene(
     }
 
     // 2. reviewer walk: a reviewing agent stands at the author's desk
-    if (st === 'review') {
+    if (!isDummy && st === 'review') {
       const desk = a.data.deskIndex != null ? deskByIndex(a.data.deskIndex) : null
       if (desk) {
         const v = visitorSpot(desk)
         a.target = new THREE.Vector3(v.x, 0, v.z)
         a.activity = 'idle'
-        // One path decides facing: route it through seatYaw like every other
-        // destination that has a direction, rather than a second mechanism.
         a.seatYaw = Math.atan2(desk.x - v.x, desk.z - v.z)
         return
       }
     }
 
     // 3. working: sit at the assigned desk and type
-    if ((st === 'working' || st === 'review' || st === 'blocked') && a.data.deskIndex != null) {
+    if (!isDummy && (st === 'working' || st === 'review' || st === 'blocked') && a.data.deskIndex != null) {
       const desk = deskByIndex(a.data.deskIndex)
       if (desk) {
         a.target = deskTarget(desk)
-        // Record the seat's facing: the pose layer turns the avatar to this once
-        // it arrives. Without it the avatar kept whatever heading it walked in
-        // with, so a sitter faced sideways.
         a.seatYaw = deskSeatYaw(desk)
         a.activity = 'typing'
         return
       }
     }
 
-    // 4. blocked without a desk: pace in the aisle
-    if (st === 'blocked') {
-      a.target = new THREE.Vector3(-3 + (index % 3) * 3, 0, 4.6)
-      a.activity = 'idle'
-      return
-    }
-
-    // 5. idle: pick a stable spot so avatars do not clump on the same furniture
+    // 4. idle: WANDER. Rotate to the next free spot, walk there, rest, repeat.
+    //    A dummy at its desk keeps typing; only a body with nothing to do walks.
     if (!IDLE_SPOTS.length) {
-      a.target = new THREE.Vector3(0, 0, 8)
-      a.activity = 'idle'
+      a.target = null
+      a.activity = isDummy ? 'typing' : 'idle'
       return
     }
-    // Claim an idle spot no other agent holds. Sharing a spot deadlocks both:
-    // their bodies block each other in the corridor and neither ever arrives.
+    // Claim a spot no other body holds.
     const taken = new Set(
-      agents.filter((x) => x !== a && x.target).map((x) => `${x.target!.x.toFixed(1)},${x.target!.z.toFixed(1)}`),
+      avatars
+        .filter((x) => x !== a && x.target)
+        .map((x) => `${x.target!.x.toFixed(1)},${x.target!.z.toFixed(1)}`),
     )
-    let spot = IDLE_SPOTS[index % IDLE_SPOTS.length]
+    let spot: IdleSpot | null = null
     for (let k = 0; k < IDLE_SPOTS.length; k++) {
-      const cand = IDLE_SPOTS[(index + k) % IDLE_SPOTS.length]
+      const cand = IDLE_SPOTS[(a.wanderIndex + k) % IDLE_SPOTS.length]
       if (!taken.has(`${cand.x.toFixed(1)},${cand.z.toFixed(1)}`)) {
         spot = cand
+        a.wanderIndex = (a.wanderIndex + k + 1) % IDLE_SPOTS.length
         break
       }
+    }
+    if (!spot) {
+      a.target = null
+      a.activity = isDummy ? 'typing' : 'idle'
+      return
     }
     a.target = new THREE.Vector3(spot.x, 0, spot.z)
     a.activity = spot.act
@@ -524,28 +519,16 @@ export function createScene(
   // ---- simulation ------------------------------------------------------------
 
   const tmp = new THREE.Vector3()
-  const tmpA = new THREE.Vector3()
-  const tmpB = new THREE.Vector3()
   let t = 0
   let raf = 0
   let last = performance.now()
-  /** Diagnostics: frame count + last dt, surfaced for the e2e hook. */
   const stats = { frames: 0, lastDt: 0, fps: 0, fpsAt: performance.now(), fpsFrames: 0 }
-  /** 2 = full, 1 = no antialias/soft effects, 0 = bare minimum. */
   let quality = 2
-  // Adaptive, not locked: the shadow pass at 2048 with 552 casters is heavy for a
-  // phone or a software rasteriser. Rather than choosing between "no shadows
-  // anywhere" and "unusable on a weak GPU", the shadow resolution steps down with
-  // the quality tier and the pass is dropped only at tier 0.
   const qualityLocked = false
 
-  // ponytail: satu setter kualitas; adaptive step-down dimatikan lewat
-  // setQuality() (lihat qualityLocked di bawah) supaya bayangan tidak
-  // hilang sendiri di mesin lambat — lebih baik FPS rendah daripada flat.
   function setQuality(q: number) {
     quality = Math.max(0, Math.min(2, q))
     renderer.setPixelRatio(q === 2 ? Math.min(devicePixelRatio, 2) : 1)
-    // tier 2 -> 2048, tier 1 -> 1024, tier 0 -> no shadow pass at all
     renderer.shadowMap.enabled = q > 0
     renderer.shadowMap.needsUpdate = true
     office.sun.shadow.mapSize.set(q === 2 ? 2048 : 1024, q === 2 ? 2048 : 1024)
@@ -557,13 +540,43 @@ export function createScene(
     }
   }
   void setQuality
+  void qualityLocked
   let currentMeeting: Meeting | null = null
+
+  /** Seconds between DB flushes. Writing every frame would be pure waste. */
+  const SAVE_EVERY = 5
+  let lastSave = performance.now()
+  /** Snapshot of what the DB currently holds, so we only send CHANGES. */
+  const lastSaved = new Map<string, string>()
+
+  function flushPositions() {
+    if (!events.onSaveAvatars) return
+    const out: AvatarState[] = []
+    for (const a of avatars) {
+      const g = a.avatar.group
+      const key = `${g.position.x.toFixed(1)},${g.position.z.toFixed(1)},${a.level},${a.activity}`
+      // Skip bodies that have not moved and are not doing anything new.
+      if (lastSaved.get(a.avatarId) === key) continue
+      lastSaved.set(a.avatarId, key)
+      out.push({
+        avatarId: a.avatarId,
+        name: a.data.name,
+        division: divisionOf.get(a.data.name) ?? 'tech',
+        kind: a.kind,
+        x: Number(g.position.x.toFixed(2)),
+        z: Number(g.position.z.toFixed(2)),
+        level: a.level,
+        activity: a.activity,
+        facing: Number(g.rotation.y.toFixed(2)),
+        spawned: a.kind === 'agent',
+        updatedAt: new Date().toISOString(),
+      })
+    }
+    if (out.length) events.onSaveAvatars(out)
+  }
 
   function frame(now: number) {
     raf = requestAnimationFrame(frame)
-    // Wall-clock delta, clamped only against tab-switch spikes. A tight clamp
-    // (0.05) silently turns the whole office into slow motion on a slow GPU,
-    // which is what made avatars appear to crawl.
     const dt = Math.min(0.25, (now - last) / 1000)
     last = now
     t += dt
@@ -575,15 +588,7 @@ export function createScene(
       stats.fps = (stats.fpsFrames * 1000) / (now - stats.fpsAt)
       stats.fpsAt = now
       stats.fpsFrames = 0
-      // Step the renderer down when the machine cannot keep up (software WebGL
-      // in a VM or a headless browser, or a very weak GPU). Dua tier: pixel
-      // ratio + resolusi shadow. Tier 0 TIDAK dipakai — mematikannya membuang
-      // bayangan, dan tanpa bayangan scene kehilangan seluruh kedalaman.
-      // Lebih baik FPS rendah tapi punya bayangan daripada cepat tapi flat.
-      if (!qualityLocked) {
-        if (stats.fps < 12 && quality > 1) setQuality(1)
-        else if (stats.fps < 26 && quality > 1) setQuality(1)
-      }
+      if (!qualityLocked && stats.fps < 26 && quality > 1) setQuality(1)
     }
 
     if (now - lastPaletteUpdate >= 60_000) {
@@ -595,19 +600,26 @@ export function createScene(
       lastPaletteUpdate = now
     }
 
-    agents.forEach((a, i) => {
+    // Flush positions to the DB on a slow cadence, batched, changes only.
+    if (now - lastSave >= SAVE_EVERY * 1000) {
+      lastSave = now
+      flushPositions()
+    }
+
+    avatars.forEach((a, i) => {
       retarget(a, currentMeeting, i)
 
       const g = a.avatar.group
       if (a.target) {
-        // Re-plan only when the destination moved: A* over the nav grid is what
-        // keeps walkers out of desks, so movement follows `path`, not a straight
-        // line to the target.
         const destKey = `${a.target.x.toFixed(1)},${a.target.z.toFixed(1)}`
         if (destKey !== a.destKey || !a.path.length) {
           a.destKey = destKey
-          a.path = route({ x: g.position.x, z: g.position.z }, { x: a.target.x, z: a.target.z })
-          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z }]
+          // LEVEL-AWARE: crossing floors goes through the stair shaft.
+          a.path = routeBetween(
+            { x: g.position.x, z: g.position.z, level: a.level },
+            { x: a.target.x, z: a.target.z, level: a.level },
+          )
+          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z, level: a.level }]
         }
 
         const leg = a.path[0]
@@ -615,25 +627,25 @@ export function createScene(
         const dist = tmp.length()
         if (dist < 0.18) {
           a.path.shift()
+          // A waypoint that changes floor is the stair hand-off.
+          if (leg.level !== a.level) {
+            a.level = leg.level
+            g.position.y = a.level * 3.4
+          }
           if (!a.path.length) {
-            g.position.set(a.target.x, g.position.y, a.target.z)
+            g.position.set(a.target.x, a.level * 3.4, a.target.z)
             a.walking = 0
+            // Arrived: rest a while before wandering on. This is what keeps an
+            // idle office from looking like a swarm.
+            a.restUntil = t + 6 + Math.random() * 8
           }
         } else {
           tmp.normalize()
-          // Slide along the surface when the next micro-step would enter a prop,
-          // so a body never ends up inside furniture after a re-plan.
-          const SPEED = 3.4 // m/s, brisk office walking pace
-          // Clamp the step to the distance left on THIS leg. Without it a long
-          // frame (dt up to 0.25 s -> 0.85 m) overshoots the waypoint, the next
-          // frame reverses, and the agent oscillates on the spot forever.
+          const SPEED = 3.4
           const step = Math.min(SPEED * dt, dist)
           const nx = g.position.x + tmp.x * step
           const nz = g.position.z + tmp.z * step
-          // The A* path is already collision-free; this guard exists only to
-          // absorb float drift, so a blocked micro-step nudges toward the
-          // waypoint rather than freezing the agent in place.
-          if (!blocked(nx, nz, BODY_R * 0.9)) {
+          if (!blocked(nx, nz, BODY_R * 0.9, { level: a.level })) {
             g.position.set(nx, g.position.y, nz)
           } else {
             g.position.x += tmp.x * Math.min(0.05, step)
@@ -646,45 +658,28 @@ export function createScene(
         a.walking = 0
       }
 
-      // Tick the entrance gate: while it runs the agent stands at the threshold
-      // facing into the room, which is what sells "just walked in".
       if (a.spawnGate && a.spawnGate > 0) {
         a.spawnGate = Math.max(0, a.spawnGate - dt)
         a.walking = 0
       }
 
-      // A leaving agent despawns when it reaches the doorway.
       if (a.leaving && !a.path.length) {
         const dd = Math.hypot(g.position.x - DOOR.x, g.position.z - DOOR.z)
         if (dd < 0.6) {
-          removeAgent(a)
-          return // forEach callback, not a loop body
+          removeAvatar(a)
+          return
         }
       }
 
-      // smooth turn toward the facing direction
       let diff = a.face - g.rotation.y
       while (diff > Math.PI) diff -= Math.PI * 2
       while (diff < -Math.PI) diff += Math.PI * 2
       g.rotation.y += diff * Math.min(1, dt * 6)
-      g.position.y = 0
 
-      // Face the seat's heading once arrived, when the destination defined one.
-      //
-      // This has been wrong twice, both times because it tested the POSE instead
-      // of the data: first `activity === 'typing' || 'meeting'`, then a hand-kept
-      // SEATED set. Each version silently excluded whatever pose was added next —
-      // `garden` and `dart` were the latest, so those agents kept the heading they
-      // walked in with and ended up with their back to the planter.
-      //
-      // The question is not "is this a sitting pose", it is "did the destination
-      // say which way to look". `retarget()` sets `seatYaw` for every spot that
-      // declares `face`, and clears it for those that do not.
       if (a.walking < 0.5 && a.seatYaw !== undefined) {
         a.face = a.seatYaw
       }
 
-      // walking overrides the seated pose until arrival
       const activity: Activity = a.walking > 0.5 ? 'walking' : a.activity
       const anim: AnimAgent = {
         avatar: a.avatar,
@@ -696,9 +691,7 @@ export function createScene(
       animate(anim, t, dt)
       a.ease = anim.ease
 
-      // Monitor glow reflects the occupant's state. The screen itself is NEVER
-      // hidden: an invisible mesh is skipped by the raycaster, which would make
-      // the "peek at screen" click target unreachable whenever nobody is typing.
+      // Monitor glow reflects the occupant's state.
       if (a.data.deskIndex != null && office.monitors[a.data.deskIndex]) {
         const mat = office.monitors[a.data.deskIndex].material as THREE.MeshStandardMaterial
         const st = a.data.status
@@ -709,37 +702,17 @@ export function createScene(
       a.avatar.badge.rotation.z = t * 0.8 + a.phase
       a.avatar.badge.position.y = 1.85 + Math.sin(t * 1.6 + a.phase) * 0.03
 
-      // speech bubble lifetime
       if (a.bubbleTimer > 0) {
         a.bubbleTimer -= dt * 1000
         if (a.bubbleTimer <= 0) a.bubble.visible = false
       }
-
-      // keep the speaker's bubble pinned while talking
       if (a.meetingTalking && a.bubbleTimer <= 0) {
         a.bubbleTimer = 1200
         a.bubble.visible = true
       }
     })
 
-    // Keep the card grid matched to the board's on-screen size (throttled: the
-    // projection only needs re-measuring a few times a second).
-    if (stats.frames % 12 === 0) {
-      tmpA.set(-KANBAN_BOARD.w / 2, KANBAN_BOARD.h / 2, 0)
-      tmpB.set(KANBAN_BOARD.w / 2, -KANBAN_BOARD.h / 2, 0)
-      office.boardSurface.localToWorld(tmpA)
-      office.boardSurface.localToWorld(tmpB)
-      tmpA.project(camera)
-      tmpB.project(camera)
-      const w = renderer.domElement.clientWidth
-      const h = renderer.domElement.clientHeight
-      const pxW = Math.abs(tmpB.x - tmpA.x) * 0.5 * w
-      const pxH = Math.abs(tmpB.y - tmpA.y) * 0.5 * h
-      if (pxW > 0 && pxH > 0) board.setBoardSize(pxW, pxH)
-    }
-
     office.animateStreet(dt, t)
-
     controls.update()
     renderer.render(scene, camera)
     labelRenderer.render(scene, camera)
@@ -758,25 +731,44 @@ export function createScene(
 
     const hits = ray.intersectObjects(scene.children, true)
     for (const h of hits) {
-      const ud = h.object.userData as { kind?: string; deskIndex?: number }
+      const ud = h.object.userData as { kind?: string; deskIndex?: number; avatarId?: string }
+      // The green whiteboard → open the full Kanban modal.
+      if (ud?.kind === 'whiteboard' || h.object.name === 'kanban-board') {
+        events.onBoardClick?.()
+        return
+      }
+      // The office name plate → rename.
+      if (h.object.name === 'office-name-face' || h.object.name === 'office-name-plate') {
+        events.onNameClick?.()
+        return
+      }
       if (ud?.kind === 'monitor' && typeof ud.deskIndex === 'number') {
         events.onMonitorClick?.(ud.deskIndex)
         return
       }
-      // walking up the parents finds the avatar group of this hit mesh
       let o: THREE.Object3D | null = h.object
       while (o && !o.userData?.agentName) o = o.parent
       if (o?.userData?.agentName) {
-        events.onAvatarClick?.(o.userData.agentName as string)
+        const name = o.userData.agentName as string
+        const kind = o.userData.kind as 'dummy' | 'agent' | undefined
+        if (kind === 'dummy') {
+          // A dummy has no agent behind it: offer to spawn one.
+          events.onDummyClick?.(
+            (o.userData.avatarId as string) ?? '',
+            divisionOf.get(name) ?? 'tech',
+          )
+        } else {
+          events.onAvatarClick?.(name)
+        }
         return
       }
     }
   }
 
+  let pending: { x: number; y: number; t: number } | null = null
   const onDown = (e: MouseEvent) => {
     pending = { x: e.clientX, y: e.clientY, t: performance.now() }
   }
-  let pending: { x: number; y: number; t: number } | null = null
   const onUp = (e: MouseEvent) => {
     if (!pending) return
     const moved = Math.hypot(e.clientX - pending.x, e.clientY - pending.y)
@@ -794,17 +786,19 @@ export function createScene(
     camera.updateProjectionMatrix()
   }
 
-  /** Push the latest board contents onto the 3D wall. */
-  function setTasks(tasks: Task[]) {
-    board.render(tasks)
+  /** Kept for the OfficeApp contract; the 3D view no longer draws cards. */
+  function setTasks(_tasks: Task[]) {
+    void _tasks
   }
 
   function setMeeting(m: Meeting | null) {
-    // A dead meeting must not keep holding seats: treat done/error as no meeting.
     const live = m && (m.state === 'queued' || m.state === 'running') ? m : null
     currentMeeting = live
-    if (!live) {
-      for (const a of agents) {
+    if (live) {
+      // Route the meeting to a room by its participants' divisions.
+      meetingRoom = meetingRoomFor(live.participants, divisionOf)
+    } else {
+      for (const a of avatars) {
         a.meetingTalking = false
         a.bubble.visible = false
         a.bubbleTimer = 0
@@ -827,10 +821,8 @@ export function createScene(
   function setHour(h: number) {
     hour = h
     office.applyPalette(h)
-    // Day and night keep the gradient background. A flat colour (the previous
-    // behaviour) threw away the sky's depth the moment the clock ticked over.
     scene.background = h >= 18 || h < 6 ? skyNight : skyDay
-    scene.fog = new THREE.Fog(h >= 18 || h < 6 ? 0x54697d : 0xd3e2ef, 70, 190)
+    scene.fog = new THREE.Fog(h >= 18 || h < 6 ? 0x54697d : 0xd3e2ef, 80, 220)
   }
   setHour(hour)
 
@@ -846,6 +838,8 @@ export function createScene(
   function stop() {
     if (raf) cancelAnimationFrame(raf)
     raf = 0
+    // Leaving the tab is a good moment to persist: the page may never come back.
+    flushPositions()
   }
   function dispose() {
     stop()
@@ -855,15 +849,29 @@ export function createScene(
     renderer.dispose()
   }
 
+  /** Snapshot used by the debug handle and the rename UI. */
+  function avatarSnapshot() {
+    return avatars.map((a) => ({
+      avatarId: a.avatarId,
+      name: a.data.name,
+      kind: a.kind,
+      division: divisionOf.get(a.data.name) ?? 'tech',
+      x: a.avatar.group.position.x,
+      z: a.avatar.group.position.z,
+      level: a.level,
+      activity: a.activity,
+    }))
+  }
+
   return {
     scene,
     camera,
     stats,
     controls,
     office,
-    agents,
+    agents: avatars,
     byName,
-    syncAgents,
+    syncAvatars,
     setTasks,
     setMeeting,
     say,
@@ -873,9 +881,23 @@ export function createScene(
     stop,
     resize,
     dispose,
+    avatarSnapshot,
+    /** Room the live meeting is using (for the UI). */
+    get meetingRoom() {
+      return meetingRoom
+    },
+    get restored() {
+      return restored
+    },
     get hour() {
       return hour
     },
+    /** Exposed so the self-check can assert the room signs exist. */
+    roomSigns: ROOM_SIGNS,
+    stairCentre,
+    meetingRoomIds: MEETING_ROOM_IDS,
+    conferenceChairs: CONFERENCE_CHAIRS,
+    desks: DESKS,
   }
 }
 

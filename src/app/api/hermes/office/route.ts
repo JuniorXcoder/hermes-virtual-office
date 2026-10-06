@@ -7,9 +7,11 @@ import {
   listQa,
   openQaCounts,
   saveAvatars,
+  seedAvatars,
   setOfficeName,
   type AvatarWrite,
 } from '@/lib/office/db'
+import { dummyRoster } from '@/lib/office/dummy-roster'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision } from '@/types/hermes'
 
@@ -25,6 +27,9 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET() {
   try {
+    // First run: populate the dummy roster so the building is not empty. Idempotent
+    // — it only fires when the table has no rows at all.
+    seedAvatars(dummyRoster())
     return NextResponse.json({
       name: getOfficeName(),
       avatars: listAvatars(),

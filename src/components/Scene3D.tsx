@@ -3,33 +3,52 @@
 import { useEffect, useRef } from 'react'
 import { createScene, type OfficeScene } from '@/lib/office/scene'
 import { useOffice } from '@/lib/store'
+import type { AgentDivision } from '@/types/hermes'
 
-type Props = { onScene: (s: OfficeScene | null) => void }
+type Props = {
+  onScene: (s: OfficeScene | null) => void
+  /** A dummy avatar was clicked — the panel offers to spawn a real agent. */
+  onDummy: (avatarId: string, division: AgentDivision) => void
+  /** The green whiteboard was clicked — open the full Kanban modal. */
+  onBoard: () => void
+  /** The office name plate was clicked — open the rename field. */
+  onName: () => void
+}
 
-export default function Scene3D({ onScene }: Props) {
+export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<OfficeScene | null>(null)
 
   const agents = useOffice((s) => s.agents)
+  const avatars = useOffice((s) => s.avatars)
   const tasks = useOffice((s) => s.tasks)
   const meeting = useOffice((s) => s.meeting)
   const view = useOffice((s) => s.view)
   const setPeek = useOffice((s) => s.setPeek)
   const select = useOffice((s) => s.select)
   const openTask = useOffice((s) => s.openTask)
+  const saveAvatars = useOffice((s) => s.saveAvatars)
+
+  // Handlers live in a ref so the scene is created ONCE but always calls the
+  // latest callback — recreating the WebGL context on every render is not an
+  // option, and a stale closure here means a click that does nothing.
+  const cb = useRef({ onDummy, onBoard, onName, openTask, setPeek, select, saveAvatars })
+  cb.current = { onDummy, onBoard, onName, openTask, setPeek, select, saveAvatars }
 
   useEffect(() => {
     if (!canvasRef.current || !labelRef.current) return
     const scene = createScene(canvasRef.current, labelRef.current, {
-      onMonitorClick: (desk) => setPeek(desk),
-      onAvatarClick: (name) => select(name),
-      onTaskClick: (taskId) => openTask(taskId),
+      onMonitorClick: (desk) => cb.current.setPeek(desk),
+      onAvatarClick: (name) => cb.current.select(name),
+      onTaskClick: (taskId) => cb.current.openTask(taskId),
+      onDummyClick: (avatarId, division) => cb.current.onDummy(avatarId, division),
+      onBoardClick: () => cb.current.onBoard(),
+      onNameClick: () => cb.current.onName(),
+      onSaveAvatars: (list) => void cb.current.saveAvatars(list),
     })
     sceneRef.current = scene
     onScene(scene)
-    // E2E/debug handle: lets tests drive picking and read avatar state without
-    // guessing canvas pixels. Opt-in so production pages stay clean.
     if (process.env.NEXT_PUBLIC_E2E_HOOK === '1') {
       ;(window as unknown as { __office?: OfficeScene }).__office = scene
     }
@@ -50,10 +69,12 @@ export default function Scene3D({ onScene }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // push new rosters in without rebuilding the world
+  // Avatars come from the DB (dummies included) and the roster decides which of
+  // them are real agents. Both feed one reconcile so a name can never be drawn
+  // twice.
   useEffect(() => {
-    sceneRef.current?.syncAgents(agents)
-  }, [agents])
+    sceneRef.current?.syncAvatars(avatars, agents)
+  }, [avatars, agents])
 
   useEffect(() => {
     sceneRef.current?.setTasks(tasks)
