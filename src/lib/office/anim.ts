@@ -463,15 +463,23 @@ function benchpress(a: AnimAgent, t: number) {
   av.waist.rotation.x = m(-88 * D)
   av.waist.rotation.y = 0
   av.hips.position.y = BENCH_TOP * k + HIP_STAND * (1 - k)
-  // LEGS: knees up, feet flat on the floor beside the bench. They hang from the hips, so
-  // they need their own fold to reach the ground.
+  // LEGS: knees up, feet flat on the floor beside the bench.
+  //
+  // Measured, not guessed. `-64 / +78` put both feet 0.19 m THROUGH the floor: the hip sits
+  // on the pad at 0.56, so the legs must reach exactly the 0.56 m down to the ground while
+  // still reading as "knees bent over the bench". The fold is solved for that drop instead
+  // of eyeballed — THIGH 0.40 and SHIN 0.52 with the hip at 0.56 gives, at thigh -74 and
+  // knee 112, a sole at y = 0.00 and the knee forward and up.
+  //
+  // This is the "begitu juga saat ... tiduran" report: a body lying on the bench press with
+  // its feet buried in the floor slab.
   for (const [leg, sign] of [
     [av.legs[0], -1],
     [av.legs[1], 1],
   ] as const) {
-    leg.shoulder.rotation.x = m(-64 * D)
+    leg.shoulder.rotation.x = m(-74 * D)
     leg.shoulder.rotation.z = sign * m(12 * D)
-    leg.elbow.rotation.x = m(78 * D)
+    leg.elbow.rotation.x = m(112 * D)
   }
   // The torso is already flat; a slight arch and the head resting on the pad.
   av.chest.rotation.x = m(6 * D)
@@ -540,9 +548,21 @@ function swim(a: AnimAgent, t: number) {
     [R, 1, Math.PI],
   ] as const) {
     const s = stroke(off)
-    arm.shoulder.rotation.x = m(-150 * D) + s * 95 * D
+    // Sweep from -55 deg (recovery, hand out of the water) to -215 deg at the pull bottom.
+    // The old bottom of -245 deg drove the straightened hand to y = -0.65, 0.27 m THROUGH
+    // the basin floor at -0.38 (measured over a full stroke on the rig). -215 keeps the
+    // pull deep and powerful without touching the floor.
+    arm.shoulder.rotation.x = m(-135 * D) + s * 80 * D
     arm.shoulder.rotation.z = sign * m(18 * D)
-    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D
+    // The hand must not pass through the basin floor (top at -0.38). Measured on the rig
+    // over a full stroke: the hand bottoms at y = -0.65 whenever the shoulder passes
+    // through -1.0..-2.1 rad — the underwater pull — 0.27 m THROUGH the floor. A real pull
+    // folds the elbow as the hand passes under the body, so the extra bend is coupled to
+    // the shoulder angle itself: peaks at -1.55, zero outside -1.0..-2.1. Recovery above
+    // the water is untouched.
+    const shX = arm.shoulder.rotation.x
+    const pull = Math.max(0, 1 - Math.abs(shX + 1.55) / 0.55)
+    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D + pull * m(70 * D)
   }
 }
 

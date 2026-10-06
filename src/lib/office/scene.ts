@@ -95,6 +95,16 @@ export type SceneAgent = AnimAgent & {
    * through whatever stood there.
    */
   seatYaw?: number
+  /**
+   * The facing the destination REQUIRES, remembered across the rest period.
+   *
+   * `retarget()` clears `arrivalFace` at the top of every frame, and the "resting" branch
+   * returns before reassigning it — so a sitting body kept the heading it walked in with and
+   * never turned to face its bench, table or screen. This survives that clear.
+   */
+  holdFace?: number
+  /** True when the remembered facing belongs to a real seat (keeps `settling` on). */
+  holdSeat?: boolean
   walking: number
   meetingTalking: boolean
   bubble: CSS2DObject
@@ -556,6 +566,8 @@ export function createScene(
       a.activity = a.anchorActivity
       a.arrivalFace = a.anchorFacing
       a.face = a.anchorFacing
+      a.holdFace = a.anchorFacing
+      a.holdSeat = true
       return
     }
 
@@ -579,6 +591,28 @@ export function createScene(
     // 0b. a body that has arrived and is resting stays put (and keeps its pose).
     if (a.restUntil > t && !a.path.length) {
       a.target = null
+      // ── KEEP LOOKING WHERE THE DESTINATION POINTS ─────────────────────────
+      //
+      // THE FACING BUG. `retarget()` runs EVERY frame and clears `arrivalFace` at the top
+      // (line 545), and this branch returns before anything assigns it again. So the rule
+      // further down — "arrived: turn to the destination's own facing" — could NEVER fire:
+      // by the time `a.walking` dropped to 0 and `restUntil` took over, `arrivalFace` was
+      // already undefined for that frame.
+      //
+      // A body therefore kept the heading it WALKED IN WITH for the entire rest. Walk east
+      // to a poolside bench and it sat facing east; walk south to a dining chair and it sat
+      // facing south, which from the table's point of view is its back to the table and its
+      // face to the chair's own back rest. That is the report: "banyak yg ngebelakangin
+      // kursi/sofa dan ada juga yg ga menghadap objectnya".
+      //
+      // No amount of fixing the angle CONVENTION could have helped, which is why two rounds
+      // of that did nothing visible: the layout data was right all along and the renderer
+      // simply never used it for a resting body.
+      if (a.holdFace !== undefined) {
+        a.arrivalFace = a.holdFace
+        a.face = a.holdFace
+        if (a.holdSeat) a.seatYaw = a.holdFace
+      }
       return
     }
 
@@ -593,6 +627,8 @@ export function createScene(
       a.targetLevel = 1
       a.seatYaw = meetingSeatYaw(idx)
       a.arrivalFace = meetingSeatYaw(idx)
+      a.holdFace = a.arrivalFace
+      a.holdSeat = true
       a.activity = 'meeting'
       a.meetingTalking = meeting.currentSpeaker === a.data.name
       return
@@ -610,6 +646,8 @@ export function createScene(
         // The reviewer STANDS at the desk and looks at it. Facing, not a seat — this was
         // `a.seatYaw`, which made every reviewing agent ignore furniture on its approach.
         a.arrivalFace = Math.atan2(desk.x - v.x, desk.z - v.z)
+        a.holdFace = a.arrivalFace
+        a.holdSeat = false
         return
       }
     }
@@ -622,6 +660,8 @@ export function createScene(
         a.targetLevel = 0
         a.seatYaw = deskSeatYaw(desk)
         a.arrivalFace = deskSeatYaw(desk)
+        a.holdFace = a.arrivalFace
+        a.holdSeat = true
         a.activity = 'typing'
         return
       }
@@ -688,6 +728,10 @@ export function createScene(
     a.arrivalFace = spot.face
     a.seatYaw = spot.seated || spot.bench ? spot.face : undefined
     a.targetWater = spot.water
+    // Remember it: `arrivalFace` is cleared every frame, so without this the turn-to-target
+    // never happens for a body that has stopped (see the 0b branch).
+    a.holdFace = spot.face
+    a.holdSeat = !!(spot.seated || spot.bench)
   }
 
   // ---- simulation ------------------------------------------------------------
@@ -698,6 +742,8 @@ export function createScene(
   let last = performance.now()
   const stats = { frames: 0, lastDt: 0, fps: 0, fpsAt: performance.now(), fpsFrames: 0 }
   let quality = 2
+  /** Set by the test stepping hook: advance the simulation without drawing. */
+  let skipRender = false
   const qualityLocked = false
 
   function setQuality(q: number) {
@@ -758,9 +804,12 @@ export function createScene(
     if (out.length) events.onSaveAvatars(out)
   }
 
-  function frame(now: number) {
+  function frame(now: number, forcedDt?: number) {
     raf = requestAnimationFrame(frame)
-    const dt = Math.min(0.25, (now - last) / 1000)
+    // `forcedDt` lets a test step the simulation at a controlled rate. Deriving `dt` from
+    // `performance.now()` alone makes a test useless: calling this in a tight loop yields
+    // `now - last` of ~0, so every body stands still while still reporting `walking = 1`.
+    const dt = forcedDt !== undefined ? forcedDt : Math.min(0.25, (now - last) / 1000)
     last = now
     t += dt
 
@@ -981,8 +1030,13 @@ export function createScene(
     // leaving a second one resting in the hooks draws two bars in the same place.
     office.setRackBarVisible(!avatars.some((a) => a.activity === 'benchpress' && a.walking < 0.5))
     controls.update()
-    renderer.render(scene, camera)
-    labelRenderer.render(scene, camera)
+    // A test may drive the simulation without paying for WebGL: rendering every step made
+    // even 30 frames too slow to measure over a debugger (software GL), which is what made a
+    // time-dependent behaviour — a body turning to face its seat — unverifiable.
+    if (!skipRender) {
+      renderer.render(scene, camera)
+      labelRenderer.render(scene, camera)
+    }
   }
 
   // ---- pointer picking -------------------------------------------------------
@@ -1127,6 +1181,19 @@ export function createScene(
       z: a.avatar.group.position.z,
       level: a.level,
       activity: a.activity,
+      // The rendered rotation and the pose actually in effect. Without these a snapshot can
+      // only say WHERE a body is, never which way it ended up pointing — and "which way it
+      // points" is exactly the thing that was wrong.
+      rotation: a.avatar.group.rotation.y,
+      shown: a.walking > 0.5 ? 'walking' : a.activity,
+      walking: a.walking,
+      seated: a.seatYaw !== undefined,
+      // The internals: what the body is steering toward, and where it thinks it is going.
+      face: a.face,
+      arrivalFace: a.arrivalFace,
+      target: a.target ? { x: a.target.x, z: a.target.z } : null,
+      spotKey: a.spotKey,
+      hasPath: a.path.length > 0,
     }))
   }
 
@@ -1149,6 +1216,29 @@ export function createScene(
     resize,
     dispose,
     avatarSnapshot,
+    /**
+     * Advance the simulation by hand, for tests.
+     *
+     * `requestAnimationFrame` does not tick in a headless or BACKGROUND tab, so a browser
+     * probe can read a snapshot but can never watch a body turn: measured `stats.frames` was
+     * 35 after 20 s and `fps` 0. Without this there is no way to check a time-dependent
+     * behaviour (a body rotating to face its seat arrives over several frames) outside a
+     * visible window.
+     *
+     * Calls the same `frame()` the rAF loop calls, so a test drives the real code path.
+     */
+    stepForTest(dtSeconds = 1 / 60, steps = 1) {
+      skipRender = true
+      try {
+        for (let i = 0; i < steps; i++) {
+          // `t` advances inside frame() now, from this dt — not twice.
+          frame(performance.now(), dtSeconds)
+        }
+      } finally {
+        skipRender = false
+      }
+      return t
+    },
     /** Room the live meeting is using (for the UI). */
     get meetingRoom() {
       return meetingRoom

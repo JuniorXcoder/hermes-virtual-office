@@ -626,7 +626,7 @@ export const SEATS = {
   /** Poolside bench: surface 0.505. */
   bench: { hip: 0.516, thigh: -86, knee: 90.75, thickness: 0.3 },
   /** Pantry bar stool: surface 0.644, feet rest on the foot ring at 0.24. */
-  stool: { hip: 0.655, thigh: -92, knee: 64, thickness: 0.07, footY: 0.24 },
+  stool: { hip: 0.655, thigh: -95, knee: 110, thickness: 0.07, footY: 0.24 },
 } as const
 export type SeatName = keyof typeof SEATS
 export const seatTop = (s: SeatName) => SEATS[s].hip - HIP_LIFT
