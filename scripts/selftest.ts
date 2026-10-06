@@ -2469,6 +2469,59 @@ void (async () => {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // THE WAIST MUST NOT STICK BETWEEN POSES.
+  //
+  // Only three poses set the waist, and nothing reset it, so a body that had swum ONCE kept
+  // a 90-degree waist forever: every later pose, walking included, was drawn folded over.
+  // That was a regression I introduced with the waist joint, and the user caught it —
+  // "mereka jalan sambil pada bongkok".
+  //
+  // The measurement above cannot see it, because it builds a FRESH avatar per pose. This
+  // drives ONE avatar through a sequence and checks that an upright pose is upright whatever
+  // came before it.
+  //
+  // It ALSO covers the same bug class in `chest.rotation.y`: `walkLegs` never set the torso,
+  // so a body that had just swum walked with the swimmer's 8-degree roll for its whole
+  // journey. Every joint a pose can move is therefore checked for a NEUTRAL pose, not just
+  // the waist.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const av = buildAvatar('backend')
+    const a = { avatar: av, activity: 'idle' as Activity, ease: 1, phase: 0.3, meetingTalking: false }
+    const SEQ: Activity[] = ['idle', 'swim', 'walking', 'typing', 'benchpress', 'walking', 'coffee', 'recline', 'walking', 'bbq']
+    for (const act of SEQ) {
+      a.activity = act
+      for (let i = 0; i < 8; i++) animate(a, i * 0.1, 1 / 60)
+      av.group.updateMatrixWorld(true)
+      const chest = av.chest.getWorldPosition(new THREE.Vector3())
+      const hip = av.hips.getWorldPosition(new THREE.Vector3())
+      const gap = chest.y - hip.y
+      const waistDeg = (av.waist.rotation.x * 180) / Math.PI
+      if (act === 'walking' || act === 'idle' || act === 'typing' || act === 'coffee' || act === 'bbq') {
+        if (Math.abs(waistDeg) > 0.01) {
+          problems.push(`'${act}' kept a ${waistDeg.toFixed(0)} deg waist from an earlier pose`)
+        }
+        if (gap < 0.55) problems.push(`'${act}' is hunched: chest-hip gap ${gap.toFixed(3)}`)
+      }
+    }
+
+    // THE WHOLE TORSO, for every transition: a lying pose followed by a walking one must
+    // leave no roll behind. `chest.rotation.y` was leaking 8 degrees from the swimmer.
+    for (const first of ['swim', 'recline', 'meeting', 'garden', 'coffee', 'eat'] as Activity[]) {
+      a.activity = first
+      for (let i = 0; i < 8; i++) animate(a, i * 0.1, 1 / 60)
+      a.activity = 'walking'
+      for (let i = 0; i < 8; i++) animate(a, i * 0.1, 1 / 60)
+      const roll = Math.abs((av.chest.rotation.y * 180) / Math.PI)
+      const lean = Math.abs((av.chest.rotation.x * 180) / Math.PI)
+      if (roll > 0.01) problems.push(`walking after '${first}' kept a ${roll.toFixed(1)} deg torso roll`)
+      if (lean > 0.01) problems.push(`walking after '${first}' kept a ${lean.toFixed(1)} deg torso lean`)
+    }
+    check('the waist resets between poses, so nobody walks hunched', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // THE SWIMMER FLOATS AT THE WATER SURFACE, WHICH IS WHERE THE PLANE IS (poin 2).
   //
   // `WATER_Y` is the surface as DRAWN, and the pose reads the same constant. The body's

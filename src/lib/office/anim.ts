@@ -239,6 +239,12 @@ function walkLegs(a: AnimAgent, t: number, speed: number) {
   const av = a.avatar
   const sw = 34 * D * speed
   av.hips.position.y = HIP_STAND - 0.03 + Math.abs(wave(t, 9, a.phase)) * 0.05
+  // The torso must be RESET here. This function sets the legs and arms and leaves the
+  // chest alone, so a body that had just swum kept the swimmer's torso ROLL — 8 degrees of
+  // twist — for the whole walk back to its desk. Measured: `walking` reported 8.00 after a
+  // swim and 0.00 from a standing start, which is the leak.
+  av.chest.rotation.x = 0
+  av.chest.rotation.y = 0
   const [L, R] = av.legs
   L.shoulder.rotation.x = wave(t, 9, a.phase) * sw
   R.shoulder.rotation.x = wave(t, 9, a.phase + Math.PI) * sw
@@ -925,6 +931,13 @@ export function animate(a: AnimAgent, t: number, dt: number) {
   held.burger.visible = false
   held.pizza.visible = false
   held.tongs.visible = false
+  // THE WAIST IS RESET EVERY FRAME, for the same reason the equipment is.
+  //
+  // Only three poses set it (swim, benchpress, recline), so without this a body that had
+  // swum once kept a 90-degree waist FOREVER — every later pose, walking included, was
+  // drawn folded over. That is the "they walk around hunched" report, and it is exactly the
+  // bug class this function already existed to prevent for held items.
+  a.avatar.waist.rotation.set(0, 0, 0)
   const fn = TABLE[a.activity] || TABLE.idle
   fn(a, t)
   // blend the first frames in from a neutral posture
