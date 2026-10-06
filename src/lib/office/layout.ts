@@ -1,3 +1,4 @@
+import type { Activity } from './anim'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 
 /**
@@ -474,12 +475,23 @@ export const POOL = { x: 0, z: 4, w: 12, d: 7, waterY: 0.05, deck: 1.2 }
 export const GYM = {
   /** Mat rectangle — 13 x 7 m of open courtyard north of the pool. */
   x1: -6.5, x2: 6.5, z1: -9.0, z2: -2.4,
-  /** The barbell rack, on the mat's west half. */
-  rack: { x: -4.2, z: -5.6 },
+  /** The barbell rack, on the mat's west half. `barY` is where the bar rests. */
+  rack: { x: -4.2, z: -5.6, barY: 1.32 },
   /** Dumbbell rack, on the mat's east half. */
   dumbbells: { x: 4.2, z: -5.6 },
-  /** Pull-up rig: two posts and a bar, across the mat's north edge. */
-  rig: { x: 0, z: -7.6, span: 3.0 },
+  /**
+   * Pull-up rig: two posts and a bar, across the mat's north edge.
+   *
+   * `barY` is the height of the bar you hang from. It is DATA because the pull-up
+   * pose has to solve the body's height so the fists land ON this bar — if the mesh
+   * and the animation each carried their own copy of 2.39, a change to one would
+   * silently leave the avatar hanging in mid-air beside the bar.
+   *
+   * `crossBarY` is the lower rail. It is data for the same reason: a body hanging from
+   * `barY` sweeps its head through 1.62..1.97, so a rail at 1.70 passes THROUGH the
+   * head. The value is chosen to clear that band, and the self-test asserts it.
+   */
+  rig: { x: 0, z: -7.6, span: 3.0, barY: 2.39, crossBarY: 1.4 },
 }
 
 /**
@@ -885,10 +897,21 @@ export const FOOTPRINTS: Footprint[] = [
 
 /* ------------------------------------------------------------------ spots -- */
 
+/**
+ * Activities an idle spot may hold.
+ *
+ * DERIVED from the pose table, not a second copy of it. The two lists were separate
+ * and drifted: a spot named a pose the animator did not implement, and adding a pose
+ * did not make it available to a spot. `Exclude` names only the poses that belong to
+ * WORK rather than to a place — a body is 'typing' because it has a desk and 'walking'
+ * because it is en route, and neither is somewhere you can send an idle agent.
+ */
+export type IdleActivity = Exclude<Activity, 'walking' | 'typing' | 'gaming' | 'dart'>
+
 export type IdleSpot = {
   x: number
   z: number
-  act: 'idle' | 'sofa' | 'garden' | 'read' | 'coffee' | 'pool' | 'gym' | 'bbq' | 'meeting'
+  act: IdleActivity
   seated?: boolean
   face: number
   level: 0 | 1
@@ -911,12 +934,20 @@ export const IDLE_SPOTS: IdleSpot[] = [
   ...POOL_BENCHES.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
   ...SUNBEDS.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
 
-  /* ---- the gym: stand on the mat, or hang off the rig -------------------- */
-  { x: GYM.rack.x + 1.7, z: GYM.rack.z + 0.9, act: 'gym', face: -Math.PI / 2, level: 0 },
-  { x: GYM.rack.x + 0.6, z: GYM.rack.z + 1.6, act: 'gym', face: Math.PI, level: 0 },
-  { x: GYM.dumbbells.x - 0.9, z: GYM.dumbbells.z + 1.4, act: 'gym', face: Math.PI, level: 0 },
-  { x: GYM.rig.x, z: GYM.rig.z + 1.1, act: 'gym', face: Math.PI, level: 0 },
-  { x: GYM.rig.x + GYM.rig.span / 2 + 0.7, z: GYM.rig.z, act: 'gym', face: -Math.PI / 2, level: 0 },
+  /* ---- the gym: one spot per station, and each station's pose uses it ----- */
+  // The pose is chosen by the SPOT, not by the room: a body at the barbell rack holds
+  // the barbell, a body under the rig hangs from it, a body at the dumbbell rack curls
+  // them. Standing on the mat doing an air-press was the old behaviour, and it is why
+  // the weights looked like scenery nobody touched.
+  { x: GYM.rack.x + 1.15, z: GYM.rack.z + 0.75, act: 'barbell', face: -Math.PI / 2, level: 0 },
+  { x: GYM.rack.x + 0.45, z: GYM.rack.z + 1.55, act: 'barbell', face: Math.PI, level: 0 },
+  // In FRONT of the dumbbell rack (the rack's own footprint spans x 3.1..5.3,
+  // z -6.05..-5.15, so a spot at its centre is inside it). Facing north to the rack.
+  { x: GYM.dumbbells.x - 0.6, z: GYM.dumbbells.z + 0.9, act: 'dumbbell', face: Math.PI, level: 0 },
+  { x: GYM.dumbbells.x + 0.2, z: GYM.dumbbells.z + 1.5, act: 'dumbbell', face: Math.PI, level: 0 },
+  // directly under the bar: the pull-up pose solves its own height, so the body hangs
+  // with its feet off the mat rather than standing beside the rig.
+  { x: GYM.rig.x, z: GYM.rig.z, act: 'pullup', face: Math.PI, level: 0 },
 
   /* ---- the BBQ: stand at the counter, and at the prep end ---------------- */
   { x: BBQ.x - 1.5, z: BBQ.z, act: 'bbq', face: Math.PI / 2, level: 0 },

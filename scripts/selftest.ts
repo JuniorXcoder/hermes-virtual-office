@@ -61,7 +61,8 @@ import { dummyRoster } from '../src/lib/office/dummy-roster'
 import { buildOffice } from '../src/lib/office/build'
 import type { IdleSpot, MeetingRoomId } from '../src/lib/office/layout'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
-import { buildAvatar } from '../src/lib/office/avatar'
+import { buildAvatar, FOREARM } from '../src/lib/office/avatar'
+import { animate, type Activity } from '../src/lib/office/anim'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
 import { hide, isHidden, show, visible, visibleNames } from '../src/lib/hermes/office-membership'
@@ -1679,6 +1680,114 @@ void (async () => {
         urlLines.length <= 3 && urlLines.every((l) => l.length <= 26),
       JSON.stringify({ wrapped, urlLines }),
     )
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // HELD EQUIPMENT MUST LAND IN THE HANDS.
+  //
+  // The barbell is positioned by a forward-kinematics walk in anim.ts, and the item is
+  // parented to the avatar group. Both of those were wrong in the first cut: the walk
+  // returned the fist in the AVATAR's frame while the item hung off the CHEST, so the
+  // chest transform applied twice and the bar floated 1.67 m from the hands. A missing
+  // term in that walk is invisible in a screenshot — the bar still looks like a bar —
+  // so it is measured here instead: the item's world position against the fist's world
+  // position, straight out of the scene graph.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const av = buildAvatar('backend')
+    const anim = { avatar: av, activity: 'barbell' as Activity, ease: 1, phase: 0, meetingTalking: false }
+    const fistLocal = new THREE.Vector3(0, -(FOREARM + 0.03), 0)
+    const fistWorld = (side: 0 | 1) => {
+      av.group.updateMatrixWorld(true)
+      return av.arms[side].elbow.localToWorld(fistLocal.clone())
+    }
+
+    // 1. the bar's grip bands sit in the fists, through the whole press cycle
+    let worstGrip = 0
+    for (let i = 0; i <= 60; i++) {
+      anim.activity = 'barbell'
+      animate(anim, i * 0.09, 0)
+      av.group.updateMatrixWorld(true)
+      const bar = av.held.barbell
+      const p = new THREE.Vector3()
+      bar.getWorldPosition(p)
+      const axis = new THREE.Vector3(1, 0, 0).applyQuaternion(bar.getWorldQuaternion(new THREE.Quaternion()))
+      worstGrip = Math.max(
+        worstGrip,
+        p.clone().addScaledVector(axis, -0.41).distanceTo(fistWorld(0)),
+        p.clone().addScaledVector(axis, 0.41).distanceTo(fistWorld(1)),
+      )
+    }
+    // 0.02 m is the grip band's own radius — the hand closes AROUND the bar, so the
+    // centres do not coincide and a tolerance of zero would be wrong.
+    if (worstGrip > 0.03) problems.push(`barbell grip misses the fists by ${worstGrip.toFixed(3)} m`)
+
+    // 2. a dumbbell sits in each fist
+    let worstDumbbell = 0
+    for (let i = 0; i <= 60; i++) {
+      anim.activity = 'dumbbell'
+      animate(anim, i * 0.09, 0)
+      av.group.updateMatrixWorld(true)
+      for (const side of [0, 1] as const) {
+        const p = new THREE.Vector3()
+        av.held.dumbbells[side].getWorldPosition(p)
+        worstDumbbell = Math.max(worstDumbbell, p.distanceTo(fistWorld(side)))
+      }
+    }
+    if (worstDumbbell > 0.03) problems.push(`dumbbell misses the fist by ${worstDumbbell.toFixed(3)} m`)
+
+    // 3. a pull-up's fists are ON the rig's bar, and the feet are OFF the floor. The
+    //    pose solves its own height against GYM.rig.barY, so this also proves the mesh
+    //    and the animation still agree about where that bar is.
+    let worstBar = 0
+    let lowestFoot = 9
+    for (let i = 0; i <= 60; i++) {
+      anim.activity = 'pullup'
+      animate(anim, i * 0.09, 0)
+      av.group.updateMatrixWorld(true)
+      worstBar = Math.max(worstBar, Math.abs(fistWorld(0).y - GYM.rig.barY))
+      const knee = new THREE.Vector3()
+      av.legs[0].elbow.getWorldPosition(knee)
+      lowestFoot = Math.min(lowestFoot, knee.y)
+    }
+    if (worstBar > 0.02) problems.push(`a pull-up hangs ${worstBar.toFixed(3)} m off the rig's bar`)
+    if (lowestFoot < 0.25) problems.push(`a pull-up's feet are only ${lowestFoot.toFixed(2)} m up — it is standing`)
+
+    // 4. equipment must not leak into another pose: an avatar that leaves the gym
+    //    carrying the barbell is worse than one that never picked it up.
+    const leaks: string[] = []
+    for (const act of ['idle', 'walking', 'typing', 'coffee', 'bbq', 'pool'] as Activity[]) {
+      anim.activity = act
+      animate(anim, 1.5, 0)
+      if (av.held.barbell.visible) leaks.push(`${act}:barbell`)
+      if (av.held.dumbbells[0].visible || av.held.dumbbells[1].visible) leaks.push(`${act}:dumbbell`)
+    }
+    if (leaks.length) problems.push(`equipment shown in the wrong pose: ${leaks.join(', ')}`)
+
+    // 5. the rig's own cross-bar must not pass through the hanging body. The rail was
+    //    at 1.70 and a hanging head sweeps 1.62..1.97, so it went straight through the
+    //    head. Both numbers are data now, and this compares them.
+    {
+      let lo = 9
+      let hi = -9
+      for (let i = 0; i <= 60; i++) {
+        anim.activity = 'pullup'
+        animate(anim, i * 0.09, 0)
+        av.group.updateMatrixWorld(true)
+        const head = new THREE.Vector3()
+        av.head.getWorldPosition(head)
+        lo = Math.min(lo, head.y - 0.155)
+        hi = Math.max(hi, head.y + 0.155)
+      }
+      const rail = GYM.rig.crossBarY
+      if (rail > lo && rail < hi) {
+        problems.push(`the rig's cross-bar (${rail}) is inside the hanging head's band ${lo.toFixed(2)}..${hi.toFixed(2)}`)
+      }
+    }
+
+    check('held equipment sits in the hands, and only while it is being used',
+      problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

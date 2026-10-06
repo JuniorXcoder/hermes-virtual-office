@@ -505,7 +505,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       // the bar, resting in the hooks
       const bar = cyl(0.035, 0.035, 2.2, 0xb9c0c6, 12, 0.85)
       bar.rotation.z = Math.PI / 2
-      bar.position.set(0, 1.32, 0)
+      bar.position.set(0, GYM.rack.barY, 0)
       g.add(bar)
       // plates, biggest inboard
       for (const side of [-1, 1]) {
@@ -516,7 +516,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
         ] as const) {
           const plate = cyl(r, r, 0.07, 0x24282c, 18, 0.55)
           plate.rotation.z = Math.PI / 2
-          plate.position.set(side * off, 1.32, 0)
+          plate.position.set(side * off, GYM.rack.barY, 0)
           g.add(plate)
         }
       }
@@ -591,12 +591,17 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       // the bar you hang from
       const bar = cyl(0.032, 0.032, GYM.rig.span + 0.12, 0xb9c0c6, 12, 0.85)
       bar.rotation.z = Math.PI / 2
-      bar.position.set(0, H - 0.06, 0)
+      bar.position.set(0, GYM.rig.barY, 0)
       g.add(bar)
-      // a lower cross-bar, so it reads as a rig and not a doorway
+      // A lower cross-bar, so it reads as a rig and not a doorway.
+      //
+      // 1.40, not the 1.70 it was: a body hanging from the top bar has its head between
+      // y 1.62 and 1.97 (the head centre moves as the pull-up rises), and 1.70 is exactly
+      // inside that band — the head passed through the bar. 1.40 clears the lowest head
+      // position by 6 cm and still reads as structure.
       const low = cyl(0.026, 0.026, GYM.rig.span, 0x8f979d, 10, 0.8)
       low.rotation.z = Math.PI / 2
-      low.position.set(0, H - 0.75, 0)
+      low.position.set(0, GYM.rig.crossBarY, 0)
       g.add(low)
       // two hanging grips
       for (const gx of [-0.5, 0.5]) {

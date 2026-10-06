@@ -28,6 +28,18 @@ export type Avatar = {
   arms: [Limb, Limb]
   legs: [Limb, Limb]
   badge: THREE.Mesh
+  /**
+   * Equipment the avatar can hold.
+   *
+   * A pose makes an item visible and puts it where the fists are; everything not held
+   * stays hidden. These are parented to the CHEST rather than to the scene, so they
+   * stay attached while the body turns and walks without the scene having to track
+   * them.
+   */
+  held: {
+    barbell: THREE.Group
+    dumbbells: [THREE.Group, THREE.Group]
+  }
 }
 
 /* ------------------------------------------------------------ proportions -- */
@@ -35,17 +47,111 @@ export const HIP_STAND = 0.98
 const TORSO_H = 0.66
 const TORSO_W = 0.42
 const TORSO_D = 0.24
-const CHEST_Y = TORSO_H // chest group sits on top of the torso
-const SHOULDER_Y = 0.14 // shoulder joint below the chest top
-const SHOULDER_X = 0.25
-const UPPER_ARM = 0.32
-const FOREARM = 0.30
+/** The chest group sits on top of the torso; its Y is the shoulder's origin. */
+export const CHEST_Y = TORSO_H
+/** Shoulder joint, below the chest top. */
+export const SHOULDER_Y = 0.14
+export const SHOULDER_X = 0.25
+export const UPPER_ARM = 0.32
+export const FOREARM = 0.30
+/** Elbow joint to the fist's centre — the hand mesh's own offset. */
+export const FIST_FROM_ELBOW = FOREARM + 0.03
 const HIP_X = 0.11
 const THIGH = 0.48
 const SHIN = 0.46
 
 const mat = (color: number, rough = 0.7) =>
   new THREE.MeshStandardMaterial({ color, roughness: rough })
+
+/* -------------------------------------------------------- held equipment -- */
+
+/**
+ * Shared buffers for held equipment.
+ *
+ * Eleven avatars each carrying their own copy of a barbell would be eleven identical
+ * sets of buffers, so the geometry and the materials live at module scope and only the
+ * meshes are per-avatar.
+ */
+const STEEL = new THREE.MeshStandardMaterial({ color: 0xb9c0c6, metalness: 0.4, roughness: 0.3 })
+const KNURL = new THREE.MeshStandardMaterial({ color: 0x6f767c, metalness: 0.3, roughness: 0.9 })
+const IRON = new THREE.MeshStandardMaterial({ color: 0x24282c, metalness: 0.5, roughness: 0.55 })
+
+const BAR_GEO = new THREE.CylinderGeometry(0.031, 0.031, 1.9, 12)
+const BAR_GRIP_GEO = new THREE.CylinderGeometry(0.037, 0.037, 0.26, 12)
+const COLLAR_GEO = new THREE.CylinderGeometry(0.05, 0.05, 0.05, 12)
+const PLATE_GEOS = [
+  new THREE.CylinderGeometry(0.21, 0.21, 0.065, 18),
+  new THREE.CylinderGeometry(0.18, 0.18, 0.065, 18),
+  new THREE.CylinderGeometry(0.14, 0.14, 0.065, 18),
+]
+const DUMBBELL_HANDLE_GEO = new THREE.CylinderGeometry(0.022, 0.022, 0.22, 8)
+const DUMBBELL_HEAD_GEO = new THREE.CylinderGeometry(0.075, 0.075, 0.07, 14)
+
+/**
+ * A loaded barbell, sized from the GRIP and not from a real bar.
+ *
+ * The fists in the press pose are 0.82 m apart, so a 2.2 m Olympic bar would read as
+ * scaffolding around a 1.8 m figure. 1.9 m with the plates outboard of the grip looks
+ * like a bar somebody is actually holding, and the plate radii match the rack's so it
+ * reads as the same object that was on it.
+ *
+ * The bar lies along local +X and is centred on the origin, so a pose places it by
+ * putting its origin at the midpoint of the two fists.
+ */
+function buildBarbell(): THREE.Group {
+  const g = new THREE.Group()
+  const bar = new THREE.Mesh(BAR_GEO, STEEL)
+  bar.rotation.z = Math.PI / 2
+  g.add(bar)
+  for (const side of [-1, 1]) {
+    // Knurled bands exactly where the fists close: the grip is what makes the bar read
+    // as HELD rather than as a prop balanced on the hands.
+    const grip = new THREE.Mesh(BAR_GRIP_GEO, KNURL)
+    grip.rotation.z = Math.PI / 2
+    grip.position.x = side * 0.41
+    g.add(grip)
+    const collar = new THREE.Mesh(COLLAR_GEO, IRON)
+    collar.rotation.z = Math.PI / 2
+    collar.position.x = side * 0.66
+    g.add(collar)
+    // plates, biggest inboard — the same grading as the rack's
+    for (const [i, off] of [0.73, 0.82, 0.905].entries()) {
+      const plate = new THREE.Mesh(PLATE_GEOS[i], IRON)
+      plate.rotation.z = Math.PI / 2
+      plate.position.x = side * off
+      g.add(plate)
+    }
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
+
+/**
+ * A dumbbell. The handle lies along local +X, level with the fist that holds it.
+ *
+ * Deliberately not following the forearm: a curl is done with the wrist locked, so the
+ * bell stays level while the arm swings under it.
+ */
+function buildDumbbell(): THREE.Group {
+  const g = new THREE.Group()
+  const handle = new THREE.Mesh(DUMBBELL_HANDLE_GEO, STEEL)
+  handle.rotation.z = Math.PI / 2
+  g.add(handle)
+  for (const side of [-1, 1]) {
+    const head = new THREE.Mesh(DUMBBELL_HEAD_GEO, IRON)
+    head.rotation.z = Math.PI / 2
+    head.position.x = side * 0.115
+    g.add(head)
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
 
 export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   const group = new THREE.Group()
@@ -131,6 +237,18 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   }
   const arms: [Limb, Limb] = [makeArm(-1), makeArm(1)]
 
+  // ---- equipment, hidden until a pose picks it up
+  //
+  // Parented to the GROUP, not to the chest. `fistInAvatar` in anim.ts resolves the
+  // fist all the way out to the avatar's own frame (fist -> elbow -> shoulder -> chest
+  // -> hips -> group), so the item's position is expressed in that frame too. Hanging
+  // it off the chest applied the chest's transform a second time and the bar floated
+  // 1.67 m from the hands.
+  const barbell = buildBarbell()
+  group.add(barbell)
+  const dumbbells: [THREE.Group, THREE.Group] = [buildDumbbell(), buildDumbbell()]
+  for (const d of dumbbells) group.add(d)
+
   group.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
       o.castShadow = true
@@ -138,5 +256,5 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     }
   })
 
-  return { group, chest, neck, head, hips, arms, legs, badge }
+  return { group, chest, neck, head, hips, arms, legs, badge, held: { barbell, dumbbells } }
 }
