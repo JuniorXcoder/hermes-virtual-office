@@ -22,7 +22,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRe
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
-import { blocked, onStairLanding, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
+import { blocked, onStairArea, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
 import {
   CONFERENCE_CHAIRS,
   DOOR,
@@ -637,13 +637,12 @@ export function createScene(
         const dist = tmp.length()
         if (dist < 0.18) {
           a.path.shift()
-          // A waypoint that changes floor is the stair hand-off.
+          // A waypoint that changes floor is the stair hand-off. Do NOT snap the
+          // height here: on the way down the body is standing on the landing at
+          // corridor level and still has to DESCEND, so snapping to 0 would drop it
+          // through the flight. The per-frame height below reads the ramp instead.
           if (leg.level !== a.level) {
             a.level = leg.level
-            // Do NOT snap to the new height: the body is standing on the landing,
-            // which is at corridor level, so the y it already has is close. The
-            // climb itself is animated by `stairHeightAt` below.
-            g.position.y = a.level * LEVEL_H
           }
           if (!a.path.length) {
             g.position.set(a.target.x, a.level * LEVEL_H, a.target.z)
@@ -658,24 +657,29 @@ export function createScene(
           const step = Math.min(SPEED * dt, dist)
           const nx = g.position.x + tmp.x * step
           const nz = g.position.z + tmp.z * step
-          if (!blocked(nx, nz, BODY_R * 0.9, { level: a.level })) {
+          // A body walking the stair must not collide with the ramp it is standing
+          // on; everyone else is stopped by it (A* never routes through the flight,
+          // so only a body explicitly sent up or down is ever inside this box).
+          const climbing = onStairArea(g.position.x, g.position.z)
+          if (!blocked(nx, nz, BODY_R * 0.9, { level: a.level, onStair: climbing })) {
             g.position.set(nx, g.position.y, nz)
           } else {
             g.position.x += tmp.x * Math.min(0.05, step)
             g.position.z += tmp.z * Math.min(0.05, step)
           }
-          // RIDE THE RAMP. The stair is an external flight, so a body walking its
-          // footprint must RISE with it instead of gliding at floor height and then
-          // popping up 3.4 m at the landing. `stairHeightAt` is a pure function of
-          // the position, so the height is always exactly the tread underfoot.
-          if (a.level === 0) {
-            const h = stairHeightAt(g.position.x, g.position.z)
-            g.position.y = h ?? 0
-          } else if (onStairLanding(g.position.x, g.position.z)) {
-            g.position.y = LEVEL_H
-          }
           a.face = Math.atan2(tmp.x, tmp.z)
           a.walking = 1
+        }
+
+        // HEIGHT. On the stair the surface is a ramp, so the height is a pure
+        // function of the position — that is what makes the climb continuous going
+        // up AND coming down. Everywhere else it is simply the floor of the level
+        // the body is on.
+        {
+          const h = onStairArea(g.position.x, g.position.z)
+            ? stairHeightAt(g.position.x, g.position.z)
+            : null
+          g.position.y = h ?? a.level * LEVEL_H
         }
       } else {
         a.walking = 0

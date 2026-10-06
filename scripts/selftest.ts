@@ -45,7 +45,7 @@ import {
   WALL_H,
   WALL_T,
 } from '../src/lib/office/layout'
-import { BODY_R, blocked, route, routeBetween, stairCentre } from '../src/lib/office/nav'
+import { BODY_R, blocked, onStairArea, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { dummyRoster } from '../src/lib/office/dummy-roster'
 import { buildOffice } from '../src/lib/office/build'
 import type { MeetingRoomId } from '../src/lib/office/layout'
@@ -625,6 +625,119 @@ console.log('geometry')
     if (topH !== LEVEL_H) problems.push(`top of flight is at ${topH}, want ${LEVEL_H}`)
   }
   check('the external stair links the courtyard to every exec room', problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AN AVATAR MUST BE ABLE TO WALK THE STAIR.
+//
+// This is the test that was missing. Everything above proves the stair EXISTS and
+// that A* can find a route; none of it proves a BODY can traverse it. A body could
+// still jam on the ramp, pop 3.4 m at the landing, or dead-end in mid-air.
+//
+// The loop below re-implements `scene.ts`'s mover exactly — same arrival radius
+// (0.18), same speed (3.4 m/s), same collision call, same height rule — and walks
+// a body frame by frame at 60 fps.
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  type Body = { x: number; z: number; y: number; level: 0 | 1 }
+  const stepBody = (a: Body, path: { x: number; z: number; level: 0 | 1 }[], dt: number) => {
+    if (!path.length) return true
+    const leg = path[0]
+    const dx = leg.x - a.x
+    const dz = leg.z - a.z
+    const dist = Math.hypot(dx, dz)
+    if (dist < 0.18) {
+      path.shift()
+      if (leg.level !== a.level) a.level = leg.level
+      if (!path.length) {
+        a.x = leg.x
+        a.z = leg.z
+        return true
+      }
+      return false
+    }
+    const inv = 1 / dist
+    const stepLen = Math.min(3.4 * dt, dist)
+    const nx = a.x + dx * inv * stepLen
+    const nz = a.z + dz * inv * stepLen
+    const climbing = onStairArea(a.x, a.z)
+    if (!blocked(nx, nz, BODY_R * 0.9, { level: a.level, onStair: climbing })) {
+      a.x = nx
+      a.z = nz
+    } else {
+      a.x += dx * inv * Math.min(0.05, stepLen)
+      a.z += dz * inv * Math.min(0.05, stepLen)
+    }
+    const h = onStairArea(a.x, a.z) ? stairHeightAt(a.x, a.z) : null
+    a.y = h ?? a.level * LEVEL_H
+    return false
+  }
+  const walk = (from: Body, to: { x: number; z: number; level: 0 | 1 }) => {
+    const path = routeBetween(from, to)
+    if (!path.length) return { ok: false, why: 'no route', maxJump: 0 }
+    const dt = 1 / 60
+    let guard = 0
+    let stuck = 0
+    let maxJump = 0
+    let prevY = from.y
+    let lx = from.x
+    let lz = from.z
+    while (path.length && guard++ < 4000) {
+      stepBody(from, path, dt)
+      maxJump = Math.max(maxJump, Math.abs(from.y - prevY))
+      prevY = from.y
+      const moved = Math.hypot(from.x - lx, from.z - lz)
+      lx = from.x
+      lz = from.z
+      stuck = moved < 0.0005 ? stuck + 1 : 0
+      if (stuck > 120) return { ok: false, why: `stuck at (${from.x.toFixed(1)},${from.z.toFixed(1)})`, maxJump }
+    }
+    return { ok: !path.length, why: path.length ? 'timeout' : '', maxJump }
+  }
+
+  const problems: string[] = []
+
+  // 1. UP: from the courtyard into every meeting room.
+  for (const id of MEETING_ROOM_IDS) {
+    const seat = MEETING_ROOMS[id].seats[0]
+    const body: Body = { x: 0, z: 6, y: 0, level: 0 }
+    const r = walk(body, { x: seat.x, z: seat.z, level: 1 })
+    if (!r.ok) problems.push(`up->${id}: ${r.why}`)
+    else if (body.level !== 1 || Math.abs(body.y - LEVEL_H) > 0.01) {
+      problems.push(`up->${id}: ended at y=${body.y.toFixed(2)} L${body.level}`)
+    }
+  }
+  // 2. DOWN: back out of a meeting room to the courtyard.
+  {
+    const seat = MEETING_ROOMS.rinjani.seats[0]
+    const body: Body = { x: seat.x, z: seat.z, y: LEVEL_H, level: 1 }
+    const r = walk(body, { x: 0, z: 6, level: 0 })
+    if (!r.ok) problems.push(`down: ${r.why}`)
+    else if (body.level !== 0 || Math.abs(body.y) > 0.01) {
+      problems.push(`down: ended at y=${body.y.toFixed(2)} L${body.level}`)
+    }
+  }
+  // 3. NO TELEPORT: the climb is continuous. At 3.4 m/s and 60 fps a frame covers
+  //    ~5.7 cm of run, ~3.5 cm of rise on this ramp; 15 cm allows for the snap onto
+  //    the final waypoint but still catches a 3.4 m jump.
+  {
+    const body: Body = { x: 0, z: 6, y: 0, level: 0 }
+    const seat = MEETING_ROOMS.bromo.seats[0]
+    const r = walk(body, { x: seat.x, z: seat.z, level: 1 })
+    if (r.maxJump > 0.15) problems.push(`climb teleports: ${r.maxJump.toFixed(3)} m in one frame`)
+  }
+  // 4. the flight is solid for everyone else, but passable while climbing.
+  {
+    const mid = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: (STAIRS.z2 + STAIR_FLIGHT_TOP) / 2 }
+    if (!blocked(mid.x, mid.z, BODY_R, { level: 0 })) {
+      problems.push('the flight is walkable by everyone (it should be solid)')
+    }
+    if (blocked(mid.x, mid.z, BODY_R, { level: 0, onStair: true })) {
+      problems.push('a climbing body still collides with the ramp')
+    }
+  }
+  check('an avatar can WALK the stair up and down, continuously (no teleport, no dead end)',
+    problems.length === 0, problems.join(' | '))
 }
 
 // The receptionist is ANCHORED: a body that never moves (poin 2).

@@ -623,22 +623,27 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /* ------------------------------------------------------------ level 1 -- */
   {
     const n = BARS.north
-    // Floor plate over the north bar. The stair is an EXTERNAL flight in the
-    // courtyard whose top landing reaches through the building line, so the plate
-    // needs a NOTCH at its south edge (not a hole in the middle): the landing has
-    // to come up flush with the corridor floor.
+    // Floor plate over the north bar. The stair climbs the south face and its top
+    // LANDING sits inside the building line (z -9.9..-9.0), i.e. directly under
+    // this slab — so the plate needs a NOTCH cut into its south edge, otherwise the
+    // stair climbs into solid marble.
+    //
+    // The notch opens SOUTHWARD (it is a bite out of the edge, not a hole in the
+    // middle): x across the stair, z from the edge north to just past the landing.
     const notch = {
-      x1: STAIRS.x1 - 0.2,
-      x2: STAIRS.x2 + 0.2,
-      z1: n.z2, // the building line itself
-      z2: n.z2 + 0.35, // a shallow bite out of the edge, so the landing seats into it
+      x1: STAIRS.x1 - 0.25,
+      x2: STAIRS.x2 + 0.25,
+      // EXACTLY the landing's depth. Cutting further north would leave a hole in
+      // the corridor floor beyond the landing, which a walker could fall into.
+      z1: STAIRS.z1,
+      z2: n.z2, // the south edge of the plate
     }
     const slabs: [number, number, number, number][] = [
       // west of the notch
       [n.x1, n.z1, notch.x1, n.z2],
       // east of the notch
       [notch.x2, n.z1, n.x2, n.z2],
-      // the shallow strip behind the notch, between the two side pieces
+      // the strip north of the notch, between the two side pieces
       [notch.x1, n.z1, notch.x2, notch.z1],
     ]
     for (const [x1, z1, x2, z2] of slabs) {
@@ -651,10 +656,18 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       piece.receiveShadow = true
       group.add(piece)
     }
-    // the slab's south edge (seen from the courtyard) is a fascia
-    const fascia = box(n.x2 - n.x1, 0.45, WALL_T, 0xdfe6ea, { rough: 0.85 })
-    fascia.position.set(0, LEVEL_H - 0.22, n.z2)
-    group.add(fascia)
+    // the slab's south edge (seen from the courtyard) is a fascia — BROKEN at the
+    // stair, or it would run straight across the top of the flight.
+    for (const [x1, x2] of [
+      [n.x1, notch.x1],
+      [notch.x2, n.x2],
+    ] as [number, number][]) {
+      const w = x2 - x1
+      if (w <= 0.05) continue
+      const f = box(w, 0.45, WALL_T, 0xdfe6ea, { rough: 0.85 })
+      f.position.set((x1 + x2) / 2, LEVEL_H - 0.22, n.z2)
+      group.add(f)
+    }
   }
   // level 1 outer walls (same footprint as level 0's north bar), dollhouse-cut to
   // the same 1.6 m as the ground floor so the exec floor reads from above.
@@ -687,18 +700,40 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   // full-height wall at this exact line hid every one of them from the default
   // camera. A railing keeps the floor edge real (and `LEVEL_BOUNDS` still stops a
   // walker) while letting the room read from above.
+  //
+  // It is BROKEN AT THE STAIR. A continuous pane across z=-9 walled off the very
+  // opening the stair lands in, so the top of the flight ended in glass. The pane
+  // is therefore two runs, one either side of the stair mouth, with the cap and
+  // posts following suit.
   {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(HALF_W * 2, 1.0, 0.06), glassMat)
-    rail.position.set(0, LEVEL_H + 0.5, -9)
-    group.add(rail)
-    const cap = box(HALF_W * 2, 0.07, 0.12, 0x8a8f95, { metal: 0.6, rough: 0.35 })
-    cap.position.set(0, LEVEL_H + 1.0, -9)
-    group.add(cap)
-    // posts every 4 m, so it reads as a balustrade and not a floating pane
-    for (let x = -HALF_W + 1; x <= HALF_W - 1; x += 4) {
-      const post = cyl(0.04, 0.04, 1.0, 0x8a8f95, 8, 0.6)
-      post.position.set(x, LEVEL_H + 0.5, -9)
-      group.add(post)
+    const gap = { x1: STAIRS.x1 - 0.6, x2: STAIRS.x2 + 0.6 }
+    const runs: [number, number][] = [
+      [-HALF_W, gap.x1],
+      [gap.x2, HALF_W],
+    ]
+    for (const [x1, x2] of runs) {
+      const w = x2 - x1
+      if (w <= 0.05) continue
+      const mid = (x1 + x2) / 2
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(w, 1.0, 0.06), glassMat)
+      rail.position.set(mid, LEVEL_H + 0.5, -9)
+      group.add(rail)
+      const cap = box(w, 0.07, 0.12, 0x8a8f95, { metal: 0.6, rough: 0.35 })
+      cap.position.set(mid, LEVEL_H + 1.0, -9)
+      group.add(cap)
+      // posts every 4 m, so it reads as a balustrade and not a floating pane
+      for (let x = x1 + 1; x <= x2 - 1; x += 4) {
+        const post = cyl(0.04, 0.04, 1.0, 0x8a8f95, 8, 0.6)
+        post.position.set(x, LEVEL_H + 0.5, -9)
+        group.add(post)
+      }
+    }
+    // A short return rail on each side of the mouth, so the gap reads as a real
+    // opening with edges rather than a hole in the railing.
+    for (const gx of [gap.x1, gap.x2]) {
+      const end = cyl(0.045, 0.045, 1.05, 0x8a8f95, 8, 0.6)
+      end.position.set(gx, LEVEL_H + 0.5, -9)
+      group.add(end)
     }
   }
   // Interior partitions of the exec floor, drawn from the same footprints nav.ts
@@ -767,16 +802,21 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
         group.add(leg)
       }
     }
-    // Railings that FOLLOW THE SLOPE. The rail is a box rotated to the stair's own
-    // pitch and the posts rise with the treads — a horizontal bar floating above a
-    // climbing flight reads as a broken model.
+    // Railings that FOLLOW THE SLOPE.
+    //
+    // SIGN MATTERS: the flight rises NORTHWARD and z DECREASES northward, so the
+    // rail must rise as z falls. A box rotated about X by θ sends local +z to
+    // (y = -z·sin θ), and the north end is local -z, so its height is +z·sin θ —
+    // which only rises when θ is POSITIVE. `-pitch` therefore tilted the rail the
+    // opposite way from its own steps. The self-test now compares the rail's two
+    // world endpoints against the stair's, so the sign cannot flip again.
     const rise = LEVEL_H
     const pitch = Math.atan2(rise, flightRun)
     const railLen = Math.hypot(rise, flightRun)
     for (const rx of [STAIRS.x1 + 0.06, STAIRS.x2 - 0.06]) {
       const rail = box(0.07, 0.07, railLen, 0x8a8f95, { metal: 0.6 })
       rail.position.set(rx, LEVEL_H / 2 + 0.95, (STAIRS.z2 + STAIR_FLIGHT_TOP) / 2)
-      rail.rotation.x = -pitch
+      rail.rotation.x = pitch
       group.add(rail)
       for (let i = 0; i <= 5; i++) {
         const f = i / 5

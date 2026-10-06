@@ -105,6 +105,23 @@ export function onStairLanding(x: number, z: number): boolean {
 export const stairCentre = STAIR_FOOT
 
 /**
+ * The stair's whole footprint, foot to landing.
+ *
+ * The mover uses this to decide "this body is walking the stair right now", which
+ * lets it through the flight it would otherwise collide with. A* never routes
+ * anyone through the flight (the grid marks it solid), so only a body that was
+ * explicitly sent up or down the stair can ever be inside this box.
+ */
+export function onStairArea(x: number, z: number): boolean {
+  return (
+    x > STAIRS.x1 - 0.3 &&
+    x < STAIRS.x2 + 0.3 &&
+    z <= STAIRS.z2 + 0.35 &&
+    z >= STAIRS.z1 - 0.45
+  )
+}
+
+/**
  * Point test used by the mover. `pad` is the body radius, so callers get
  * "would my centre at (x,z) put my body inside something".
  *
@@ -116,7 +133,7 @@ export function blocked(
   x: number,
   z: number,
   pad = BODY_R,
-  opts: { allowSeat?: boolean; level?: Level } = {},
+  opts: { allowSeat?: boolean; level?: Level; onStair?: boolean } = {},
 ): boolean {
   const level: Level = opts.level ?? 0
   const b = LEVEL_BOUNDS[level]
@@ -133,7 +150,11 @@ export function blocked(
   // The stair is a real object standing in the courtyard. You cannot walk through
   // the flight on the ground floor — it is a solid ramp. The flat LANDING at its
   // top, however, IS floor on level 1: that is where you step off.
-  if (onStairFlight(x, z)) return true
+  //
+  // `opts.onStair` is set by the mover while a body is mid-climb: the flight is
+  // solid for everyone else (you cannot shortcut through a stair), but the body
+  // walking it must not collide with the very ramp it is standing on.
+  if (onStairFlight(x, z) && !opts.onStair) return true
   if (level === 1 && onStairLanding(x, z)) return false
 
   for (const w of wallsByLevel[level]) {
@@ -344,21 +365,35 @@ export function routeBetween(
   if (from.level === to.level) {
     return routeOnLevel(from, to, from.level).map((p) => ({ ...p, level: from.level }))
   }
-  // The stair is an OBJECT, so the two ends are different places: walk to the FOOT
-  // on the current floor, climb, then walk from the TOP on the other floor. A
-  // single shared "shaft centre" would put the body inside the flight.
-  const goingUp = from.level === 0
-  const foot = goingUp ? STAIR_FOOT : STAIR_TOP
-  const top = goingUp ? STAIR_TOP : STAIR_FOOT
-  const toStair = routeOnLevel(from, foot, from.level)
-  const fromStair = routeOnLevel(top, to, to.level)
+  // The stair is an OBJECT, so the two ends are different places. BOTH directions
+  // hand over at the LANDING (the top), and both walk the flight at LEVEL 0 — where
+  // the ramp height function lives. Switching at the foot instead stranded a
+  // descending body: at level 1 it cannot step south past the floor edge (z=-9.47),
+  // so it could never reach the flight.
+  //
+  //   up   : approach the FOOT on the ground → climb the ramp → switch → leave the
+  //          landing upstairs
+  //   down : approach the LANDING upstairs → switch → descend the ramp → leave the
+  //          foot on the ground
+  const up = from.level === 0
+  const toStair = up ? routeOnLevel(from, STAIR_FOOT, 0) : routeOnLevel(from, STAIR_TOP, 1)
+  const fromStair = up ? routeOnLevel(STAIR_TOP, to, 1) : routeOnLevel(STAIR_FOOT, to, 0)
   if (!toStair.length || !fromStair.length) return []
+  if (up) {
+    return [
+      ...toStair.map((p) => ({ ...p, level: 0 as const })),
+      // The hand-off. The mover climbs the ramp on the way here (it is still on
+      // level 0), then switches floors on arrival.
+      { x: STAIR_TOP.x, z: STAIR_TOP.z, level: 1 as const },
+      ...fromStair.map((p) => ({ ...p, level: 1 as const })),
+    ]
+  }
   return [
-    ...toStair.map((p) => ({ ...p, level: from.level })),
-    // The hand-off: same x/z as the top, on the new level. The mover animates the
-    // climb between the last waypoint of one level and the first of the next.
-    { x: top.x, z: top.z, level: to.level },
-    ...fromStair.map((p) => ({ ...p, level: to.level })),
+    ...toStair.map((p) => ({ ...p, level: 1 as const })),
+    // Switch at the landing, then walk DOWN the flight, which is a level-0 walk.
+    { x: STAIR_TOP.x, z: STAIR_TOP.z, level: 0 as const },
+    { x: STAIR_FOOT.x, z: STAIR_FOOT.z, level: 0 as const },
+    ...fromStair.map((p) => ({ ...p, level: 0 as const })),
   ]
 }
 

@@ -370,14 +370,22 @@ export const CONFERENCE_CHAIRS = { count: 10, offset: 0, ring: 2.7 }
 export const STAIRS = {
   x1: -10.0,
   x2: -8.6,
-  z1: -9.7,
+  z1: -10.4,
   z2: -3.2,
   /** The flight runs along Z (north-south), not X. */
   axis: 'z' as const,
   /** Which end is the BOTTOM: the courtyard end (+Z) is. */
   lowEnd: 'z2' as const,
-  /** Depth of the flat landing at the top, where it meets the corridor floor. */
-  landing: 1.0,
+  /**
+   * Depth of the flat landing at the top.
+   *
+   * The landing has to be deep enough to STAND on. `blocked()` refuses level-1
+   * ground south of z=-9.47 (the floor edge minus the wall band), so only the part
+   * of the landing north of that line is usable — with a 1.4 m landing that is
+   * ~0.9 m, which fits a body. A 1.0 m landing left ~0.5 m and the stair
+   * dead-ended in mid-air.
+   */
+  landing: 1.4,
   fromLevel: 0 as const,
   toLevel: 1 as const,
 }
@@ -392,7 +400,16 @@ export const STAIRS = {
  * level-0 ground and the top is level-1 floor, and those are different places.
  */
 export const STAIR_FOOT = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z2 + 0.7 }
-export const STAIR_TOP = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z1 - 0.2 }
+/**
+ * The hand-over point, ON THE LANDING.
+ *
+ * Both directions switch floors HERE, not at the foot. Handing over at the foot
+ * stranded a descending body: at level 1 it cannot step south past z=-9.47 (the
+ * floor edge), so it could never reach the flight. Switching on the landing works
+ * both ways — up you climb first and switch at the top, down you switch at the top
+ * and then descend.
+ */
+export const STAIR_TOP = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z1 + 0.3 }
 
 /** Where the flight itself ends and the flat landing begins. */
 export const STAIR_FLIGHT_TOP = STAIRS.z1 + STAIRS.landing
