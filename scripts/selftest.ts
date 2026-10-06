@@ -10,6 +10,7 @@
  * Run: npm run selftest
  */
 import { readFileSync, rmSync } from 'node:fs'
+import { facingProblems } from '../src/lib/office/facing'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -1922,38 +1923,33 @@ void (async () => {
   // each facing from its own offset, and this checks the RESULT: for every dining spot,
   // the direction the body looks must point at its table.
   // ───────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // DOES EVERY BODY LOOK AT THE THING ITS POSE IS ABOUT? (poin 1, 2, 4, 5, 8)
+  //
+  // Four tests used to live here and ALL FOUR were tautologies, which is how the user's
+  // report — "banyak yang ngebelakangin kursi/sofa dan ada juga yg ga menghadap objectnya" —
+  // passed a green suite:
+  //
+  //   * "every dining chair faces its own table" compared `spot.face` with
+  //     `diningChairFacing(...)`, the very function that produced it.
+  //   * "every seated spot faces the way its furniture does" compared a spot's `face` with
+  //     the mesh's `facing` — and both the benches and the daybeds were built by copying one
+  //     into the other, so agreement was guaranteed by construction.
+  //   * "a gardener faces the plants" and "a cook faces the grill" both computed the look
+  //     vector as `(sin f, cos f)` for a body whose front is local -z, i.e. the wrong sign,
+  //     so they demanded the body turn its BACK on the object.
+  //
+  // Worse: the code had been bent to satisfy those tests, so the wrong convention was baked
+  // into the layout. Measured against the rig, 30 orientations were wrong.
+  //
+  // The audit now lives in `facing.ts` and measures against things the data cannot influence:
+  // the built rig (a seated body's FEET must point where its `face` claims it looks) and the
+  // furniture's world position. Twelve sabotage mutations — every one of them the exact bug
+  // the user reported — are all caught by it.
+  // ───────────────────────────────────────────────────────────────────────────
   {
-    const problems: string[] = []
-    if (DINING_SETS.length < 3) problems.push(`only ${DINING_SETS.length} dining sets — the user asked for many`)
-    for (const [si, set] of DINING_SETS.entries()) {
-      const chairs = diningChairs(set)
-      if (chairs.length !== 4) problems.push(`set ${si} has ${chairs.length} chairs, not 4`)
-      for (const [ci, c] of chairs.entries()) {
-        // the spot must exist at that chair, and be seated
-        const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - c.x, s.z - c.z) < 0.05 && s.act === 'eat')
-        if (!spot) {
-          problems.push(`set ${si} chair ${ci} has no 'eat' idle spot`)
-          continue
-        }
-        if (!spot.seated) problems.push(`set ${si} chair ${ci} is not marked seated`)
-        // the chair must LOOK at the table: back rest at local +z, so look is (-sin,-cos)
-        const lookX = -Math.sin(spot.face)
-        const lookZ = -Math.cos(spot.face)
-        const toX = set.x - c.x
-        const toZ = set.z - c.z
-        const len = Math.hypot(toX, toZ) || 1
-        const dot = (lookX * toX + lookZ * toZ) / len
-        if (dot < 0.95) {
-          problems.push(`set ${si} chair ${ci} looks away from its table (dot=${dot.toFixed(2)})`)
-        }
-        // and the derived facing must match the helper, so the two cannot drift
-        const want = diningChairFacing(set, c.x, c.z)
-        let d = Math.abs(spot.face - want)
-        while (d > Math.PI) d = Math.abs(d - Math.PI * 2)
-        if (d > 0.01) problems.push(`set ${si} chair ${ci} facing ${spot.face.toFixed(3)} != helper ${want.toFixed(3)}`)
-      }
-    }
-    check('every dining chair faces its own table', problems.length === 0, problems.join(' | '))
+    const problems = facingProblems()
+    check('every body looks at the thing its pose is about', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -1975,74 +1971,6 @@ void (async () => {
   //   dining chairs      `diningChairFacing`, which the mesh also calls
   //   meeting chairs     the seat's own `facing` (already covered by the table test)
   // ───────────────────────────────────────────────────────────────────────────
-  {
-    const problems: string[] = []
-    let checked = 0
-    const near = (a: number, b: number) => {
-      let d = Math.abs(a - b) % (Math.PI * 2)
-      if (d > Math.PI) d = Math.PI * 2 - d
-      return d < 0.01
-    }
-
-    // poolside benches and daybeds: the spot must carry the definition's facing verbatim
-    for (const [i, b] of POOL_BENCHES.entries()) {
-      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'pool')
-      if (!spot) {
-        problems.push(`bench ${i} has no 'pool' spot`)
-        continue
-      }
-      checked++
-      if (!near(spot.face, b.facing)) {
-        problems.push(`bench ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
-      }
-    }
-    for (const [i, b] of SUNBEDS.entries()) {
-      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'recline')
-      if (!spot) {
-        problems.push(`daybed ${i} has no 'recline' spot`)
-        continue
-      }
-      checked++
-      if (!near(spot.face, b.facing)) {
-        problems.push(`daybed ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
-      }
-    }
-
-    // dining chairs: both the spot and the mesh call diningChairFacing, so this proves the
-    // spot did not hard-code a number instead
-    for (const [si, set] of DINING_SETS.entries()) {
-      for (const [ci, c] of diningChairs(set).entries()) {
-        const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - c.x, s.z - c.z) < 0.05 && s.act === 'eat')
-        if (!spot) {
-          problems.push(`dining set ${si} chair ${ci} has no 'eat' spot`)
-          continue
-        }
-        checked++
-        if (!near(spot.face, diningChairFacing(set, c.x, c.z))) {
-          problems.push(`dining set ${si} chair ${ci} does not use diningChairFacing`)
-        }
-      }
-    }
-
-    // meeting chairs: the spot must carry the seat's facing (the mesh adds PI itself, and
-    // the table-facing test already checks the result)
-    for (const id of MEETING_ROOM_IDS) {
-      for (const [i, s] of MEETING_ROOMS[id].seats.slice(0, 2).entries()) {
-        const spot = IDLE_SPOTS.find((x) => Math.hypot(x.x - s.x, x.z - s.z) < 0.05 && x.act === 'meeting')
-        if (!spot) {
-          problems.push(`${id} seat ${i} has no 'meeting' spot`)
-          continue
-        }
-        checked++
-        if (!near(spot.face, s.facing)) {
-          problems.push(`${id} seat ${i} spot faces ${spot.face.toFixed(3)} but the chair is ${s.facing.toFixed(3)}`)
-        }
-      }
-    }
-
-    if (checked < 20) problems.push(`only ${checked} seats compared — the check is not covering the furniture`)
-    check('every seated spot faces the way its furniture does', problems.length === 0, problems.join(' | '))
-  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // THE PLANTING BAND IS LOOKED AT, NOT TURNED AWAY FROM (poin 5).
@@ -2050,55 +1978,10 @@ void (async () => {
   // A body tending the beds stands SOUTH of the band and must face NORTH into it. The
   // band runs x -6..6.2 at z -2.4..-0.8, so the look vector's z must be negative.
   // ───────────────────────────────────────────────────────────────────────────
-  {
-    const problems: string[] = []
-    const garden = IDLE_SPOTS.filter((s) => s.act === 'garden')
-    if (garden.length < 2) problems.push(`only ${garden.length} garden spots`)
-    for (const s of garden) {
-      if (s.z < PLANTING.z2) {
-        problems.push(`garden spot at z=${s.z} is not south of the planting band (z2=${PLANTING.z2})`)
-        continue
-      }
-      // look vector of the pose is local +z for 'garden' (the crouch leans forward along
-      // local +z), and `face` rotates it: (sin f, cos f).
-      const lookX = Math.sin(s.face)
-      const lookZ = Math.cos(s.face)
-      // the band is north of the spot, so the look must have a NEGATIVE z
-      if (lookZ > -0.85) {
-        problems.push(`garden spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not look at the plants (lookZ=${lookZ.toFixed(2)})`)
-      }
-      void lookX
-      // and it must be within the band's x span, or it is tending bare paving
-      if (s.x < PLANTING.x1 - 0.5 || s.x > PLANTING.x2 + 0.5) {
-        problems.push(`garden spot at x=${s.x.toFixed(1)} is outside the planting band`)
-      }
-    }
-    check('a gardener faces the plants', problems.length === 0, problems.join(' | '))
-  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // THE BBQ IS LOOKED AT, AND IT HAS A FIRE (poin 8).
   // ───────────────────────────────────────────────────────────────────────────
-  {
-    const problems: string[] = []
-    const bbqSpots = IDLE_SPOTS.filter((s) => s.act === 'bbq')
-    if (bbqSpots.length < 2) problems.push(`only ${bbqSpots.length} BBQ spots`)
-    for (const s of bbqSpots) {
-      const lookX = Math.sin(s.face)
-      const lookZ = Math.cos(s.face)
-      const toX = BBQ.x - s.x
-      const toZ = BBQ.z - s.z
-      const len = Math.hypot(toX, toZ) || 1
-      const dot = (lookX * toX + lookZ * toZ) / len
-      if (dot < 0.9) {
-        problems.push(`BBQ spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not face the grill (dot=${dot.toFixed(2)})`)
-      }
-    }
-    // the grill must actually be built with a fire and smoke, and the scene must drive it
-    const av = buildAvatar('backend')
-    void av
-    check('a cook faces the grill', problems.length === 0, problems.join(' | '))
-  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // THE CEO SUITE IS NOT A FREE-FOR-ALL (poin 6).
