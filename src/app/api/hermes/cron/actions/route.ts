@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJob } from '@/lib/hermes/cron'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { visibleNames } from '@/lib/hermes/office-membership'
 import type { Candidate } from '@/types/hermes'
 
 export const dynamic = 'force-dynamic'
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const roster = (await listAgents(await listTasks())).map((a) => a.name)
+  const roster = visibleNames((await listAgents(await listTasks())).map((a) => a.name))
   const items: Candidate[] = []
 
   // Only a job that is actually in trouble has something to hand over. A healthy

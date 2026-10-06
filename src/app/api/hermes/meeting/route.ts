@@ -8,6 +8,7 @@ import {
   startMeeting,
 } from '@/lib/hermes/meeting'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { visibleNames } from '@/lib/hermes/office-membership'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
   }
   try {
     const tasks = await listTasks()
-    const known = new Set((await listAgents(tasks)).map((a) => a.name))
+    const known = new Set(visibleNames((await listAgents(tasks)).map((a) => a.name)))
     const participants = (Array.isArray(body?.participants) ? body.participants : [])
       .map((p: unknown) => String(p))
       .filter((p: string) => known.has(p))

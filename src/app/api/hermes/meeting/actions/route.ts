@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { matchOwner, parseActionItems } from '@/lib/hermes/action-items'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { visibleNames } from '@/lib/hermes/office-membership'
 import { listMeetings, readArchived } from '@/lib/hermes/meeting'
 
 export const dynamic = 'force-dynamic'
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
   }
 
   const items = parseActionItems(minutes)
-  const roster = (await listAgents(await listTasks())).map((a) => a.name)
+  const roster = visibleNames((await listAgents(await listTasks())).map((a) => a.name))
 
   return NextResponse.json({
     meeting: { id: from, topic },

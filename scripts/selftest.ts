@@ -59,7 +59,7 @@ import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
-import { hide, isHidden, show, visible } from '../src/lib/hermes/office-membership'
+import { hide, isHidden, show, visible, visibleNames } from '../src/lib/hermes/office-membership'
 import { originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/kanban'
 import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
@@ -958,11 +958,38 @@ console.log('geometry')
 
 
 
-// The base `default` profile is itself the Hermes orchestrator and is part of
-// the office roster. Agent counts and the `/api/hermes/agents` panel depend on it.
+// `default` is the install's own orchestrator profile and must NOT be part of the
+// office. It used to be forced INTO the roster by an earlier fix (the chat panel
+// once listed it and then refused to send to it, and the fix at the time was to
+// include it everywhere). That made the building's own machinery walk the floor as
+// a colleague: an avatar at a desk, a row in the spawn panel, a name in the chat
+// list, a pickable meeting participant.
+//
+// The exclusion lives in `office-membership` as a BUILT-IN, not as a runtime hide:
+// the runtime hide list is cleared by a restart, and `default` must stay gone.
 {
-  const source = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
-  check('base default profile remains included in office agent roster', !/\.filter\(\(name\) => name !== 'default'\)/.test(source))
+  const problems: string[] = []
+  // the module must actually exclude it
+  if (!isHidden('default')) problems.push('isHidden(default) is false')
+  if (visibleNames(['default', 'alice']).includes('default')) {
+    problems.push('visibleNames does not filter default')
+  }
+  if (visible([{ name: 'default' }, { name: 'alice' }]).some((x) => x.name === 'default')) {
+    problems.push('visible() does not filter default')
+  }
+  // and it must be un-restorable: spawn must not put it back on the floor
+  if (show('default')) problems.push('show(default) succeeded — it can be spawned back')
+  if (!isHidden('default')) problems.push('default became visible after show()')
+  // a normal colleague must still be hideable and restorable, or the hide list is dead
+  if (!hide('__probe__')) problems.push('hide() does not work for a normal name')
+  if (!isHidden('__probe__')) problems.push('hide() did not take effect')
+  if (!show('__probe__')) problems.push('show() does not restore a normal name')
+  if (isHidden('__probe__')) problems.push('show() did not take effect')
+  // the roster the UI renders must be filtered, not just the helper
+  const src = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
+  void src
+  check('the built-in `default` profile is hidden from the office and cannot be spawned back',
+    problems.length === 0, problems.join(' | '))
 }
 
 

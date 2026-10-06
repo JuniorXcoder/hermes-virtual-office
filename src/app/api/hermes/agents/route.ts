@@ -11,7 +11,7 @@ import {
   setProfileModel,
   tasksForAssignee,
 } from '@/lib/hermes/kanban'
-import { hiddenNames, isHidden, hide, show } from '@/lib/hermes/office-membership'
+import { BUILTIN_HIDDEN, hiddenNames, isHidden, hide, show } from '@/lib/hermes/office-membership'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
@@ -40,7 +40,9 @@ export async function GET() {
     // Union of assignees and on-disk profiles: a profile with no tasks is still a
     // profile, and must be listed or creating one looks like it failed.
     const counts = new Map(assignees.map((a) => [a.name, a.total]))
-    const roster = [...new Set([...counts.keys(), ...profiles])].sort()
+    // `default` and any runtime-hidden profile must not appear in the spawn panel:
+    // it is not a colleague, it is the install's own orchestrator profile.
+    const roster = [...new Set([...counts.keys(), ...profiles])].filter((n) => !isHidden(n)).sort()
     // Each profile's default model costs one CLI read (`-p <name> config get
     // model`), so they run in parallel and only for profiles that exist on disk —
     // an assignee left over from a deleted profile has no config to read.
@@ -333,6 +335,20 @@ export async function POST(req: NextRequest) {
     }
 
     /* ------------------------------------------------------------- spawn --- */
+    // A built-in exclusion cannot be undone. Answer honestly instead of reporting
+    // `success: true, changed: false` — the caller would think the click worked.
+    if (BUILTIN_HIDDEN.has(name)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'invalid_request',
+            message: `profil "${name}" adalah profil bawaan Hermes dan tidak bisa dimunculkan di kantor`,
+            status: 400,
+          },
+        },
+        { status: 400 },
+      )
+    }
     const changed = show(name)
     return NextResponse.json({
       success: true,

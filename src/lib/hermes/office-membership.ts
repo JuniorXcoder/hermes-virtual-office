@@ -13,30 +13,54 @@
  * (everyone visible). Documented in docs/API-SPEC.md.
  */
 
+/**
+ * Profiles that are NEVER part of the office, no matter what.
+ *
+ * `default` is not a colleague — it is the install's own orchestrator profile,
+ * living at the Hermes root (~/.hermes/config.yaml). It shows up in the assignee
+ * list because the base profile owns housekeeping work, so without this it walked
+ * onto the floor as an avatar, sat in the spawn panel, appeared in the chat list
+ * and could be picked as a meeting participant. None of those are meaningful: you
+ * cannot hire the building's own machinery.
+ *
+ * This is a CONSTANT, not an entry in `hidden`: the runtime hide list is cleared
+ * by a restart (which is fine for a real colleague you hid by mistake) but `default`
+ * must stay gone across restarts, and `show('default')` must not bring it back.
+ */
+export const BUILTIN_HIDDEN = new Set(['default'])
+
 const hidden = new Set<string>()
 
-/** Names currently removed from the office. */
+/** Names currently removed from the office (runtime hides + the built-in ones). */
 export function hiddenNames(): string[] {
-  return [...hidden].sort()
+  return [...new Set([...BUILTIN_HIDDEN, ...hidden])].sort()
 }
 
 export function isHidden(name: string): boolean {
-  return hidden.has(name)
+  return BUILTIN_HIDDEN.has(name) || hidden.has(name)
 }
 
 /** Remove a profile from the office. Returns false if it was already gone. */
 export function hide(name: string): boolean {
-  if (hidden.has(name)) return false
+  if (isHidden(name)) return false
   hidden.add(name)
   return true
 }
 
 /** Bring a profile back. Returns false if it was not hidden. */
 export function show(name: string): boolean {
+  // A built-in exclusion cannot be undone from the UI. Without this guard the
+  // "spawn" button would put `default` back on the floor and the bug would return.
+  if (BUILTIN_HIDDEN.has(name)) return false
   return hidden.delete(name)
 }
 
 /** Filter a list of names down to those the office should show. */
 export function visible<T extends { name: string }>(list: T[]): T[] {
-  return list.filter((x) => !hidden.has(x.name))
+  return list.filter((x) => !isHidden(x.name))
+}
+
+/** Filter a list of plain names, for the routes that only carry strings. */
+export function visibleNames(list: string[]): string[] {
+  return list.filter((n) => !isHidden(n))
 }

@@ -7,6 +7,7 @@ import {
   sendChatMessage,
 } from '@/lib/hermes/chat'
 import { listAgents, listProfiles, listTasks } from '@/lib/hermes/kanban'
+import { visibleNames } from '@/lib/hermes/office-membership'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 
 export const dynamic = 'force-dynamic'
@@ -48,9 +49,14 @@ export async function GET(req: NextRequest) {
          * Everyone you can talk to: every profile, plus any board assignee that has
          * no profile yet (so the list matches the office floor).
          */
-        agents: (await listAgents(await listTasks()))
-          .map((a) => a.name)
-          .filter((n) => known.has(n) || n === 'default'),
+        // Hidden profiles are filtered here too. `default` in particular used to be
+        // special-cased IN (`|| n === 'default'`), which is why the install's own
+        // orchestrator profile showed up as somebody you could chat with.
+        agents: visibleNames(
+          (await listAgents(await listTasks()))
+            .map((a) => a.name)
+            .filter((n) => known.has(n)),
+        ),
         /** Profiles that exist. Used to tell "can chat" from "needs a profile". */
         profiles,
       })
