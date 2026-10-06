@@ -74,6 +74,8 @@ function cleanAvatar(raw: unknown): AvatarWrite | null {
     activity: String(a.activity || 'idle'),
     facing: Number(a.facing) || 0,
     spawned: !!a.spawned,
+    // An anchored body is pinned: the receptionist must never wander (poin 2).
+    anchored: !!a.anchored,
   }
 }
 

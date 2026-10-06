@@ -32,6 +32,7 @@ import {
   meetingRoomFor,
   POOL,
   ROOMS,
+  STAIRS,
   blockingFootprints,
   deskSeatWorld,
   layoutConflicts,
@@ -571,6 +572,55 @@ console.log('geometry')
   check('the stair shaft is the level portal', problems.length === 0, problems.join(' | '))
 }
 
+// The stair must stand in the TERRACE, not inside a division room.
+//
+// It used to sit at x -27.5..-23, which is inside the Developer & Infrastructure
+// room — it landed on top of a developer's desk. Every square metre of the west
+// bar belongs to one of the three work rooms, so the only legal home is the north
+// bar's open ground floor (the terrace), which is also the only space that maps
+// onto the level-1 corridor the stair has to land on.
+{
+  const problems: string[] = []
+  const cx = (STAIRS.x1 + STAIRS.x2) / 2
+  const cz = (STAIRS.z1 + STAIRS.z2) / 2
+  for (const r of ROOMS.filter((x) => x.level === 0 && ['dev', 'mkt', 'content'].includes(x.id))) {
+    const inside =
+      cx > r.x1 - 0.4 && cx < r.x2 + 0.4 && cz > r.z1 - 0.4 && cz < r.z2 + 0.4
+    if (inside) problems.push(`stair overlaps ${r.id}`)
+  }
+  // It must overlap NO desk and no chair — that was the actual bug.
+  for (const d of DESKS) {
+    const hits =
+      cx > d.x - 0.85 - 0.4 && cx < d.x + 0.85 + 0.4 && cz > d.z - 0.5 - 0.4 && cz < d.z + 0.5 + 0.4
+    if (hits) problems.push(`stair lands on desk ${d.index}`)
+  }
+  // And it must land inside the level-1 corridor's z-band, or it climbs into a wall.
+  const corridor = roomById('corridor1')!
+  if (!(cz > corridor.z1 - 0.4 && cz < corridor.z2 + 0.4)) {
+    problems.push(`stair z=${cz} does not meet the exec corridor (${corridor.z1}..${corridor.z2})`)
+  }
+  check('the stair stands in the terrace and lands on the exec corridor, clear of every desk',
+    problems.length === 0, problems.join(' | '))
+}
+
+// The receptionist is ANCHORED: a body that never moves (poin 2).
+{
+  const problems: string[] = []
+  const roster = dummyRoster()
+  const rec = roster.find((r) => r.avatarId.includes('reception'))
+  if (!rec) problems.push('no receptionist')
+  else {
+    if (!rec.anchored) problems.push('receptionist is not anchored')
+    // Anchoring is only meaningful if the rest of the roster is NOT anchored —
+    // otherwise the flag is a no-op that would pass even if it did nothing.
+    if (roster.filter((r) => r.anchored).length !== 1) {
+      problems.push(`${roster.filter((r) => r.anchored).length} anchored bodies, want exactly 1`)
+    }
+  }
+  check('the receptionist is anchored (never wanders) and is the only pinned body',
+    problems.length === 0, problems.join(' | '))
+}
+
 
 
 
@@ -837,10 +887,10 @@ void (async () => {
       if (db.getOfficeName() !== 'Kantor Uji') problems.push(`name = ${db.getOfficeName()}`)
       // avatar upsert: same id must UPDATE, not duplicate
       db.saveAvatars([
-        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 1, z: 2, level: 0, activity: 'idle', facing: 0, spawned: false },
+        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 1, z: 2, level: 0, activity: 'idle', facing: 0, spawned: false, anchored: false },
       ])
       db.saveAvatars([
-        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 9, z: 8, level: 1, activity: 'coffee', facing: 1.5, spawned: false },
+        { avatarId: 'a1', name: 'A', division: 'tech', kind: 'dummy', x: 9, z: 8, level: 1, activity: 'coffee', facing: 1.5, spawned: false, anchored: false },
       ])
       const avatars = db.listAvatars()
       if (avatars.length !== 1) problems.push(`upsert duplicated the row (${avatars.length})`)

@@ -622,12 +622,35 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /* ------------------------------------------------------------ level 1 -- */
   {
     const n = BARS.north
-    // floor plate over the north bar only
-    const slab = new THREE.Mesh(new THREE.PlaneGeometry(n.x2 - n.x1, n.z2 - n.z1), marbleMat)
-    slab.rotation.x = -Math.PI / 2
-    slab.position.set((n.x1 + n.x2) / 2, LEVEL_H, (n.z1 + n.z2) / 2)
-    slab.receiveShadow = true
-    group.add(slab)
+    // Floor plate over the north bar only — built as FOUR pieces around a hole
+    // where the stair comes up. A single plane would seal the shaft: the stair
+    // would climb into solid marble and the exec floor would have no way up.
+    const hole = {
+      x1: STAIRS.x1 - 0.3,
+      x2: STAIRS.x2 + 0.3,
+      z1: STAIRS.z1 - 0.3,
+      z2: STAIRS.z2 + 0.3,
+    }
+    const slabs: [number, number, number, number][] = [
+      // west of the hole
+      [n.x1, n.z1, hole.x1, n.z2],
+      // east of the hole
+      [hole.x2, n.z1, n.x2, n.z2],
+      // north of the hole, between the two side pieces
+      [hole.x1, n.z1, hole.x2, hole.z1],
+      // south of the hole
+      [hole.x1, hole.z2, hole.x2, n.z2],
+    ]
+    for (const [x1, z1, x2, z2] of slabs) {
+      const w = x2 - x1
+      const d = z2 - z1
+      if (w <= 0.01 || d <= 0.01) continue
+      const piece = new THREE.Mesh(new THREE.PlaneGeometry(w, d), marbleMat)
+      piece.rotation.x = -Math.PI / 2
+      piece.position.set((x1 + x2) / 2, LEVEL_H, (z1 + z2) / 2)
+      piece.receiveShadow = true
+      group.add(piece)
+    }
     // the slab's south edge (seen from the courtyard) is a fascia
     const fascia = box(n.x2 - n.x1, 0.45, WALL_T, 0xdfe6ea, { rough: 0.85 })
     fascia.position.set(0, LEVEL_H - 0.22, n.z2)
@@ -700,31 +723,41 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   /* --------------------------------------------------------- stairs -------- */
   {
+    // The flight climbs along X, west (low) -> east (high), inside the terrace.
+    // The top step lands flush with the corridor floor, so it doubles as the
+    // landing — a separate landing slab would sit UNDER the level-1 floor and be
+    // invisible.
     const sx = (STAIRS.x1 + STAIRS.x2) / 2
     const sz = (STAIRS.z1 + STAIRS.z2) / 2
     const w = STAIRS.x2 - STAIRS.x1
     const d = STAIRS.z2 - STAIRS.z1
-    const steps = 12
+    const steps = 14
+    const tread = w / steps
     for (let i = 0; i < steps; i++) {
       const h = (LEVEL_H / steps) * (i + 1)
-      const step = box(w - 0.3, h, d / steps, 0xcfc7b4, { rough: 0.8 })
-      step.position.set(sx, h / 2, STAIRS.z1 + (d / steps) * (i + 0.5))
+      const step = box(tread, h, d - 0.16, 0xcfc7b4, { rough: 0.8 })
+      step.position.set(STAIRS.x1 + tread * (i + 0.5), h / 2, sz)
       step.castShadow = true
       step.receiveShadow = true
       group.add(step)
     }
-    // landings top and bottom
-    const top = box(w - 0.3, 0.14, 1.0, 0xcfc7b4, { rough: 0.8 })
-    top.position.set(sx, LEVEL_H - 0.07, STAIRS.z1 - 0.5)
-    group.add(top)
-    // railings both sides, level 0 and level 1
-    for (const rz of [STAIRS.z1 - 0.1, STAIRS.z2 + 0.1]) {
-      const rail = box(w, 0.08, 0.08, 0x8a8f95, { metal: 0.6 })
-      rail.position.set(sx, LEVEL_H + 0.95, rz)
+    // Railings that FOLLOW THE SLOPE. A horizontal bar floating at corridor
+    // height above a climbing flight reads as a broken model, so the rail is a
+    // box rotated to the stair's own pitch and the posts rise with the treads.
+    const rise = LEVEL_H
+    const run = w
+    const pitch = Math.atan2(rise, run)
+    const railLen = Math.hypot(rise, run)
+    for (const rz of [STAIRS.z1 - 0.08, STAIRS.z2 + 0.08]) {
+      const rail = box(railLen, 0.07, 0.07, 0x8a8f95, { metal: 0.6 })
+      rail.position.set(sx, LEVEL_H / 2 + 0.95, rz)
+      rail.rotation.z = pitch
       group.add(rail)
-      for (let i = 0; i <= 4; i++) {
-        const post = cyl(0.035, 0.035, 1.0, 0x8a8f95, 8, 0.6)
-        post.position.set(STAIRS.x1 + (w / 4) * i, LEVEL_H + 0.5, rz)
+      for (let i = 0; i <= 6; i++) {
+        const f = i / 6
+        const h = 0.95 + rise * f
+        const post = cyl(0.035, 0.035, h, 0x8a8f95, 8, 0.6)
+        post.position.set(STAIRS.x1 + run * f, h / 2, rz)
         group.add(post)
       }
     }

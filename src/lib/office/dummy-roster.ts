@@ -52,7 +52,10 @@ export function dummyRoster(): DummySpec[] {
     })
   }
 
-  // The receptionist sits BEHIND the counter, facing the entrance (+Z).
+  // The receptionist sits BEHIND the counter, facing the entrance (+Z), and is
+  // ANCHORED: a receptionist who wanders off to the pool is not a receptionist
+  // (poin 2). Anchoring is data, not a name check, so the scene never has to know
+  // which body this is.
   out.push({
     avatarId: 'dummy:lobby:reception',
     name: 'Resepsionis',
@@ -62,6 +65,7 @@ export function dummyRoster(): DummySpec[] {
     level: 0,
     activity: 'typing',
     facing: 0,
+    anchored: true,
   })
 
   return out

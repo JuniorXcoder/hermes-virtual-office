@@ -351,11 +351,27 @@ export const CONFERENCE_CHAIRS = { count: 10, offset: 0, ring: 2.7 }
  * can treat it as a portal: stepping into the region on either floor moves the
  * walker to the other floor. Modelled as a real flight in `build.ts`.
  */
+/**
+ * The stair to the executive floor.
+ *
+ * WHERE IT IS: the TERRACE — the north bar's open ground floor (x -14..14,
+ * z -21..-9). It is the ONLY ground-floor space that maps onto the first-floor
+ * CORRIDOR (z -11.5..-9), so a stair anywhere else cannot land on the exec floor.
+ *
+ * WHERE IT IS NOT: the west bar. That whole bar is divided along Z into the three
+ * division rooms, so a stair placed there stands inside somebody's office — the
+ * old position at x -27.5..-23 was on top of a developer's desk. The three rooms
+ * own every square metre of the west bar, at every Z.
+ *
+ * It runs along X and climbs west→east: the low end meets the terrace floor, the
+ * high end meets the corridor, and it pokes up through a matching hole in the
+ * level-1 slab (cut in `build.ts` from these same numbers).
+ */
 export const STAIRS = {
-  x1: -27.5,
-  x2: -23.0,
-  z1: -11.5,
-  z2: -9 + WALL_T / 2,
+  x1: -1.0,
+  x2: 4.0,
+  z1: -11.0,
+  z2: -9.9,
   fromLevel: 0 as const,
   toLevel: 1 as const,
 }
@@ -643,12 +659,11 @@ export const FOOTPRINTS: Footprint[] = [
   ),
   // the executive corridor is on level 1; nothing blocks it
   /* ------------------------------------------------------------- stairs --- */
-  // The shaft itself is walkable (nav treats it as the level portal); the railing
-  // is a thin prop either side so it reads as a stair, not a hole.
-  fp('stair-rail-n', (STAIRS.x1 + STAIRS.x2) / 2, STAIRS.z1 - 0.1, (STAIRS.x2 - STAIRS.x1) / 2, 0.08, 1.0, 'prop', 0),
-  fp('stair-rail-s', (STAIRS.x1 + STAIRS.x2) / 2, STAIRS.z2 + 0.1, (STAIRS.x2 - STAIRS.x1) / 2, 0.08, 1.0, 'prop', 0),
-  fp('stair-rail-n1', (STAIRS.x1 + STAIRS.x2) / 2, STAIRS.z1 - 0.1, (STAIRS.x2 - STAIRS.x1) / 2, 0.08, 1.0, 'prop', 1),
-  fp('stair-rail-s1', (STAIRS.x1 + STAIRS.x2) / 2, STAIRS.z2 + 0.1, (STAIRS.x2 - STAIRS.x1) / 2, 0.08, 1.0, 'prop', 1),
+  // The shaft itself is NOT a footprint: `nav.ts` treats the whole region as
+  // walkable on both levels, which is what makes it a portal rather than a wall.
+  // The railings are drawn in `build.ts` as pure decoration — putting them here
+  // as blocking props would fence off the very opening a walker has to enter
+  // through, since the shaft region and the rail strip overlap by design.
 
   /* --------------------------------------------------------------- pool --- */
   // The basin is solid: you cannot walk on water. Height is above the blocker

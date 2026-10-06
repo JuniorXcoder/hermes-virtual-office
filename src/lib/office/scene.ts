@@ -66,6 +66,11 @@ export type SceneAgent = AnimAgent & {
   spawnGate?: number
   /** Set when the agent is leaving: walk out of the door, then despawn. */
   leaving?: boolean
+  /** Pinned in place: never wanders, never joins a meeting (poin 2). */
+  anchored: boolean
+  /** Pose an anchored body holds: the activity and facing from the DB. */
+  anchorActivity: Activity
+  anchorFacing: number
   /** Which idle spot this body is heading to / holding. */
   wanderIndex: number
   /** Seconds to stay put before wandering again. */
@@ -292,6 +297,9 @@ export function createScene(
       bubbleTimer: 0,
       spawnGate: 0,
       leaving: false,
+      anchored: row.anchored,
+      anchorActivity: (row.activity as Activity) || 'typing',
+      anchorFacing: row.facing ?? 0,
       wanderIndex: Math.floor(Math.random() * OFFICE_IDLE_SPOTS.length),
       restUntil: 0,
     }
@@ -414,6 +422,18 @@ export function createScene(
   /** Decide activity + destination for the coming frames. */
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
     a.seatYaw = undefined
+
+    // ANCHORED bodies never get a destination. The receptionist stays behind the
+    // counter: no wander, no meeting, no stroll to the pool (poin 2). Checked
+    // FIRST, so nothing below can hand this body a target.
+    if (a.anchored) {
+      a.target = null
+      // Keep the activity and facing the DB remembers — the receptionist keeps
+      // typing at the counter, facing the door, forever.
+      a.activity = a.anchorActivity
+      a.seatYaw = a.anchorFacing
+      return
+    }
 
     // 0. entering / leaving: hold at the doorway until the walk completes.
     if (a.spawnGate && a.spawnGate > 0) {
@@ -556,6 +576,7 @@ export function createScene(
         activity: a.activity,
         facing: Number(g.rotation.y.toFixed(2)),
         spawned: a.kind === 'agent',
+        anchored: a.anchored,
         updatedAt: new Date().toISOString(),
       })
     }

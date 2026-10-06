@@ -59,6 +59,7 @@ export function officeDb(): DatabaseSync {
       activity   TEXT NOT NULL,
       facing     REAL NOT NULL DEFAULT 0,
       spawned    INTEGER NOT NULL DEFAULT 0,
+      anchored   INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
 
@@ -75,6 +76,16 @@ export function officeDb(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_qa_open ON qa_threads (status, responsible);
   `)
+  // Additive migrations for databases created by an earlier version.
+  // `CREATE TABLE IF NOT EXISTS` does NOT add columns to a table that already
+  // exists, so a new column needs its own ALTER — and it has to be guarded,
+  // because SQLite has no `ADD COLUMN IF NOT EXISTS` and re-running would throw.
+  const cols = new Set(
+    (d.prepare(`PRAGMA table_info(avatar_state)`).all() as { name: string }[]).map((c) => c.name),
+  )
+  if (!cols.has('anchored')) {
+    d.exec(`ALTER TABLE avatar_state ADD COLUMN anchored INTEGER NOT NULL DEFAULT 0`)
+  }
   db = d
   return d
 }
@@ -117,6 +128,7 @@ type AvatarRow = {
   activity: string
   facing: number
   spawned: number
+  anchored: number
   updated_at: string
 }
 
@@ -131,6 +143,7 @@ const toAvatar = (r: AvatarRow): AvatarState => ({
   activity: r.activity,
   facing: r.facing,
   spawned: r.spawned === 1,
+  anchored: r.anchored === 1,
   updatedAt: r.updated_at,
 })
 
@@ -149,13 +162,14 @@ export function saveAvatars(list: AvatarWrite[]): number {
   const d = officeDb()
   const stmt = d.prepare(
     `INSERT INTO avatar_state
-       (avatar_id, name, division, kind, x, z, level, activity, facing, spawned, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (avatar_id, name, division, kind, x, z, level, activity, facing, spawned, anchored, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(avatar_id) DO UPDATE SET
        name = excluded.name, division = excluded.division, kind = excluded.kind,
        x = excluded.x, z = excluded.z, level = excluded.level,
        activity = excluded.activity, facing = excluded.facing,
-       spawned = excluded.spawned, updated_at = excluded.updated_at`,
+       spawned = excluded.spawned, anchored = excluded.anchored,
+       updated_at = excluded.updated_at`,
   )
   const ts = now()
   d.exec('BEGIN')
@@ -164,7 +178,7 @@ export function saveAvatars(list: AvatarWrite[]): number {
       stmt.run(
         a.avatarId, a.name, a.division, a.kind,
         a.x, a.z, a.level, a.activity, a.facing,
-        a.spawned ? 1 : 0, ts,
+        a.spawned ? 1 : 0, a.anchored ? 1 : 0, ts,
       )
     }
     d.exec('COMMIT')
@@ -196,6 +210,8 @@ export type DummySpec = {
   level: number
   activity: string
   facing: number
+  /** Pinned in place forever — the receptionist never leaves the counter. */
+  anchored?: boolean
 }
 
 export function seedAvatars(specs: DummySpec[]): number {
@@ -214,6 +230,7 @@ export function seedAvatars(specs: DummySpec[]): number {
       activity: s.activity,
       facing: s.facing,
       spawned: false,
+      anchored: !!s.anchored,
     })),
   )
 }

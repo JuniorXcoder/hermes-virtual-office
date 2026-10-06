@@ -23,6 +23,15 @@ export type AvatarState = {
   activity: string
   facing: number
   spawned: boolean
+  /**
+   * Anchored bodies never move: no wander, no meeting, no idle stroll.
+   *
+   * The receptionist is one (poin 2) — a receptionist who wanders off to the pool
+   * is not a receptionist. Anchoring lives in the DATA, not in a name check in the
+   * scene, so any future body (a security guard, a plant-watering robot) can be
+   * pinned the same way without touching the simulation.
+   */
+  anchored: boolean
   updatedAt: string
 }
 
