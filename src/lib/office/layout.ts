@@ -347,33 +347,70 @@ export const CONFERENCE_CHAIRS = { count: 10, offset: 0, ring: 2.7 }
 /* ----------------------------------------------------------------- stairs -- */
 
 /**
- * The stair shaft. It occupies the SAME x/z footprint on both levels, so `nav.ts`
- * can treat it as a portal: stepping into the region on either floor moves the
- * walker to the other floor. Modelled as a real flight in `build.ts`.
- */
-/**
- * The stair to the executive floor.
+ * The stair to the executive floor — an EXTERNAL stair standing in the courtyard.
  *
- * WHERE IT IS: the TERRACE — the north bar's open ground floor (x -14..14,
- * z -21..-9). It is the ONLY ground-floor space that maps onto the first-floor
- * CORRIDOR (z -11.5..-9), so a stair anywhere else cannot land on the exec floor.
+ * WHY HERE, and why the two earlier positions were wrong:
  *
- * WHERE IT IS NOT: the west bar. That whole bar is divided along Z into the three
- * division rooms, so a stair placed there stands inside somebody's office — the
- * old position at x -27.5..-23 was on top of a developer's desk. The three rooms
- * own every square metre of the west bar, at every Z.
+ *   1. Level 1 exists ONLY over the north bar, so the stair must serve the north
+ *      bar — there is no other floor for it to reach.
+ *   2. The north bar's ground floor (the terrace) is COMPLETELY covered by the
+ *      level-1 slab. A stair standing there sits underneath the marble: invisible
+ *      from every camera angle. Both earlier positions put it there, which is
+ *      exactly why it never looked right — it could not be seen at all.
+ *   3. So the flight stands in the COURTYARD (z > -9), in open air, climbing the
+ *      north bar's south face, and its top landing passes through a notch cut in
+ *      the slab edge onto the corridor. A real external feature stair: you see it
+ *      from the pool deck, you walk to it, and it lands by the CEO suite — which
+ *      is who uses that floor.
  *
- * It runs along X and climbs west→east: the low end meets the terrace floor, the
- * high end meets the corridor, and it pokes up through a matching hole in the
- * level-1 slab (cut in `build.ts` from these same numbers).
+ * Geometry: the flight runs along Z and rises NORTHWARD. Bottom step at z2 (out in
+ * the courtyard), top landing at z1 (inside the building line, at corridor level).
+ * 5.5 m of run for 3.4 m of rise ≈ 32°, which is a normal stair pitch.
  */
 export const STAIRS = {
-  x1: -1.0,
-  x2: 4.0,
-  z1: -11.0,
-  z2: -9.9,
+  x1: -10.0,
+  x2: -8.6,
+  z1: -9.7,
+  z2: -3.2,
+  /** The flight runs along Z (north-south), not X. */
+  axis: 'z' as const,
+  /** Which end is the BOTTOM: the courtyard end (+Z) is. */
+  lowEnd: 'z2' as const,
+  /** Depth of the flat landing at the top, where it meets the corridor floor. */
+  landing: 1.0,
   fromLevel: 0 as const,
   toLevel: 1 as const,
+}
+
+/**
+ * The two ends of the stair, as nav waypoints.
+ *
+ * `routeBetween()` walks to the FOOT on the lower level, hands over, then walks
+ * from the TOP on the upper level. Two separate points are required — not one
+ * shared "shaft centre" — because the stair is no longer a hole in the floor that
+ * is walkable on both levels: it is a real object in the courtyard, so the foot is
+ * level-0 ground and the top is level-1 floor, and those are different places.
+ */
+export const STAIR_FOOT = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z2 + 0.7 }
+export const STAIR_TOP = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z1 - 0.2 }
+
+/** Where the flight itself ends and the flat landing begins. */
+export const STAIR_FLIGHT_TOP = STAIRS.z1 + STAIRS.landing
+
+/**
+ * Height of the walking surface at a point, for the climb animation.
+ *
+ * A body on the stair should rise as it walks, not teleport 3.4 m at the top. The
+ * stair is a ramp in world space, so its height is a pure function of z: 0 at the
+ * bottom step, LEVEL_H at the landing. Returns null when (x,z) is not on the
+ * stair, so the caller can leave the body alone.
+ */
+export function stairHeightAt(x: number, z: number): number | null {
+  if (x < STAIRS.x1 || x > STAIRS.x2) return null
+  if (z > STAIRS.z2 || z < STAIRS.z1) return null
+  if (z <= STAIR_FLIGHT_TOP) return LEVEL_H
+  const t = (z - STAIRS.z2) / (STAIR_FLIGHT_TOP - STAIRS.z2)
+  return LEVEL_H * Math.min(1, Math.max(0, t))
 }
 
 /* ------------------------------------------------------------------- pool -- */
@@ -723,7 +760,7 @@ export const IDLE_SPOTS: IdleSpot[] = [
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[2], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
   { x: LOUNGE.x - 1.4, z: LOUNGE.z + 1.6, act: 'sofa', seated: true, face: 0, level: 0 },
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
-  { x: -10, z: -5, act: 'idle', face: Math.PI / 2, level: 0 },
+  { x: -6.2, z: -5, act: 'idle', face: Math.PI / 2, level: 0 },
   { x: 10, z: -5, act: 'idle', face: -Math.PI / 2, level: 0 },
   { x: -20, z: -12, act: 'idle', face: 0, level: 0 },
   { x: 20, z: -12, act: 'idle', face: 0, level: 0 },

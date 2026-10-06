@@ -51,6 +51,7 @@ import {
   ROOMS,
   ROOM_SIGNS,
   STAIRS,
+  STAIR_FLIGHT_TOP,
   WALL_H,
   WALL_T,
   paletteFor,
@@ -622,24 +623,23 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /* ------------------------------------------------------------ level 1 -- */
   {
     const n = BARS.north
-    // Floor plate over the north bar only — built as FOUR pieces around a hole
-    // where the stair comes up. A single plane would seal the shaft: the stair
-    // would climb into solid marble and the exec floor would have no way up.
-    const hole = {
-      x1: STAIRS.x1 - 0.3,
-      x2: STAIRS.x2 + 0.3,
-      z1: STAIRS.z1 - 0.3,
-      z2: STAIRS.z2 + 0.3,
+    // Floor plate over the north bar. The stair is an EXTERNAL flight in the
+    // courtyard whose top landing reaches through the building line, so the plate
+    // needs a NOTCH at its south edge (not a hole in the middle): the landing has
+    // to come up flush with the corridor floor.
+    const notch = {
+      x1: STAIRS.x1 - 0.2,
+      x2: STAIRS.x2 + 0.2,
+      z1: n.z2, // the building line itself
+      z2: n.z2 + 0.35, // a shallow bite out of the edge, so the landing seats into it
     }
     const slabs: [number, number, number, number][] = [
-      // west of the hole
-      [n.x1, n.z1, hole.x1, n.z2],
-      // east of the hole
-      [hole.x2, n.z1, n.x2, n.z2],
-      // north of the hole, between the two side pieces
-      [hole.x1, n.z1, hole.x2, hole.z1],
-      // south of the hole
-      [hole.x1, hole.z2, hole.x2, n.z2],
+      // west of the notch
+      [n.x1, n.z1, notch.x1, n.z2],
+      // east of the notch
+      [notch.x2, n.z1, n.x2, n.z2],
+      // the shallow strip behind the notch, between the two side pieces
+      [notch.x1, n.z1, notch.x2, notch.z1],
     ]
     for (const [x1, z1, x2, z2] of slabs) {
       const w = x2 - x1
@@ -723,43 +723,73 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   /* --------------------------------------------------------- stairs -------- */
   {
-    // The flight climbs along X, west (low) -> east (high), inside the terrace.
-    // The top step lands flush with the corridor floor, so it doubles as the
-    // landing — a separate landing slab would sit UNDER the level-1 floor and be
-    // invisible.
-    const sx = (STAIRS.x1 + STAIRS.x2) / 2
-    const sz = (STAIRS.z1 + STAIRS.z2) / 2
+    // EXTERNAL FEATURE STAIR in the courtyard, climbing the north bar's south face.
+    //
+    // It runs along Z and rises NORTHWARD: bottom step out at z2 in the open, top
+    // landing at z1 tucked under the level-1 slab edge, where it meets the corridor.
+    // Because it stands OUTSIDE the building envelope it is actually VISIBLE — the
+    // two earlier positions put it inside the terrace, under the marble slab, where
+    // no camera could ever see it.
     const w = STAIRS.x2 - STAIRS.x1
-    const d = STAIRS.z2 - STAIRS.z1
-    const steps = 14
-    const tread = w / steps
+    const cx = (STAIRS.x1 + STAIRS.x2) / 2
+    // Z DECREASES northward, so the run is (foot - top) — POSITIVE. Writing it as
+    // (top - foot) made the run negative, which drew every tread with a negative
+    // depth (invisible) and sent the posts marching SOUTH into the courtyard. The
+    // stair rendered as two stray diagonal rails. Asserted in the self-test now.
+    const flightRun = STAIRS.z2 - STAIR_FLIGHT_TOP
+    const steps = 15
+    const tread = flightRun / steps
     for (let i = 0; i < steps; i++) {
       const h = (LEVEL_H / steps) * (i + 1)
-      const step = box(tread, h, d - 0.16, 0xcfc7b4, { rough: 0.8 })
-      step.position.set(STAIRS.x1 + tread * (i + 0.5), h / 2, sz)
+      const z = STAIRS.z2 - tread * (i + 0.5)
+      const step = box(w - 0.24, h, tread, 0xd8d2c4, { rough: 0.82 })
+      step.position.set(cx, h / 2, z)
       step.castShadow = true
       step.receiveShadow = true
       group.add(step)
     }
-    // Railings that FOLLOW THE SLOPE. A horizontal bar floating at corridor
-    // height above a climbing flight reads as a broken model, so the rail is a
-    // box rotated to the stair's own pitch and the posts rise with the treads.
+    // The top landing: flat, at corridor level, reaching through the building line
+    // so you step straight off onto the corridor floor.
+    {
+      const land = box(w - 0.24, 0.16, STAIRS.landing + 0.5, 0xd8d2c4, { rough: 0.82 })
+      land.position.set(cx, LEVEL_H - 0.08, STAIRS.z1 + STAIRS.landing / 2 - 0.25)
+      land.castShadow = true
+      land.receiveShadow = true
+      group.add(land)
+    }
+    // Support: a slim wall under the outer stringer, so the flight is not floating.
+    for (const sx of [STAIRS.x1 + 0.1, STAIRS.x2 - 0.1]) {
+      for (let i = 0; i < steps; i += 3) {
+        const h = (LEVEL_H / steps) * (i + 1)
+        const z = STAIRS.z2 - tread * (i + 0.5)
+        const leg = box(0.12, h, tread * 3, 0xb9b2a2, { rough: 0.9 })
+        leg.position.set(sx, h / 2, z)
+        group.add(leg)
+      }
+    }
+    // Railings that FOLLOW THE SLOPE. The rail is a box rotated to the stair's own
+    // pitch and the posts rise with the treads — a horizontal bar floating above a
+    // climbing flight reads as a broken model.
     const rise = LEVEL_H
-    const run = w
-    const pitch = Math.atan2(rise, run)
-    const railLen = Math.hypot(rise, run)
-    for (const rz of [STAIRS.z1 - 0.08, STAIRS.z2 + 0.08]) {
-      const rail = box(railLen, 0.07, 0.07, 0x8a8f95, { metal: 0.6 })
-      rail.position.set(sx, LEVEL_H / 2 + 0.95, rz)
-      rail.rotation.z = pitch
+    const pitch = Math.atan2(rise, flightRun)
+    const railLen = Math.hypot(rise, flightRun)
+    for (const rx of [STAIRS.x1 + 0.06, STAIRS.x2 - 0.06]) {
+      const rail = box(0.07, 0.07, railLen, 0x8a8f95, { metal: 0.6 })
+      rail.position.set(rx, LEVEL_H / 2 + 0.95, (STAIRS.z2 + STAIR_FLIGHT_TOP) / 2)
+      rail.rotation.x = -pitch
       group.add(rail)
-      for (let i = 0; i <= 6; i++) {
-        const f = i / 6
+      for (let i = 0; i <= 5; i++) {
+        const f = i / 5
         const h = 0.95 + rise * f
+        const z = STAIRS.z2 - flightRun * f
         const post = cyl(0.035, 0.035, h, 0x8a8f95, 8, 0.6)
-        post.position.set(STAIRS.x1 + run * f, h / 2, rz)
+        post.position.set(rx, h / 2, z)
         group.add(post)
       }
+      // rail along the top landing, level
+      const lrail = box(0.07, 0.07, STAIRS.landing + 0.4, 0x8a8f95, { metal: 0.6 })
+      lrail.position.set(rx, LEVEL_H + 0.95, STAIRS.z1 + STAIRS.landing / 2 - 0.2)
+      group.add(lrail)
     }
   }
 

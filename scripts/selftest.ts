@@ -33,6 +33,10 @@ import {
   POOL,
   ROOMS,
   STAIRS,
+  STAIR_FLIGHT_TOP,
+  STAIR_FOOT,
+  STAIR_TOP,
+  stairHeightAt,
   blockingFootprints,
   deskSeatWorld,
   layoutConflicts,
@@ -562,45 +566,65 @@ console.log('geometry')
   check('the pool is solid (you cannot walk on water)', blocked(POOL.x, POOL.z, BODY_R, { level: 0 }))
 }
 
-// The stair shaft is walkable on BOTH levels, and is the only place that is —
-// that is what makes it a portal rather than a hole.
-{
-  const problems: string[] = []
-  const c = stairCentre
-  if (blocked(c.x, c.z, BODY_R, { level: 0 })) problems.push('stair not walkable on level 0')
-  if (blocked(c.x, c.z, BODY_R, { level: 1 })) problems.push('stair not walkable on level 1')
-  check('the stair shaft is the level portal', problems.length === 0, problems.join(' | '))
-}
-
-// The stair must stand in the TERRACE, not inside a division room.
+// The stair is an EXTERNAL flight in the courtyard, and it must actually WORK as
+// the level link: the flight is solid on the ground (you cannot walk through it),
+// the flat landing at its top is floor on level 1, and a walker can get from the
+// courtyard up to every level-1 room.
 //
-// It used to sit at x -27.5..-23, which is inside the Developer & Infrastructure
-// room — it landed on top of a developer's desk. Every square metre of the west
-// bar belongs to one of the three work rooms, so the only legal home is the north
-// bar's open ground floor (the terrace), which is also the only space that maps
-// onto the level-1 corridor the stair has to land on.
+// This replaced an earlier "shaft is walkable on both levels" check. That design
+// put the stair INSIDE the terrace, under the level-1 slab, where no camera could
+// see it — which is precisely why it never looked right. The stair now stands in
+// the open courtyard and its top landing reaches through the building line.
 {
   const problems: string[] = []
   const cx = (STAIRS.x1 + STAIRS.x2) / 2
-  const cz = (STAIRS.z1 + STAIRS.z2) / 2
-  for (const r of ROOMS.filter((x) => x.level === 0 && ['dev', 'mkt', 'content'].includes(x.id))) {
-    const inside =
-      cx > r.x1 - 0.4 && cx < r.x2 + 0.4 && cz > r.z1 - 0.4 && cz < r.z2 + 0.4
-    if (inside) problems.push(`stair overlaps ${r.id}`)
+  const flightMid = (STAIRS.z2 + STAIR_FLIGHT_TOP) / 2
+  // 1. the flight is solid on the ground floor
+  if (!blocked(cx, flightMid, BODY_R, { level: 0 })) {
+    problems.push('the flight is walkable on level 0 (you can walk through a stair)')
   }
-  // It must overlap NO desk and no chair — that was the actual bug.
-  for (const d of DESKS) {
-    const hits =
-      cx > d.x - 0.85 - 0.4 && cx < d.x + 0.85 + 0.4 && cz > d.z - 0.5 - 0.4 && cz < d.z + 0.5 + 0.4
-    if (hits) problems.push(`stair lands on desk ${d.index}`)
+  // 2. the foot is reachable from the courtyard
+  if (blocked(STAIR_FOOT.x, STAIR_FOOT.z, BODY_R, { level: 0 })) {
+    problems.push('the foot of the stair is blocked')
   }
-  // And it must land inside the level-1 corridor's z-band, or it climbs into a wall.
-  const corridor = roomById('corridor1')!
-  if (!(cz > corridor.z1 - 0.4 && cz < corridor.z2 + 0.4)) {
-    problems.push(`stair z=${cz} does not meet the exec corridor (${corridor.z1}..${corridor.z2})`)
+  // 3. the landing is floor on level 1
+  if (blocked(STAIR_TOP.x, STAIR_TOP.z, BODY_R, { level: 1 })) {
+    problems.push('the top landing is not walkable on level 1')
   }
-  check('the stair stands in the terrace and lands on the exec corridor, clear of every desk',
-    problems.length === 0, problems.join(' | '))
+  // 4. and the whole trip works: courtyard -> every exec room
+  for (const r of ROOMS.filter((x) => x.level === 1 && x.id !== 'corridor1')) {
+    const c = roomCentre(r.id)
+    const legs = routeBetween({ x: 0, z: 4, level: 0 }, { ...c, level: 1 })
+    if (!legs.length) problems.push(`no route courtyard->${r.id}`)
+  }
+  // 5. the stair must NOT stand under the level-1 slab, or it is invisible again.
+  //    Its foot has to be SOUTH of the building line. Z DECREASES northward, so
+  //    "south of the edge" means z GREATER than it.
+  if (STAIRS.z2 < BARS.north.z2) {
+    problems.push(`stair foot z=${STAIRS.z2} is not in the courtyard (building edge ${BARS.north.z2})`)
+  }
+  // 6. THE RAMP MUST RISE. Z decreases northward, so the run is (foot - top) and it
+  //    must be POSITIVE. Getting this sign wrong drew every tread with a negative
+  //    depth (invisible) and marched the rail posts south into the courtyard — the
+  //    stair rendered as two stray diagonal rails. That is the bug this guards.
+  const run = STAIRS.z2 - STAIR_FLIGHT_TOP
+  if (run <= 0) problems.push(`flight run is ${run.toFixed(2)} — negative, the stair renders backwards`)
+  if (STAIRS.z2 <= STAIR_FLIGHT_TOP) problems.push('the foot is not south of the flight top')
+  // and the height function must climb, never dip
+  {
+    let prev = -1
+    for (let z = STAIRS.z2; z >= STAIRS.z1; z -= 0.1) {
+      const h = stairHeightAt((STAIRS.x1 + STAIRS.x2) / 2, z) ?? 0
+      if (h < prev - 0.001) {
+        problems.push(`stair height dips at z=${z.toFixed(1)}`)
+        break
+      }
+      prev = h
+    }
+    const topH = stairHeightAt((STAIRS.x1 + STAIRS.x2) / 2, STAIR_FLIGHT_TOP)
+    if (topH !== LEVEL_H) problems.push(`top of flight is at ${topH}, want ${LEVEL_H}`)
+  }
+  check('the external stair links the courtyard to every exec room', problems.length === 0, problems.join(' | '))
 }
 
 // The receptionist is ANCHORED: a body that never moves (poin 2).

@@ -22,7 +22,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRe
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
-import { blocked, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
+import { blocked, onStairLanding, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
 import {
   CONFERENCE_CHAIRS,
   DOOR,
@@ -35,6 +35,8 @@ import {
   ROOM_SIGNS,
   visitorSpot,
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
+  LEVEL_H,
+  stairHeightAt,
   type Desk,
   type IdleSpot,
   type MeetingRoomId,
@@ -310,7 +312,7 @@ export function createScene(
 
     // Place the body at the position the DB remembers — that is the whole point
     // of storing it. Only a body with no stored position enters through the door.
-    av.group.position.set(row.x, row.level * 3.4, row.z)
+    av.group.position.set(row.x, row.level * LEVEL_H, row.z)
     av.group.rotation.y = row.facing ?? 0
     return a
   }
@@ -638,10 +640,13 @@ export function createScene(
           // A waypoint that changes floor is the stair hand-off.
           if (leg.level !== a.level) {
             a.level = leg.level
-            g.position.y = a.level * 3.4
+            // Do NOT snap to the new height: the body is standing on the landing,
+            // which is at corridor level, so the y it already has is close. The
+            // climb itself is animated by `stairHeightAt` below.
+            g.position.y = a.level * LEVEL_H
           }
           if (!a.path.length) {
-            g.position.set(a.target.x, a.level * 3.4, a.target.z)
+            g.position.set(a.target.x, a.level * LEVEL_H, a.target.z)
             a.walking = 0
             // Arrived: rest a while before wandering on. This is what keeps an
             // idle office from looking like a swarm.
@@ -658,6 +663,16 @@ export function createScene(
           } else {
             g.position.x += tmp.x * Math.min(0.05, step)
             g.position.z += tmp.z * Math.min(0.05, step)
+          }
+          // RIDE THE RAMP. The stair is an external flight, so a body walking its
+          // footprint must RISE with it instead of gliding at floor height and then
+          // popping up 3.4 m at the landing. `stairHeightAt` is a pure function of
+          // the position, so the height is always exactly the tread underfoot.
+          if (a.level === 0) {
+            const h = stairHeightAt(g.position.x, g.position.z)
+            g.position.y = h ?? 0
+          } else if (onStairLanding(g.position.x, g.position.z)) {
+            g.position.y = LEVEL_H
           }
           a.face = Math.atan2(tmp.x, tmp.z)
           a.walking = 1

@@ -23,6 +23,9 @@ import {
   HALF_W,
   LEVEL_BOUNDS,
   OPENINGS,
+  STAIR_FLIGHT_TOP,
+  STAIR_FOOT,
+  STAIR_TOP,
   STAIRS,
   WALL_T,
   type Footprint,
@@ -64,14 +67,42 @@ function inOpening(x: number, z: number, pad: number, level: Level) {
   )
 }
 
-/** The stair shaft, inflated slightly, is the level portal. */
-export function inStairs(x: number, z: number): boolean {
+/**
+ * The stair is a real object in the courtyard, not a hole in the floor.
+ *
+ * That changes the portal completely. There is no longer one region that is
+ * walkable on both levels; there is a FOOT on the ground and a TOP on the first
+ * floor, and they are different places. `nav.ts` therefore:
+ *
+ *   - blocks the flight itself on level 0 (you cannot walk through a stair),
+ *   - keeps the flat landing at the top walkable on level 1,
+ *   - hands a walker over between STAIR_FOOT and STAIR_TOP.
+ *
+ * Z runs south→north as it DECREASES: z2 (-3.2) is the courtyard foot, z1 (-9.7)
+ * is the top tucked inside the building line, and STAIR_FLIGHT_TOP (-8.7) is where
+ * the ramp stops and the flat landing starts.
+ */
+export function onStairFlight(x: number, z: number): boolean {
   return (
-    x > STAIRS.x1 - 0.4 && x < STAIRS.x2 + 0.4 && z > STAIRS.z1 - 0.4 && z < STAIRS.z2 + 0.4
+    x > STAIRS.x1 - 0.15 &&
+    x < STAIRS.x2 + 0.15 &&
+    z < STAIRS.z2 &&
+    z > STAIR_FLIGHT_TOP
   )
 }
 
-export const stairCentre = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: (STAIRS.z1 + STAIRS.z2) / 2 }
+/** The flat landing at the top of the flight, walkable on the first floor. */
+export function onStairLanding(x: number, z: number): boolean {
+  return (
+    x > STAIRS.x1 - 0.15 &&
+    x < STAIRS.x2 + 0.15 &&
+    z <= STAIR_FLIGHT_TOP &&
+    z > STAIRS.z1 - 0.4
+  )
+}
+
+/** Kept for callers that just need the stair's x/z centre. */
+export const stairCentre = STAIR_FOOT
 
 /**
  * Point test used by the mover. `pad` is the body radius, so callers get
@@ -99,9 +130,11 @@ export function blocked(
   ) {
     return true
   }
-  // The stair shaft is a hole in the first floor's plate: it is walkable on BOTH
-  // levels, which is what makes it a portal rather than a wall.
-  if (inStairs(x, z)) return false
+  // The stair is a real object standing in the courtyard. You cannot walk through
+  // the flight on the ground floor — it is a solid ramp. The flat LANDING at its
+  // top, however, IS floor on level 1: that is where you step off.
+  if (onStairFlight(x, z)) return true
+  if (level === 1 && onStairLanding(x, z)) return false
 
   for (const w of wallsByLevel[level]) {
     if (inside(w, x, z, pad) && !inOpening(x, z, pad, level)) return true
@@ -311,12 +344,20 @@ export function routeBetween(
   if (from.level === to.level) {
     return routeOnLevel(from, to, from.level).map((p) => ({ ...p, level: from.level }))
   }
-  const toStair = routeOnLevel(from, stairCentre, from.level)
-  const fromStair = routeOnLevel(stairCentre, to, to.level)
+  // The stair is an OBJECT, so the two ends are different places: walk to the FOOT
+  // on the current floor, climb, then walk from the TOP on the other floor. A
+  // single shared "shaft centre" would put the body inside the flight.
+  const goingUp = from.level === 0
+  const foot = goingUp ? STAIR_FOOT : STAIR_TOP
+  const top = goingUp ? STAIR_TOP : STAIR_FOOT
+  const toStair = routeOnLevel(from, foot, from.level)
+  const fromStair = routeOnLevel(top, to, to.level)
   if (!toStair.length || !fromStair.length) return []
   return [
     ...toStair.map((p) => ({ ...p, level: from.level })),
-    { x: stairCentre.x, z: stairCentre.z, level: to.level },
+    // The hand-off: same x/z as the top, on the new level. The mover animates the
+    // climb between the last waypoint of one level and the first of the next.
+    { x: top.x, z: top.z, level: to.level },
     ...fromStair.map((p) => ({ ...p, level: to.level })),
   ]
 }
