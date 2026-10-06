@@ -22,7 +22,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRe
 import { buildOffice, type OfficeProps } from './build'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
-import { blocked, onStairArea, routeBetween, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
+import { blocked, onStairArea, planRoute, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
 import {
   CONFERENCE_CHAIRS,
   DOOR,
@@ -66,7 +66,23 @@ export type SceneAgent = AnimAgent & {
   path: Waypoint[]
   destKey: string
   face: number
-  /** Facing to adopt at a seat; set when a desk target is chosen. */
+  /**
+   * Which way to LOOK once the destination is reached.
+   *
+   * Separate from `face`, which the mover overwrites every frame with the direction of
+   * travel. Without this a body that walked east to a bench would keep facing east
+   * instead of turning to the water — the bench's `face` was lost the moment it set off.
+   */
+  arrivalFace?: number
+  /**
+   * Set only when the destination is a SEAT. It switches on the `settling` exemption:
+   * the final metre ignores ALL furniture, because a chair is tucked under a desk or
+   * covered by its table by construction.
+   *
+   * This is a FLAG, not a direction. It used to be assigned the spot's facing for every
+   * spot, so any body walking anywhere enabled `settling` on its last metre and passed
+   * through whatever stood there.
+   */
   seatYaw?: number
   walking: number
   meetingTalking: boolean
@@ -483,6 +499,7 @@ export function createScene(
   /** Decide activity + destination for the coming frames. */
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
     a.seatYaw = undefined
+    a.arrivalFace = undefined
 
     // ANCHORED bodies never get a destination. The receptionist stays behind the
     // counter: no wander, no meeting, no stroll to the pool (poin 2). Checked
@@ -493,7 +510,8 @@ export function createScene(
       // Keep the activity and facing the DB remembers — the receptionist keeps
       // typing at the counter, facing the door, forever.
       a.activity = a.anchorActivity
-      a.seatYaw = a.anchorFacing
+      a.arrivalFace = a.anchorFacing
+      a.face = a.anchorFacing
       return
     }
 
@@ -501,7 +519,9 @@ export function createScene(
     if (a.spawnGate && a.spawnGate > 0) {
       a.target = null
       a.activity = 'idle'
-      a.seatYaw = Math.PI
+      // Facing, not a seat: `seatYaw` would switch on the settling exemption.
+      a.arrivalFace = Math.PI
+      a.face = Math.PI
       return
     }
     if (a.leaving) {
@@ -528,6 +548,7 @@ export function createScene(
       a.target = meetingSeat(idx)
       a.targetLevel = 1
       a.seatYaw = meetingSeatYaw(idx)
+      a.arrivalFace = meetingSeatYaw(idx)
       a.activity = 'meeting'
       a.meetingTalking = meeting.currentSpeaker === a.data.name
       return
@@ -542,7 +563,9 @@ export function createScene(
         // every desk is on the ground floor
         a.targetLevel = 0
         a.activity = 'idle'
-        a.seatYaw = Math.atan2(desk.x - v.x, desk.z - v.z)
+        // The reviewer STANDS at the desk and looks at it. Facing, not a seat — this was
+        // `a.seatYaw`, which made every reviewing agent ignore furniture on its approach.
+        a.arrivalFace = Math.atan2(desk.x - v.x, desk.z - v.z)
         return
       }
     }
@@ -554,6 +577,7 @@ export function createScene(
         a.target = deskTarget(desk)
         a.targetLevel = 0
         a.seatYaw = deskSeatYaw(desk)
+        a.arrivalFace = deskSeatYaw(desk)
         a.activity = 'typing'
         return
       }
@@ -603,7 +627,19 @@ export function createScene(
     a.targetLevel = spot.level
     a.spotKey = `${spot.x.toFixed(1)},${spot.z.toFixed(1)}`
     a.activity = spot.act
-    a.seatYaw = spot.face
+    // TWO DIFFERENT THINGS, and conflating them let bodies walk through furniture.
+    //
+    //   `face`     which way to LOOK on arrival — every spot has one.
+    //   `seatYaw`  a flag meaning "the destination is a SEAT", which switches on the
+    //              `settling` exemption: the last metre ignores ALL furniture, because a
+    //              chair is tucked under a desk or covered by a table by construction.
+    //
+    // This line used to be `a.seatYaw = spot.face`, which set the flag for EVERY spot.
+    // So any body walking anywhere turned on `settling` for its final metre and passed
+    // through whatever stood there — 49,586 frames inside solid furniture in a 30-minute
+    // simulation, mostly the garden beds and the pantry wall.
+    a.arrivalFace = spot.face
+    a.seatYaw = spot.seated ? spot.face : undefined
   }
 
   // ---- simulation ------------------------------------------------------------
@@ -644,7 +680,15 @@ export function createScene(
     const out: AvatarState[] = []
     for (const a of avatars) {
       const g = a.avatar.group
-      const key = `${g.position.x.toFixed(1)},${g.position.z.toFixed(1)},${a.level},${a.activity}`
+      // REPORT WHAT IS ON SCREEN, not the destination.
+      //
+      // `a.activity` is the activity of the spot being WALKED TO — retarget() assigns it
+      // when the spot is claimed. So a body striding across the courtyard toward the
+      // barbell rack was stored as `activity: 'barbell'`, at a position 13 m from the
+      // rack. Reading the DB then said "two avatars are lifting in a corridor", which is
+      // not what the scene showed and not what a user watching the room would see.
+      const shown: Activity = a.walking > 0.5 ? 'walking' : a.activity
+      const key = `${g.position.x.toFixed(1)},${g.position.z.toFixed(1)},${a.level},${shown}`
       // Skip bodies that have not moved and are not doing anything new.
       if (lastSaved.get(a.avatarId) === key) continue
       lastSaved.set(a.avatarId, key)
@@ -656,7 +700,7 @@ export function createScene(
         x: Number(g.position.x.toFixed(2)),
         z: Number(g.position.z.toFixed(2)),
         level: a.level,
-        activity: a.activity,
+        activity: shown,
         facing: Number(g.rotation.y.toFixed(2)),
         spawned: a.kind === 'agent',
         anchored: a.anchored,
@@ -705,12 +749,12 @@ export function createScene(
         const destKey = `${a.target.x.toFixed(1)},${a.target.z.toFixed(1)}`
         if (destKey !== a.destKey || !a.path.length) {
           a.destKey = destKey
-          // LEVEL-AWARE: crossing floors goes through the stair shaft.
-          a.path = routeBetween(
-            { x: g.position.x, z: g.position.z, level: a.level },
-            { x: a.target.x, z: a.target.z, level: a.targetLevel },
+          // LEVEL-AWARE: crossing floors goes through the stair shaft, and the
+          // destination's floor comes from the TARGET, not from the body.
+          a.path = planRoute(
+            { x: g.position.x, z: g.position.z, level: a.level, targetLevel: a.targetLevel },
+            { x: a.target.x, z: a.target.z },
           )
-          if (!a.path.length) a.path = [{ x: a.target.x, z: a.target.z, level: a.targetLevel }]
         }
 
         const leg = a.path[0]
@@ -765,6 +809,20 @@ export function createScene(
           ) {
             g.position.set(nx, g.position.y, nz)
           } else {
+            // BLOCKED: creep toward the waypoint at 5 cm, UNCHECKED.
+            //
+            // This is deliberate, and it was measured before being touched. A "refuse to
+            // enter" variant (try smaller steps, slide along one axis, else hold) removes
+            // almost all furniture overlap — 2490 frames to 118 — but it COLLAPSES the
+            // simulation: arrivals fall from 1358 to 106 and bodies sit still for up to
+            // 1789 s, because a body wedged against a solid never gets past it. The
+            // unchecked creep is what slides a walker along an obstacle until the waypoint
+            // clears, which is why every body eventually arrives.
+            //
+            // The overlap it does cause is transient and shallow: the mover's own pad is
+            // BODY_R * 0.9, so "inside" here means the body's centre is within 0.31 m of a
+            // solid's face — brushing a rack, not standing in a wall. The alternative is
+            // bodies that never arrive.
             g.position.x += tmp.x * Math.min(0.05, step)
             g.position.z += tmp.z * Math.min(0.05, step)
           }
@@ -804,8 +862,11 @@ export function createScene(
       while (diff < -Math.PI) diff += Math.PI * 2
       g.rotation.y += diff * Math.min(1, dt * 6)
 
-      if (a.walking < 0.5 && a.seatYaw !== undefined) {
-        a.face = a.seatYaw
+      // ARRIVED: turn to the destination's own facing. The mover overwrote `face` with
+      // the direction of travel every frame, so without this a body keeps facing the way
+      // it walked — a bench that should look at the pool looks at the wall.
+      if (a.walking < 0.5 && a.arrivalFace !== undefined) {
+        a.face = a.arrivalFace
       }
 
       const activity: Activity = a.walking > 0.5 ? 'walking' : a.activity

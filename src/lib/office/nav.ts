@@ -362,6 +362,38 @@ export function route(
 export type Waypoint = { x: number; z: number; level: Level }
 
 /**
+ * Plan the walk to a destination that may be on another floor.
+ *
+ * A PURE FUNCTION, and that matters: the destination's floor used to be read from the
+ * BODY (`level: a.level`) instead of the TARGET, so an idle body sent to an upstairs
+ * spot walked to those coordinates on the ground floor and never climbed — all twelve
+ * level-1 idle spots were unreachable, and the body juddered against whatever it hit.
+ *
+ * The bug lived inside the render loop, where nothing could reach it, and the
+ * regression test for it was a regex over the source that matched the wrong line. Both
+ * problems go away if the decision is a function: `from.targetLevel` is the only floor
+ * the destination can be routed at, so the bug is not expressible, and the self-test
+ * can call this and check the route it returns.
+ */
+export function planRoute(
+  from: { x: number; z: number; level: Level; targetLevel: Level },
+  target: { x: number; z: number },
+): Waypoint[] {
+  const legs = routeBetween(
+    { x: from.x, z: from.z, level: from.level },
+    { x: target.x, z: target.z, level: from.targetLevel },
+  )
+  // A target with no route still gets a single leg: the mover's arrival check then
+  // fails harmlessly instead of the body standing still forever with an empty path.
+  //
+  // This is not defensive padding. The mover does `a.path[0]` and reads `leg.x` on the
+  // very next line, so an empty route is a TypeError inside the render loop — the whole
+  // office stops drawing. A target off the floor plate (which the DB can hold: a stale
+  // position from an older layout) is exactly that case.
+  return legs.length ? legs : [{ x: target.x, z: target.z, level: from.targetLevel }]
+}
+
+/**
  * A* ACROSS levels, via the stair shaft.
  *
  * Same level: one route. Different levels: walk to the stair on the current floor,

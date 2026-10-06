@@ -26,6 +26,7 @@ import {
   HALF_D,
   HALF_W,
   KANBAN_BOARD,
+  LEVEL_BOUNDS,
   LEVEL_H,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
@@ -56,7 +57,7 @@ import {
   WALL_H,
   WALL_T,
 } from '../src/lib/office/layout'
-import { BODY_R, blocked, onStairArea, route, routeBetween, stairCentre } from '../src/lib/office/nav'
+import { BODY_R, blocked, onStairArea, planRoute, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { dummyRoster } from '../src/lib/office/dummy-roster'
 import { buildOffice } from '../src/lib/office/build'
 import type { IdleSpot, MeetingRoomId } from '../src/lib/office/layout'
@@ -1161,17 +1162,58 @@ console.log('geometry')
 //
 // The route was computed with `level: a.level` for the TARGET as well as the body, so
 // an idle body sent to an upstairs spot walked to those coordinates on the ground
-// floor and never climbed: all twelve level-1 spots were unreachable, and the body
-// then juddered against whatever it hit. The target floor is state now.
+// floor and never climbed: all twelve level-1 spots were unreachable, and the body then
+// juddered against whatever it hit. The target floor is state now.
+//
+// This CALLS the decision instead of grepping for it. The first version of this test
+// was a regex for `level: a.targetLevel`, which also matched the fallback leg two lines
+// down — reverting the real call left the test green. A mutation audit found that. A
+// behaviour test cannot be fooled that way: `planRoute` either returns a route that
+// ends upstairs or it does not.
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
   const problems: string[] = []
-  if (!/targetLevel: Level/.test(scene)) problems.push('SceneAgent has no targetLevel field')
-  if (!/a\.targetLevel = spot\.level/.test(scene)) problems.push('an idle spot does not record its floor')
-  if (!/a\.targetLevel = 1\b/.test(scene)) problems.push('a meeting seat does not record floor 1')
-  if (!/level: a\.targetLevel \}/.test(scene)) {
-    problems.push('the route still uses the body floor for the destination — upstairs spots are unreachable')
+  const from = { x: DOOR.x, z: DOOR.z - 1.5, level: 0 as const }
+  // Every upstairs idle spot: the route must END on level 1, at the spot.
+  for (const spot of IDLE_SPOTS.filter((s) => s.level === 1)) {
+    const legs = planRoute({ ...from, targetLevel: 1 }, { x: spot.x, z: spot.z })
+    const last = legs[legs.length - 1]
+    if (!legs.length) {
+      problems.push(`no route to the upstairs ${spot.act} at (${spot.x},${spot.z})`)
+      continue
+    }
+    if (last.level !== 1) {
+      problems.push(`the route to (${spot.x},${spot.z}) ends on level ${last.level}, not 1`)
+    }
+    if (Math.abs(last.x - spot.x) > 0.01 || Math.abs(last.z - spot.z) > 0.01) {
+      problems.push(`the route to (${spot.x},${spot.z}) ends at (${last.x},${last.z})`)
+    }
+    // and it must actually climb: at least one leg on each floor
+    if (!legs.some((w) => w.level === 1) || !legs.some((w) => w.level === 0)) {
+      problems.push(`the route to (${spot.x},${spot.z}) does not cross floors`)
+    }
+  }
+  // A ground-floor target must NOT be sent up the stair.
+  for (const spot of IDLE_SPOTS.filter((s) => s.level === 0).slice(0, 8)) {
+    const legs = planRoute({ ...from, targetLevel: 0 }, { x: spot.x, z: spot.z })
+    if (legs.some((w) => w.level === 1)) {
+      problems.push(`the route to the ground-floor ${spot.act} at (${spot.x},${spot.z}) climbs the stair`)
+    }
+  }
+  // A target with NO route must still yield a leg. The mover reads `a.path[0].x` on the
+  // line after the route is planned, so an empty array is a TypeError inside the render
+  // loop and the whole office stops drawing. An off-plate target reaches this: the DB
+  // can hold a position from an older layout.
+  for (const far of [{ x: 999, z: 999 }, { x: -999, z: 0 }, { x: 0, z: -999 }]) {
+    const legs = planRoute({ ...from, targetLevel: 0 }, far)
+    if (!legs.length) {
+      problems.push(`no route to (${far.x},${far.z}) yields an EMPTY path — a.path[0] would be undefined`)
+    } else {
+      const last = legs[legs.length - 1]
+      if (Math.abs(last.x - far.x) > 0.01 || Math.abs(last.z - far.z) > 0.01) {
+        problems.push(`the fallback leg to (${far.x},${far.z}) points at (${last.x},${last.z})`)
+      }
+    }
   }
   check('a destination on another floor routes through the stair', problems.length === 0, problems.join(' | '))
 }
@@ -1783,6 +1825,66 @@ void (async () => {
       const rail = GYM.rig.crossBarY
       if (rail > lo && rail < hi) {
         problems.push(`the rig's cross-bar (${rail}) is inside the hanging head's band ${lo.toFixed(2)}..${hi.toFixed(2)}`)
+      }
+    }
+
+    // 6. `settling` must ignore FURNITURE but never a WALL. It exists so a body can
+    //    step onto a chair tucked under a desk or covered by a meeting table; if it
+    //    were checked before the wall loop, a body settling onto a seat by a wall would
+    //    walk through the wall. The source-order test that used to guard this could be
+    //    fooled by a reordered comment, so this checks the BEHAVIOUR at three real
+    //    coordinates instead: a wall, the world edge, and a meeting chair.
+    {
+      const wall = FOOTPRINTS.find((f) => f.kind === 'wall' && f.level === 0)
+      const seat = IDLE_SPOTS.find((s) => s.act === 'meeting' && s.seated)
+      if (!wall) problems.push('no wall footprint to test against')
+      else if (!blocked(wall.x, wall.z, BODY_R, { level: 0, settling: true })) {
+        problems.push(`settling walks through a wall at (${wall.x},${wall.z})`)
+      }
+      const b = LEVEL_BOUNDS[0]
+      if (!blocked(b.x2 + 5, b.z2 + 5, BODY_R, { level: 0, settling: true })) {
+        problems.push('settling escapes the floor plate')
+      }
+      if (!seat) problems.push('no seated meeting spot to test against')
+      else if (blocked(seat.x, seat.z, BODY_R, { level: 1, allowSeat: true, settling: true })) {
+        problems.push(`settling still refuses the meeting chair at (${seat.x},${seat.z})`)
+      } else if (!blocked(seat.x, seat.z, BODY_R, { level: 1, allowSeat: true })) {
+        problems.push('the meeting chair is not inside furniture — this test proves nothing')
+      }
+    }
+
+    // 7. `settling` must be armed ONLY by a seat. It ignores all furniture, so arming it
+    //    for every spot let a body walking to the garden, the BBQ or the barbell rack pass
+    //    through whatever stood on its last metre — measured at 2052..2250 frames inside a
+    //    solid per 30 simulated minutes. `seatYaw` is the arming flag and `arrivalFace`
+    //    is the direction to look; they were the same field, which is how the bug got in.
+    {
+      const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+      // Strip comments first: the code that FIXED this bug explains the old line in a
+      // comment, and a naive regex matches its own documentation. (It did, on the first
+      // run of this test.)
+      const code = scene.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      if (/a\.seatYaw = spot\.face\b/.test(code)) {
+        problems.push('seatYaw is armed for every spot — settling will ignore furniture everywhere')
+      }
+      if (!/a\.seatYaw = spot\.seated \? spot\.face : undefined/.test(scene)) {
+        problems.push('an idle spot does not arm seatYaw from its own `seated` flag')
+      }
+      if (!/arrivalFace\?: number/.test(scene)) {
+        problems.push('there is no separate arrival facing — a body will keep facing the way it walked')
+      }
+    }
+
+    // 8. THE CREEP MUST STAY UNCHECKED — this is a measured trade-off, not an oversight.
+    //    A "refuse to enter" mover (smaller steps, axis slide, else hold) drives furniture
+    //    overlap to 0 but collapses the office: arrivals fall 1343 -> 102 and bodies sit
+    //    still for up to 1790 s, wedged against a solid forever. The unchecked 5 cm creep
+    //    is what slides a walker along an obstacle until its waypoint clears. Guarded here
+    //    so a future "fix" does not silently reintroduce the freeze.
+    {
+      const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+      if (!/g\.position\.x \+= tmp\.x \* Math\.min\(0\.05, step\)/.test(scene)) {
+        problems.push('the creep is gone or checked — bodies will wedge against solids')
       }
     }
 
