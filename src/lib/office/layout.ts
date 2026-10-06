@@ -715,14 +715,15 @@ export type DiningSet = {
 }
 
 export const DINING_SETS: DiningSet[] = [
-  // The pantry: three sets along the west side, clear of the counter (x 25.15..26.05)
-  // and of the partition at z = 2.
-  { x: 17.4, z: 5.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 17.4, z: 9.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 17.4, z: 14.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  // The leisure room: two more, north of the sofa group.
-  { x: 17.6, z: -8.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
-  { x: 17.6, z: -13.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  // ALL of them in the PANTRY / DAPUR. The user was explicit: the dining tables belong in
+  // the pantry, not in the leisure room. These four run down the middle of the room, clear
+  // of the counter (x 25.15..26.05), the water cooler and the partition at z = 2.
+  { x: 16.6, z: 4.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 16.6, z: 9.4, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 16.6, z: 14.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 16.6, z: 19.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  // one more against the east side, north of the counter's end
+  { x: 20.4, z: 17.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
 ]
 
 /** Seat height of a dining chair — matches SEATS.chair, so the pose is unchanged. */
@@ -1096,9 +1097,15 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // directly under the bar: the pull-up pose solves its own height, so the body hangs
   // with its feet off the mat rather than standing beside the rig.
   { x: GYM.rig.x, z: GYM.rig.z, act: 'pullup', face: Math.PI, level: 0 },
-  // Muscle-up: on the same bar, but the body goes ABOVE it and the knees come up. A
-  // second spot so both can happen at once without two bodies in one place.
-  { x: GYM.rig.x + GYM.rig.span / 2 + 0.55, z: GYM.rig.z, act: 'muscleup', face: Math.PI, level: 0 },
+  // Muscle-up: on the SAME bar as the pull-up, at the other end of the span. It used to
+  // sit at `rig.x + span/2 + 0.55` — 0.55 m PAST the end post — so the body hung off the
+  // side of the bar with nothing to grip.
+  //
+  // x +0.85 is the far end of the safe band: the end post is at 1.5, and a body needs
+  // 0.46 m of clearance from it (post half-width 0.12 + body radius 0.34), which rules out
+  // anything past 1.04. It is also 0.85 m from the pull-up spot, so the two stations are
+  // visibly separate.
+  { x: GYM.rig.x + 0.85, z: GYM.rig.z, act: 'muscleup', face: Math.PI, level: 0 },
 
   /* ---- the BBQ: stand AT the grill, looking at it (poin 8) -------------- */
   // The grill counter's footprint is x 7.45..9.35, z -7.02..-5.78. Every spot stands

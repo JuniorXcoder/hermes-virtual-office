@@ -329,6 +329,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   /** The BBQ smoke puffs and fire, collected so `animateBbq` can drive them. */
   const bbqSmoke: THREE.Mesh[] = []
   let bbqFire: THREE.Mesh | null = null
+  let bbqGlow: THREE.PointLight | null = null
   let pal: Palette = paletteFor(hour)
   const disposables: { dispose(): void }[] = []
   const track = <T extends { dispose(): void }>(t: T): T => {
@@ -768,24 +769,33 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     fire.position.set(-0.35, 0.97, 0)
     g.add(fire)
     bbqFire = fire
-    // The SMOKE: three translucent puffs above the hood, rising and fading on a loop.
-    // They are `MeshBasicMaterial` with depthWrite off, so they read as haze rather than
-    // as grey balls, and they are named so the scene can animate them.
-    for (let i = 0; i < 3; i++) {
+    // The SMOKE: four translucent puffs above the hood, rising and fading on a loop.
+    //
+    // Sized and weighted to actually be SEEN from the default camera: the first version
+    // was 0.16-0.26 m at opacity 0.16-0.30, which against a bright courtyard is invisible.
+    // These are larger and denser, and they drift sideways as they rise so the column
+    // reads as smoke rather than as beads on a wire.
+    for (let i = 0; i < 4; i++) {
       const puff = new THREE.Mesh(
-        new THREE.SphereGeometry(0.16 + i * 0.05, 10, 8),
+        new THREE.SphereGeometry(0.3 + i * 0.09, 12, 10),
         new THREE.MeshBasicMaterial({
-          color: 0xdfe4e8,
+          color: 0xe8edf1,
           transparent: true,
-          opacity: 0.3 - i * 0.07,
+          opacity: 0.55 - i * 0.08,
           depthWrite: false,
         }),
       )
       puff.name = `bbq-smoke-${i}`
-      puff.position.set(-0.35 + (i - 1) * 0.12, 1.45 + i * 0.34, 0)
+      puff.position.set(-0.35 + (i - 1.5) * 0.14, 1.5 + i * 0.36, 0)
       g.add(puff)
       bbqSmoke.push(puff)
     }
+    // A dim ember glow so the fire lights the counter around it.
+    const glow = new THREE.PointLight(0xff7a2e, 0.5, 3.2, 2)
+    glow.name = 'bbq-glow'
+    glow.position.set(-0.35, 1.05, 0)
+    g.add(glow)
+    bbqGlow = glow
     group.add(g)
   }
 
@@ -2020,9 +2030,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       // two frequencies, so the flicker does not read as a sine wave
       mat.emissiveIntensity = 1.25 + Math.sin(t * 7.3) * 0.22 + Math.sin(t * 11.9) * 0.12
     }
+    if (bbqGlow) {
+      bbqGlow.intensity = 0.45 + Math.sin(t * 7.3) * 0.12 + Math.sin(t * 11.9) * 0.07
+    }
     for (const [i, puff] of bbqSmoke.entries()) {
       const cycle = ((t * 0.22 + i * 0.33) % 1 + 1) % 1
-      const base = 0.3 - i * 0.07
+      const base = 0.55 - i * 0.08
       const mat = puff.material as THREE.MeshBasicMaterial
       // fade in over the first fifth, out over the rest
       const fade = cycle < 0.2 ? cycle / 0.2 : 1 - (cycle - 0.2) / 0.8

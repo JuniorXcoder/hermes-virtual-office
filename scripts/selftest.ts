@@ -2285,6 +2285,97 @@ void (async () => {
       problems.length === 0, problems.join(' | '))
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE RUNTIME FILTER MUST USE THE SAME EXEMPTIONS AS THE MOVER.
+  //
+  // `scene.ts` drops any idle spot that `blocked()` rejects, and that filter is SILENT: the
+  // body simply goes elsewhere, so nothing looks broken. It passed only `allowSeat`, which
+  // discarded 23 of 66 spots at runtime — every swim lane, the bench press, and ALL 20
+  // dining chairs. The self-test stayed green because it checked the DATA with the right
+  // flags; the data was fine and the world was not. The user found it by looking.
+  //
+  // This calls the SAME expression the scene uses and demands it drops nothing.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    const problems: string[] = []
+    // the filter must consult all three exemptions
+    for (const [flag, why] of [
+      ['allowSeat: p.seated', 'a seated spot would be dropped'],
+      ['settling: p.seated || p.bench', 'a bench-press spot would be dropped'],
+      ['allowWater: p.water', 'a swim lane would be dropped'],
+    ] as const) {
+      if (!scene.includes(flag)) problems.push(`the runtime filter ignores ${flag.split(':')[0]} — ${why}`)
+    }
+    // and it must actually drop nothing, evaluated with the same flags
+    const dropped = IDLE_SPOTS.filter((p) =>
+      blocked(p.x, p.z, BODY_R, {
+        allowSeat: p.seated,
+        settling: p.seated || p.bench,
+        allowWater: p.water,
+        level: p.level,
+      }),
+    )
+    for (const p of dropped) {
+      problems.push(`the world would DROP the ${p.act} spot at (${p.x.toFixed(1)},${p.z.toFixed(1)})`)
+    }
+    if (IDLE_SPOTS.length < 60) problems.push(`only ${IDLE_SPOTS.length} idle spots — some were lost`)
+    check('the runtime spot filter drops nothing', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE MUSCLE-UP MUST GRIP THE BAR, NOT HANG BESIDE IT (poin 9).
+  //
+  // The spot was at `rig.x + span/2 + 0.55` — 0.55 m past the end post — so the body hung
+  // off the side of the bar with nothing to hold. This compares the spot against the bar's
+  // actual span.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const barX1 = GYM.rig.x - GYM.rig.span / 2
+    const barX2 = GYM.rig.x + GYM.rig.span / 2
+    for (const act of ['pullup', 'muscleup'] as const) {
+      const s = IDLE_SPOTS.find((x) => x.act === act)
+      if (!s) {
+        problems.push(`no ${act} spot`)
+        continue
+      }
+      if (s.x < barX1 || s.x > barX2) {
+        problems.push(`the ${act} spot (x=${s.x.toFixed(2)}) is outside the bar span ${barX1}..${barX2}`)
+      }
+      if (Math.abs(s.z - GYM.rig.z) > 0.05) {
+        problems.push(`the ${act} spot (z=${s.z.toFixed(2)}) is not on the bar's line (z=${GYM.rig.z})`)
+      }
+    }
+    // the two must not share a place, or they are one station wearing two names
+    const pu = IDLE_SPOTS.find((x) => x.act === 'pullup')
+    const mu = IDLE_SPOTS.find((x) => x.act === 'muscleup')
+    if (pu && mu && Math.hypot(pu.x - mu.x, pu.z - mu.z) < 0.6) {
+      problems.push('the pull-up and muscle-up spots overlap — they are the same place')
+    }
+    check('both rig stations grip the bar', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE DINING TABLES ARE IN THE PANTRY, AND ONLY THERE (poin 1, corrected).
+  //
+  // The user asked for the dining tables in the pantry / dapur. The first version put two
+  // of the five in the leisure room, which is not what was asked.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const pantry = roomById('pantry')!
+    const leisure = roomById('leisure')!
+    for (const [i, s] of DINING_SETS.entries()) {
+      const inPantry = s.x > pantry.x1 && s.x < pantry.x2 && s.z > pantry.z1 && s.z < pantry.z2
+      const inLeisure = s.x > leisure.x1 && s.x < leisure.x2 && s.z > leisure.z1 && s.z < leisure.z2
+      if (!inPantry) problems.push(`dining set ${i} at (${s.x},${s.z}) is not in the pantry`)
+      if (inLeisure) problems.push(`dining set ${i} is in the leisure room`)
+    }
+    if (DINING_SETS.length < 4) problems.push(`only ${DINING_SETS.length} dining sets`)
+    check('every dining table is in the pantry', problems.length === 0, problems.join(' | '))
+  }
+
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {

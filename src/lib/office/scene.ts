@@ -502,9 +502,38 @@ export function createScene(
     return room.seats[i % room.seats.length].facing
   }
 
+  /**
+   * The idle spots the world will actually use.
+   *
+   * The exemptions MUST match the mover's, or this filter silently discards exactly the
+   * spots that need them: a bench press is inside the rack's footprint, a swim lane is
+   * inside the pool basin, and a pull-up is inside the rig. The first version passed only
+   * `allowSeat`, so all three were dropped here while the self-test — which checked the
+   * DATA with the right flags — stayed green. Nobody swam, nobody benched, and the
+   * muscle-up never appeared. The user found it by looking.
+   */
   const IDLE_SPOTS: IdleSpot[] = OFFICE_IDLE_SPOTS.filter(
-    (p) => !blocked(p.x, p.z, BODY_R, { allowSeat: p.seated, level: p.level }),
+    (p) =>
+      !blocked(p.x, p.z, BODY_R, {
+        allowSeat: p.seated,
+        settling: p.seated || p.bench,
+        allowWater: p.water,
+        level: p.level,
+      }),
   )
+  /**
+   * The spots this filter threw away, by name.
+   *
+   * Kept so the self-test can assert the list is EMPTY. A dropped spot is invisible at
+   * runtime — the body simply goes elsewhere — which is exactly why three of them went
+   * unnoticed until somebody watched the room.
+   */
+  const droppedSpots = OFFICE_IDLE_SPOTS.filter((p) => !IDLE_SPOTS.includes(p)).map(
+    (p) => `${p.act}@${p.x.toFixed(1)},${p.z.toFixed(1)}`,
+  )
+  if (droppedSpots.length && typeof console !== 'undefined') {
+    console.warn(`[office] ${droppedSpots.length} idle spot(s) dropped as unreachable:`, droppedSpots.join(', '))
+  }
 
   /** Decide activity + destination for the coming frames. */
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
