@@ -38,6 +38,9 @@ import {
   KANBAN_BOARD,
   LEVEL_H,
   LOUNGE,
+  LOUNGE_TABLE,
+  LOUNGE_TV,
+  courtyardWallSegments,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
   MEETING_TABLES,
@@ -466,7 +469,19 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     }
     group.add(g)
   }
-  // loungers by the pool
+  // Loungers on the pool deck, HEAD AWAY FROM THE POOL and lying surface looking
+  // ACROSS the water.
+  //
+  // The mesh builds its head rest at local -z, so with rotation 0 the head points
+  // north (-z). The two loungers sit EAST of the pool and used to be rotated
+  // -PI/2, which swung the head rest to point EAST — away from the pool — while
+  // the flat bed faced the water. That is the "bed faces one way, head faces the
+  // other" bug: the lounger was rotated as a whole, so head and bed could not
+  // disagree, but the head ended up on the far side from the pool.
+  //
+  // They now face WEST (-PI/2 turns local -z to -x), so the head is on the east
+  // side and the body lies looking west across the pool — the way a sun lounger
+  // is actually used.
   for (const l of POOL_LOUNGERS) {
     const g = new THREE.Group()
     g.position.set(l.x, 0, l.z)
@@ -476,7 +491,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     g.add(bed)
     const back = new THREE.Mesh(rbox(0.62, 0.08, 0.6, 0.03), woodMat)
     back.position.set(0, 0.62, -0.75)
-    back.rotation.x = -0.5
+    // TILT SIGN. The back rest sits at the -z end of the bed, so its far edge
+    // (further -z) must be the HIGH one or the head rest slopes down into the deck
+    // and the bed reads as being on the wrong side of it. Rotating about X by +0.5
+    // lifts the -z edge; -0.5 dropped it, which is the reported "the bed has its
+    // back to the chair" bug.
+    back.rotation.x = 0.5
     g.add(back)
     for (const [lx, lz] of [
       [-0.25, -0.7],
@@ -602,9 +622,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     m.position.set(DOOR.x, 2.35, HALF_D)
     group.add(m)
   }
-  // courtyard-facing walls
-  shell(-14, -9, -14, HALF_D)
-  shell(14, -9, 14, HALF_D)
+  // courtyard-facing walls, SPLIT AT EVERY DOORWAY, from the same shared list the
+  // collision footprints use. Building a solid wall here and then adding door jambs
+  // on top of it sealed every ground-floor room in the render while leaving them
+  // walkable in the nav grid — the "rooms with no doors" bug.
+  for (const s of courtyardWallSegments()) shell(s.x1, s.z1, s.x2, s.z2)
   // lobby's courtyard side: two returns and a wide opening
   shell(-14, 16, -4, 16)
   shell(4, 16, 14, 16)
@@ -612,13 +634,6 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   shell(-HALF_W, -6.9, -14, -6.9)
   shell(-HALF_W, 6.9, -14, 6.9)
   shell(14, 2, HALF_W, 2)
-  // door jambs on the courtyard-facing walls of the ground-floor rooms
-  for (const r of ROOMS.filter((x) => x.door && x.level === 0 && x.id !== 'lobby')) {
-    const d = r.door!
-    const xw = d.x < 0 ? -14 : 14
-    if (d.z - d.hd > r.z1 + 0.1) shell(xw, r.z1, xw, d.z - d.hd)
-    if (d.z + d.hd < r.z2 - 0.1) shell(xw, d.z + d.hd, xw, r.z2)
-  }
 
   /* ------------------------------------------------------------ level 1 -- */
   {
@@ -786,8 +801,15 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // The top landing: flat, at corridor level, reaching through the building line
     // so you step straight off onto the corridor floor.
     {
-      const land = box(w - 0.24, 0.16, STAIRS.landing + 0.5, 0xd8d2c4, { rough: 0.82 })
-      land.position.set(cx, LEVEL_H - 0.08, STAIRS.z1 + STAIRS.landing / 2 - 0.25)
+      // EXACTLY the landing depth, centred on the landing — no more.
+      //
+      // It used to be `landing + 0.5` set 0.25 m further north, so it pushed half a
+      // metre of floor out into the level-1 corridor. With the over-long rail below
+      // that left only 0.6 m of the 2.65 m corridor walkable — the reported
+      // "handrail blocks the corridor" bug. The landing is the stair's arrival, so
+      // it may occupy its own footprint and nothing beyond it.
+      const land = box(w - 0.24, 0.16, STAIRS.landing, 0xd8d2c4, { rough: 0.82 })
+      land.position.set(cx, LEVEL_H - 0.08, STAIRS.z1 + STAIRS.landing / 2)
       land.castShadow = true
       land.receiveShadow = true
       group.add(land)
@@ -826,9 +848,12 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
         post.position.set(rx, h / 2, z)
         group.add(post)
       }
-      // rail along the top landing, level
-      const lrail = box(0.07, 0.07, STAIRS.landing + 0.4, 0x8a8f95, { metal: 0.6 })
-      lrail.position.set(rx, LEVEL_H + 0.95, STAIRS.z1 + STAIRS.landing / 2 - 0.2)
+      // Rail along the top landing, level, and no longer than the landing itself.
+      // It used to be `landing + 0.4` shifted 0.2 m north, so it hung 0.4 m into
+      // the corridor at handrail height. A rail that overhangs the floor it guards
+      // is a collision hazard, not a detail.
+      const lrail = box(0.07, 0.07, STAIRS.landing, 0x8a8f95, { metal: 0.6 })
+      lrail.position.set(rx, LEVEL_H + 0.95, STAIRS.z1 + STAIRS.landing / 2)
       group.add(lrail)
     }
   }
@@ -1043,7 +1068,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     for (const s of MEETING_ROOMS[id].seats) {
       const chair = new THREE.Group()
       chair.position.set(s.x - t.x, 0, s.z - t.z)
-      chair.rotation.y = s.facing - Math.atan2(s.x - t.x, s.z - t.z)
+      // FACE THE TABLE. The seat mesh carries its back rest at local +z, so the
+      // chair looks along local -z, and `facing + PI` turns that -z towards the
+      // table centre. The old expression `facing - atan2(seat - centre)` reduced
+      // to a CONSTANT -PI for every chair, swinging them all to face north no
+      // matter where they sat — which is why half of them had their backs to the
+      // table. The self-test now checks the world direction of every back rest.
+      chair.rotation.y = s.facing + Math.PI
       const seat = new THREE.Mesh(rbox(0.48, 0.08, 0.46, 0.03), stdMat(0x6b7d8a, { rough: 0.85 }))
       seat.position.y = 0.5
       chair.add(seat)
@@ -1291,7 +1322,11 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   {
     const g = new THREE.Group()
     g.position.set(LOUNGE.x, 0, LOUNGE.z)
-    // sofa facing the courtyard glass
+    // Sofa facing NORTH (-z), looking at the TV on the north wall. Rotation 0
+    // already faces -z: the mesh puts its back rest at local +z. It used to be
+    // described as "facing the courtyard glass" while sitting at z=-12 with the TV
+    // at z=-15.4 — i.e. the TV floated in the middle of the room and the sofa
+    // faced a wall. Both now come from LOUNGE / LOUNGE_TV.
     const seat = new THREE.Mesh(rbox(2.8, 0.34, 1.0, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
     seat.position.y = 0.28
     g.add(seat)
@@ -1303,28 +1338,28 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       arm.position.set(ax, 0.5, 0)
       g.add(arm)
     }
-    // coffee table
+    // coffee table between sofa and TV
     const table = new THREE.Mesh(rbox(1.2, 0.06, 0.6, 0.03), woodMat)
-    table.position.set(0, 0.42, -1.4)
+    table.position.set(LOUNGE_TABLE.x - LOUNGE.x, 0.42, LOUNGE_TABLE.z - LOUNGE.z)
     g.add(table)
     for (const [lx, lz] of [
-      [-0.5, -1.25],
-      [0.5, -1.25],
-      [-0.5, -1.55],
-      [0.5, -1.55],
+      [-0.5, -0.2],
+      [0.5, -0.2],
+      [-0.5, 0.2],
+      [0.5, 0.2],
     ] as const) {
       const leg = cyl(0.03, 0.03, 0.42, 0x8a6a44, 8)
-      leg.position.set(lx, 0.21, lz)
+      leg.position.set(LOUNGE_TABLE.x - LOUNGE.x + lx, 0.21, LOUNGE_TABLE.z - LOUNGE.z + lz)
       g.add(leg)
     }
-    // TV on the wall opposite
-    const tv = box(1.8, 1.0, 0.08, 0x1b2226, { metal: 0.3, rough: 0.3 })
-    tv.position.set(0, 1.5, -3.4)
-    g.add(tv)
-    const tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
-    tvScreen.position.set(0, 1.5, -3.34)
-    g.add(tvScreen)
     group.add(g)
+    // TV flat on the north wall, at the sofa's own x
+    const tv = box(1.8, 1.0, 0.08, 0x1b2226, { metal: 0.3, rough: 0.3 })
+    tv.position.set(LOUNGE_TV.x, LOUNGE_TV.y, LOUNGE_TV.z)
+    group.add(tv)
+    const tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
+    tvScreen.position.set(LOUNGE_TV.x, LOUNGE_TV.y, LOUNGE_TV.z + 0.06)
+    group.add(tvScreen)
   }
 
   /* ------------------------------------------------------------ lighting -- */

@@ -31,6 +31,11 @@ import {
   MEETING_ROOM_IDS,
   meetingRoomFor,
   POOL,
+  LOUNGE,
+  LOUNGE_TABLE,
+  LOUNGE_TV,
+  MEETING_TABLES,
+  POOL_LOUNGERS,
   ROOMS,
   STAIRS,
   STAIR_FLIGHT_TOP,
@@ -38,6 +43,7 @@ import {
   STAIR_TOP,
   stairHeightAt,
   blockingFootprints,
+  courtyardWallSegments,
   deskSeatWorld,
   layoutConflicts,
   roomById,
@@ -737,6 +743,153 @@ console.log('geometry')
     }
   }
   check('an avatar can WALK the stair up and down, continuously (no teleport, no dead end)',
+    problems.length === 0, problems.join(' | '))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FOUR REPORTED DEFECTS, ASSERTED SO THEY CANNOT COME BACK.
+//
+// Each of these was a real bug found by looking at a render, not a style choice.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// (1) THE STAIR RAIL MUST NOT OVERHANG THE CORRIDOR.
+//
+// The landing rail was `landing + 0.4` shifted 0.2 m north and the landing slab was
+// `landing + 0.5` shifted 0.25 m north, so half a metre of floor and 0.4 m of rail
+// hung out into the level-1 corridor at handrail height. With a 2.65 m corridor
+// that left 0.6 m walkable — "the handrail blocks the corridor".
+{
+  const problems: string[] = []
+  const landingNorth = STAIRS.z1
+  const landingSouth = STAIRS.z1 + STAIRS.landing
+  // nothing that belongs to the stair may reach further north than the landing
+  for (const f of FOOTPRINTS) {
+    if (!f.id.startsWith('stair-')) continue
+    if (f.z - f.hd < landingNorth - 0.05) {
+      problems.push(`${f.id} reaches z=${(f.z - f.hd).toFixed(2)}, north of the landing (${landingNorth})`)
+    }
+  }
+  // and the corridor must keep a usable walking width clear of the stair
+  const corridor = roomById('corridor1')!
+  const clearSouth = corridor.z2 - (landingNorth - 0.05)
+  if (clearSouth < 1.6) {
+    problems.push(`only ${clearSouth.toFixed(2)} m of corridor left south of the stair`)
+  }
+  void landingSouth
+  check('the stair (rails and landing) stays inside its own footprint — the corridor is clear',
+    problems.length === 0, problems.join(' | '))
+}
+
+// (2) EVERY ENCLOSED GROUND-FLOOR ROOM MUST HAVE A REAL DOORWAY.
+//
+// The wall facing the courtyard was drawn as ONE unbroken run from z=-9 to z=21 and
+// the door jambs were then added on top of it, filling the openings back in. The
+// rooms were walkable in the nav grid and sealed in the render — the worst of both.
+// Both the footprints and the model now come from `courtyardWallSegments()`.
+{
+  const problems: string[] = []
+  const segs = courtyardWallSegments()
+  const ENCLOSED = ['dev', 'mkt', 'content', 'leisure', 'pantry']
+  for (const id of ENCLOSED) {
+    const r = roomById(id)!
+    const d = r.door
+    if (!d) {
+      problems.push(`${id} has no door defined`)
+      continue
+    }
+    // no wall segment may cover the doorway
+    const xw = d.x < 0 ? -14 : 14
+    const covering = segs.filter(
+      (seg) => seg.x1 === xw && seg.x2 === xw && seg.z1 < d.z + d.hd - 0.05 && seg.z2 > d.z - d.hd + 0.05,
+    )
+    if (covering.length) problems.push(`${id}: ${covering.map((c) => c.id).join(',')} covers the doorway`)
+    // and the nav grid must agree that the opening is passable
+    if (blocked(xw, d.z, BODY_R, { level: 0 })) {
+      problems.push(`${id}: the doorway at (${xw}, ${d.z}) is not walkable`)
+    }
+  }
+  check('every enclosed ground-floor room has a doorway that is open in BOTH the model and the nav grid',
+    problems.length === 0, problems.join(' | '))
+}
+
+// (3) EVERY MEETING CHAIR MUST FACE ITS TABLE.
+//
+// `chair.rotation.y = s.facing - atan2(seat - centre)` reduced to a CONSTANT -PI for
+// every chair, so they all swung to face north regardless of where they sat — half
+// of them ended up with their backs to the table. The mesh carries its back rest at
+// local +z, so the chair looks along local -z and needs `facing + PI`.
+{
+  const problems: string[] = []
+  for (const id of MEETING_ROOM_IDS) {
+    const t = MEETING_TABLES[id]
+    for (const [i, s] of MEETING_ROOMS[id].seats.entries()) {
+      const rot = s.facing + Math.PI
+      // world direction the chair LOOKS, from the back rest at local +z
+      const lookX = -Math.sin(rot)
+      const lookZ = -Math.cos(rot)
+      // direction from the seat to the table centre
+      const toX = t.x - s.x
+      const toZ = t.z - s.z
+      const len = Math.hypot(toX, toZ) || 1
+      const dot = (lookX * toX + lookZ * toZ) / len
+      if (dot < 0.9) {
+        problems.push(`${id} chair ${i} looks away from the table (dot=${dot.toFixed(2)})`)
+      }
+    }
+  }
+  check('every meeting-room chair faces its own table', problems.length === 0, problems.join(' | '))
+}
+
+// (4) THE LEISURE GROUP MUST BE COHERENT, AND THE LOUNGERS MUST FACE THE WATER.
+//
+// The TV hung 5.4 m off any wall (floating mid-room), the coffee-table footprint sat
+// 2 m west of the table mesh, and the sofa's idle spot was off the sofa entirely.
+// The loungers east of the pool had their head rest pointing AWAY from the water.
+{
+  const problems: string[] = []
+  const leisure = roomById('leisure')!
+  // the TV must be against a wall, not floating in the room
+  const tvToNorthWall = Math.abs(LOUNGE_TV.z - (leisure.z1 + WALL_T))
+  if (tvToNorthWall > 0.25) problems.push(`the TV floats ${tvToNorthWall.toFixed(2)} m off the north wall`)
+  // sofa, table and TV must line up: table between sofa and TV, all on one x
+  if (!(LOUNGE_TV.z < LOUNGE_TABLE.z && LOUNGE_TABLE.z < LOUNGE.z)) {
+    problems.push('the coffee table is not between the sofa and the TV')
+  }
+  for (const [name, o] of [['sofa', LOUNGE], ['table', LOUNGE_TABLE], ['tv', LOUNGE_TV]] as const) {
+    if (Math.abs(o.x - LOUNGE.x) > 0.35) problems.push(`${name} is off the sofa's axis`)
+  }
+  // the sofa's own footprint must exist where the sofa is
+  const sofaFp = FOOTPRINTS.find((f) => f.id === 'lounge-sofa')
+  if (!sofaFp) problems.push('no lounge-sofa footprint')
+  else if (Math.abs(sofaFp.x - LOUNGE.x) > 0.01 || Math.abs(sofaFp.z - LOUNGE.z) > 0.01) {
+    problems.push('the sofa footprint is not where the sofa mesh is')
+  }
+  // the idle spot must be ON the sofa
+  const sofaSpot = IDLE_SPOTS.find((s) => s.act === 'sofa')
+  if (!sofaSpot) problems.push('no sofa idle spot')
+  else if (Math.hypot(sofaSpot.x - LOUNGE.x, sofaSpot.z - LOUNGE.z) > 0.2) {
+    problems.push('the sofa idle spot is not on the sofa')
+  }
+  // Loungers: the LONG AXIS must point at the pool, so the body lies along the
+  // line to the water. The bed mesh is long in local Z, and rotation θ sends local
+  // +z to (sin θ, cos θ) — that is the axis to compare against the pool direction.
+  //
+  // NOT the head direction: the back rest sits at local -z, so the head ends up on
+  // the far side from the water while the body lies looking across it, which is how
+  // a sun lounger is actually used. Asserting the head direction would demand the
+  // person lie with their head in the pool.
+  for (const [i, l] of POOL_LOUNGERS.entries()) {
+    const axisX = Math.sin(l.facing)
+    const axisZ = Math.cos(l.facing)
+    const toPoolX = POOL.x - l.x
+    const toPoolZ = POOL.z - l.z
+    const len = Math.hypot(toPoolX, toPoolZ) || 1
+    const dot = Math.abs(axisX * toPoolX + axisZ * toPoolZ) / len
+    if (dot < 0.8) {
+      problems.push(`lounger ${i} long axis does not point at the pool (dot=${dot.toFixed(2)})`)
+    }
+  }
+  check('the leisure group is coherent (TV on the wall, table between, sofa faces the TV) and the loungers face the pool',
     problems.length === 0, problems.join(' | '))
 }
 

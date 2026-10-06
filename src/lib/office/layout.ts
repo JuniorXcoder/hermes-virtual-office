@@ -452,6 +452,10 @@ export const POOL_BENCHES: { x: number; z: number; facing: number }[] = [
   { x: 6.0, z: 9.0, facing: 0 },
 ]
 export const POOL_LOUNGERS: { x: number; z: number; facing: number }[] = [
+  // East of the pool, head on the far (east) side, body lying towards the water.
+  // -PI/2 turns the head rest (local -z) to point EAST, so the lounger looks WEST
+  // across the pool. `facing` is the yaw of the GROUP, and the mesh's head rest is
+  // at local -z — see the note in build.ts.
   { x: 8.2, z: 1.5, facing: -Math.PI / 2 },
   { x: 8.2, z: 4.0, facing: -Math.PI / 2 },
 ]
@@ -586,8 +590,24 @@ export const RECEPTION = { x: -7.0, z: 18.6 }
 export const PANTRY = { x: 25.6, z: 8 }
 export const PANTRY_STOOLS = [6.4, 8.0, 9.6] as const
 export const PANTRY_STOOL_GAP = -1.05
-/** The leisure room's sofa, facing the courtyard through the glass. */
-export const LOUNGE = { x: 22.5, z: -12 }
+/**
+ * The leisure room's seating group.
+ *
+ * ONE definition, read by the model, the collision footprints AND the idle spots.
+ * They used to disagree: the TV hung 5.4 m out from any wall (floating in the
+ * middle of the room), the coffee table's footprint sat 2 m west of the table
+ * itself, and the sofa's idle spot was off the sofa entirely — so avatars were
+ * blocked by empty air and sat on nothing.
+ *
+ * The sofa faces NORTH (-z) with its back to the south, looking at the TV on the
+ * north wall. Rotation 0 already faces -z, because the sofa mesh puts its back
+ * rest at local +z.
+ */
+export const LOUNGE = { x: 22.5, z: -18.2 }
+/** The TV, flat against the leisure room's north wall (inner face z = -20.85). */
+export const LOUNGE_TV = { x: 22.5, z: -20.78, y: 1.5 }
+/** Coffee table, between the sofa and the TV. */
+export const LOUNGE_TABLE = { x: 22.5, z: -19.6 }
 
 /* ------------------------------------------------------------- footprints -- */
 
@@ -630,6 +650,31 @@ function wallSeg(id: string, x1: number, z1: number, x2: number, z2: number, lev
 const W = (v: number) => (v > 0 ? v - WALL_T / 2 : v + WALL_T / 2) // inner face helper
 const OUT = WALL_T / 2
 
+/**
+ * The courtyard-facing wall of the west and east bars, SPLIT AT EACH DOORWAY.
+ *
+ * Both the collision footprints AND the 3D model are built from this one list, so
+ * a doorway cannot be a gap in one and a solid wall in the other. That mismatch is
+ * exactly what sealed every ground-floor room: the model drew a full wall from
+ * z=-9 to z=21 and the door jambs were then added ON TOP of it, filling the
+ * openings back in. The rooms were walkable in the nav grid and solid in the
+ * render — the worst of both worlds.
+ */
+export function courtyardWallSegments(): { id: string; x1: number; z1: number; x2: number; z2: number }[] {
+  const out: { id: string; x1: number; z1: number; x2: number; z2: number }[] = []
+  // The rooms that actually HAVE a courtyard-facing wall. `courtyard` and
+  // `terrace` carry a stray `door` field (a copy of dev's) but are not enclosed,
+  // so including them would build walls that belong to nobody.
+  const ENCLOSED = ['dev', 'mkt', 'content', 'leisure', 'pantry']
+  for (const r of ROOMS.filter((x) => x.level === 0 && x.door && ENCLOSED.includes(x.id))) {
+    const d = r.door!
+    const xw = d.x < 0 ? -14 : 14
+    if (d.z - d.hd > r.z1 + 0.1) out.push({ id: `${r.id}-wall-a`, x1: xw, z1: r.z1, x2: xw, z2: d.z - d.hd })
+    if (d.z + d.hd < r.z2 - 0.1) out.push({ id: `${r.id}-wall-b`, x1: xw, z1: d.z + d.hd, x2: xw, z2: r.z2 })
+  }
+  return out
+}
+
 export const FOOTPRINTS: Footprint[] = [
   /* ------------------------------------------------- outer walls, level 0 -- */
   wallSeg('out-n', -HALF_W, -HALF_D, HALF_W, -HALF_D),
@@ -643,8 +688,8 @@ export const FOOTPRINTS: Footprint[] = [
   wallSeg('lobby-s-e', 2.2, HALF_D, 14, HALF_D),
 
   /* --------------------------------- walls facing the courtyard, level 0 -- */
-  wallSeg('in-w', -14, -9, -14, HALF_D),
-  wallSeg('in-e', 14, -9, 14, HALF_D),
+  // Split at every doorway, from the shared list above — see courtyardWallSegments.
+  ...courtyardWallSegments().map((s) => wallSeg(s.id, s.x1, s.z1, s.x2, s.z2)),
   // the north bar's ground floor is an open terrace, so its courtyard side is
   // COLUMNS rather than a wall — that is what makes the circulation obvious.
   ...[
@@ -740,8 +785,8 @@ export const FOOTPRINTS: Footprint[] = [
   ...PANTRY_STOOLS.map((z, i) => fp(`stool-${i}`, PANTRY.x + PANTRY_STOOL_GAP, z, 0.24, 0.24, 0.62, 'seat')),
 
   /* -------------------------------------------------------------- leisure -- */
-  fp('lounge-sofa', LOUNGE.x, LOUNGE.z, 1.5, 0.5, 0.85, 'seat'),
-  fp('lounge-table', LOUNGE.x - 2.0, LOUNGE.z, 0.5, 0.5, 0.44, 'desk'),
+  fp('lounge-sofa', LOUNGE.x, LOUNGE.z, 1.5, 0.55, 0.85, 'seat'),
+  fp('lounge-table', LOUNGE_TABLE.x, LOUNGE_TABLE.z, 0.6, 0.3, 0.44, 'desk'),
 
   /* ------------------------------------------------------------ ceo suite -- */
   fp('ceo-desk', roomCentre('ceo').x, roomCentre('ceo').z - 1.5, 1.1, 0.6, 0.75, 'desk', 1),
@@ -775,7 +820,10 @@ export const IDLE_SPOTS: IdleSpot[] = [
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[0], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[1], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
   { x: PANTRY.x + PANTRY_STOOL_GAP, z: PANTRY_STOOLS[2], act: 'coffee', seated: true, face: -Math.PI / 2, level: 0 },
-  { x: LOUNGE.x - 1.4, z: LOUNGE.z + 1.6, act: 'sofa', seated: true, face: 0, level: 0 },
+  // ON the sofa, facing the TV (north). `seated` + `allowSeat` lets a body occupy
+  // a seat footprint; the point is the sofa's own centre so the avatar is visibly
+  // sitting on it, not next to it.
+  { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: 0, level: 0 },
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
   { x: -6.2, z: -5, act: 'idle', face: Math.PI / 2, level: 0 },
   { x: 10, z: -5, act: 'idle', face: -Math.PI / 2, level: 0 },
