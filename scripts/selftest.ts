@@ -11,6 +11,7 @@
  */
 import { readFileSync, rmSync } from 'node:fs'
 import { facingProblems } from '../src/lib/office/facing'
+import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -2475,6 +2476,95 @@ void (async () => {
       problems.push(`the lifter's hip is at ${minHip.toFixed(3)}, below the pad (${GYM.rack.benchTop})`)
     }
     check('a bench press lies on the pad with the rack bar hidden', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // A PERSISTED ANGLE MUST STAY BOUNDED (found in the live database, not on screen).
+  //
+  // `avatar_state.facing` held values like 2836.86 rad — 452 TURNS — for bodies that render
+  // as pointing at 0.79 rad. sin/cos are periodic, so the mesh looked perfect and no visual
+  // check could ever have caught it.
+  //
+  // The mechanism is a feedback loop through the database, which is why it never healed:
+  //
+  //   1. the render loop smooths `g.rotation.y` with a WRAPPED delta, so it converges to the
+  //      congruent angle nearest to where it already is — from 2809 toward a target of 3.13 it
+  //      picks 2811, never 3.13;
+  //   2. `facing: Number(g.rotation.y.toFixed(2))` persists that number;
+  //   3. on load, `face` and `anchorFacing` take `row.facing` verbatim, so the stored large
+  //      number becomes both the starting point and the target again.
+  //
+  // My first hypothesis — that it simply grows without bound — was WRONG, and the simulation
+  // proved it: a body starting near zero stays near zero, because the wrapped delta keeps the
+  // increment small. `wrapAngle` is needed at the two ends (write and load), not to stop
+  // growth but to collapse a value that is already large and would otherwise be inherited
+  // forever.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const TAU = Math.PI * 2
+    const sameDir = (a: number, b: number) =>
+      Math.abs(Math.sin(a) - Math.sin(b)) < 1e-9 && Math.abs(Math.cos(a) - Math.cos(b)) < 1e-9
+
+    // the function itself
+    for (const k of [1, -1, 447, -447, 10000]) {
+      const w = wrapAngle(k * TAU + 0.786)
+      if (Math.abs(w - 0.786) > 1e-9) problems.push(`wrapAngle(${k} turns + 0.786) = ${w}`)
+    }
+    for (const a of [0, 1.5, -2.9, 7.0, 2809.37]) {
+      const w = wrapAngle(a)
+      if (!(w > -Math.PI - 1e-9 && w <= Math.PI + 1e-9)) problems.push(`wrapAngle(${a}) = ${w} is out of range`)
+      if (!sameDir(w, a)) problems.push(`wrapAngle(${a}) changed the direction`)
+      if (Math.abs(wrapAngle(w) - w) > 1e-12) problems.push(`wrapAngle is not idempotent at ${a}`)
+    }
+
+    // the real values that were in the database
+    for (const f of [2836.86, 2809.37, 2772.0, 2497.24, 2413.66, 176.8]) {
+      const w = wrapAngle(f)
+      if (!sameDir(w, f)) problems.push(`the stored facing ${f} would change direction when folded`)
+    }
+
+    // the mechanism: a large stored value must COLLAPSE once the wrap is in place
+    const step = (g: number, target: number, wrapped: boolean) => {
+      let diff = target - g
+      while (diff > Math.PI) diff -= TAU
+      while (diff < -Math.PI) diff += TAU
+      g += diff * Math.min(1, (1 / 60) * 6)
+      return wrapped ? wrapAngle(g) : g
+    }
+    const run = (start: number, wrapped: boolean) => {
+      let g = start
+      for (let i = 0; i < 6000; i++) g = step(g, i % 400 < 200 ? 0.79 : 3.13, wrapped)
+      return g
+    }
+    const legacy = run(2809.37, false)
+    const fixed = run(2809.37, true)
+    if (Math.abs(legacy) < 1000) {
+      problems.push(`the legacy path was expected to stay large, got ${legacy}`)
+    }
+    if (!(Math.abs(fixed) <= Math.PI + 1e-9)) {
+      problems.push(`a stored facing of 2809 rad does not collapse: got ${fixed}`)
+    }
+    if (!sameDir(legacy, fixed)) problems.push('collapsing the angle changed which way the body points')
+
+    // a body that starts small must NOT grow (the hypothesis I got wrong)
+    if (Math.abs(run(0.79, false)) > TAU) {
+      problems.push('a body starting near zero grew without bound, which the model says cannot happen')
+    }
+
+    // and the fix must actually be wired into the scene
+    const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    if (!/g\.rotation\.y = wrapAngle\(g\.rotation\.y\)/.test(scene)) {
+      problems.push('the render loop does not wrap the angle before it is persisted')
+    }
+    if (!/face: wrapAngle\(row\.facing/.test(scene)) {
+      problems.push('a loaded facing is not folded, so old rows stay inflated')
+    }
+    if (!/anchorFacing: wrapAngle\(row\.facing/.test(scene)) {
+      problems.push('a loaded anchorFacing is not folded')
+    }
+
+    check('a persisted facing stays bounded and points the same way', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

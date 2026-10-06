@@ -813,6 +813,24 @@ export function faceToward(x: number, z: number, tx: number, tz: number): number
 }
 
 /**
+ * Fold any angle into (-PI, PI]. Same orientation, smallest representation.
+ *
+ * Needed because an angle that is only ever INCREMENTED drifts without bound. `g.rotation.y`
+ * was smoothed by a wrapped delta but never wrapped itself, so a body that crossed the +-PI
+ * boundary repeatedly accumulated a fraction of a turn per crossing — 447 turns in the live
+ * database, for a body that renders as pointing at 0.79 rad. sin/cos are periodic so the mesh
+ * looked right and nobody noticed; the persisted number was nonsense, and any code that
+ * compared two facings numerically would read 447 turns where there were none.
+ */
+export function wrapAngle(a: number): number {
+  const TAU = Math.PI * 2
+  let r = a - Math.floor((a + Math.PI) / TAU) * TAU
+  // -PI is the same orientation as +PI; keep exactly one of them.
+  if (r <= -Math.PI) r += TAU
+  return r
+}
+
+/**
  * Who may enter the CEO suite.
  *
  * The room is the CEO's, so the door is not a free-for-all: only a CEO and the division

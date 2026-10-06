@@ -39,6 +39,7 @@ import {
   stairHeightAt,
   insideCeoRoom,
   mayEnterCeoRoom,
+  wrapAngle,
   type Desk,
   type IdleSpot,
   type MeetingRoomId,
@@ -337,7 +338,10 @@ export function createScene(
       spotKey: '',
       path: [],
       destKey: '',
-      face: row.facing ?? 0,
+      // WRAPPED ON LOAD. The database accumulated values like 2809 rad (447 turns) because
+      // the render loop only ever incremented this angle. Old rows still hold those numbers,
+      // so folding them here means a restart heals the data instead of carrying it forward.
+      face: wrapAngle(row.facing ?? 0),
       walking: 0,
       meetingTalking: false,
       bubble,
@@ -347,7 +351,7 @@ export function createScene(
       leaving: false,
       anchored: row.anchored,
       anchorActivity: (row.activity as Activity) || 'typing',
-      anchorFacing: row.facing ?? 0,
+      anchorFacing: wrapAngle(row.facing ?? 0),
       wanderIndex: Math.floor(Math.random() * OFFICE_IDLE_SPOTS.length),
       restUntil: 0,
     }
@@ -359,7 +363,7 @@ export function createScene(
     // Place the body at the position the DB remembers — that is the whole point
     // of storing it. Only a body with no stored position enters through the door.
     av.group.position.set(row.x, row.level * LEVEL_H, row.z)
-    av.group.rotation.y = row.facing ?? 0
+    av.group.rotation.y = wrapAngle(row.facing ?? 0)
     return a
   }
 
@@ -905,10 +909,31 @@ export function createScene(
         }
       }
 
+      // ── WRAP THE STORED ANGLE ──────────────────────────────────────────────
+      //
+      // `diff` below is wrapped into [-PI, PI], but `g.rotation.y` is NOT: it accumulates
+      // forever. A body that walks back and forth across the +-PI boundary picks up a
+      // fraction of a turn on every crossing, and the value is persisted verbatim
+      // (`facing: Number(g.rotation.y.toFixed(2))`), so the database filled up with
+      // 2809 rad = 447 TURNS for a body that is visually pointing at 0.79 rad.
+      //
+      // Visually this is invisible — sin/cos are periodic, so the mesh renders correctly —
+      // which is exactly why it survived. It is still wrong: it is an unbounded value in a
+      // persisted column, it drifts without limit for as long as the page is open, and any
+      // consumer that compares two facings numerically (a smoothing test, a "did it turn?"
+      // check, a diff of two snapshots) reads 447 turns of rotation where there is none.
+      //
+      // Wrapping here fixes it at the source, so every reader — the renderer, the DB, the
+      // API — sees an angle in the range the rest of the code assumes.
+      const TAU = Math.PI * 2
       let diff = a.face - g.rotation.y
-      while (diff > Math.PI) diff -= Math.PI * 2
-      while (diff < -Math.PI) diff += Math.PI * 2
+      while (diff > Math.PI) diff -= TAU
+      while (diff < -Math.PI) diff += TAU
       g.rotation.y += diff * Math.min(1, dt * 6)
+      // Keep it in (-PI, PI]. The body's own `a.face` is already wrapped by construction
+      // (atan2), so this cannot introduce a visible turn: the difference is a whole number
+      // of turns, which is the same orientation.
+      g.rotation.y = wrapAngle(g.rotation.y)
 
       // ARRIVED: turn to the destination's own facing. The mover overwrote `face` with
       // the direction of travel every frame, so without this a body keeps facing the way
