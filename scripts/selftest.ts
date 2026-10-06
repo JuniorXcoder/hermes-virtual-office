@@ -754,29 +754,73 @@ console.log('geometry')
 
 // (1) THE STAIR RAIL MUST NOT OVERHANG THE CORRIDOR.
 //
-// The landing rail was `landing + 0.4` shifted 0.2 m north and the landing slab was
-// `landing + 0.5` shifted 0.25 m north, so half a metre of floor and 0.4 m of rail
-// hung out into the level-1 corridor at handrail height. With a 2.65 m corridor
-// that left 0.6 m walkable — "the handrail blocks the corridor".
+// This measures the BUILT MESH, not the footprint list. An earlier version of this
+// check iterated `FOOTPRINTS` for ids starting with 'stair-' — but those footprints
+// had already been deleted, so it looped over an empty set and passed vacuously.
+// A test that cannot fail is worse than no test.
+//
+// The real defect: the level handrail was as long as the whole landing (1.40 m), so
+// a bar sat at waist height right across the level-1 corridor.
 {
   const problems: string[] = []
-  const landingNorth = STAIRS.z1
-  const landingSouth = STAIRS.z1 + STAIRS.landing
-  // nothing that belongs to the stair may reach further north than the landing
-  for (const f of FOOTPRINTS) {
-    if (!f.id.startsWith('stair-')) continue
-    if (f.z - f.hd < landingNorth - 0.05) {
-      problems.push(`${f.id} reaches z=${(f.z - f.hd).toFixed(2)}, north of the landing (${landingNorth})`)
+  const scene = new THREE.Scene()
+  const g = globalThis as unknown as { document?: unknown; window?: unknown }
+  const hadDoc = 'document' in g
+  if (!hadDoc) {
+    g.document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1, font: '', textAlign: '', textBaseline: '',
+          fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {},
+          arc() {}, ellipse() {},
+          createLinearGradient: () => ({ addColorStop() {} }),
+          createRadialGradient: () => ({ addColorStop() {} }),
+          drawImage() {},
+          getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+          putImageData() {}, fillText() {}, save() {}, restore() {},
+        }),
+      }),
     }
+    g.window = { devicePixelRatio: 1 }
   }
-  // and the corridor must keep a usable walking width clear of the stair
-  const corridor = roomById('corridor1')!
-  const clearSouth = corridor.z2 - (landingNorth - 0.05)
-  if (clearSouth < 1.6) {
-    problems.push(`only ${clearSouth.toFixed(2)} m of corridor left south of the stair`)
+  try {
+    buildOffice(scene, 12)
+    scene.updateMatrixWorld(true)
+    const cx0 = (STAIRS.x1 + STAIRS.x2) / 2
+    const RAIL_LIMIT = 0.6 // a handrail extension is ~300 mm; 600 is generous
+    let foundLevelRail = false
+    scene.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh || !m.geometry) return
+      const bb = new THREE.Box3().setFromObject(m)
+      if (!isFinite(bb.min.x)) return
+      const cx = (bb.min.x + bb.max.x) / 2
+      if (Math.abs(cx - cx0) > 1.6) return
+      const sx = bb.max.x - bb.min.x
+      const sy = bb.max.y - bb.min.y
+      const sz = bb.max.z - bb.min.z
+      if (sx > 0.22) return
+      if (sz < 0.3) return
+      // a LEVEL rail above the flight top (a sloped one is tall in y)
+      if (sy > 0.2) return
+      if (bb.min.y < LEVEL_H + 0.5) return
+      foundLevelRail = true
+      if (sz > RAIL_LIMIT) {
+        problems.push(`the level handrail is ${sz.toFixed(2)} m long (max ${RAIL_LIMIT}) — it reaches across the corridor`)
+      }
+      // and it must not reach past the top nosing by more than the extension
+      const past = STAIR_FLIGHT_TOP - bb.min.z
+      if (past > RAIL_LIMIT) {
+        problems.push(`the level handrail reaches ${past.toFixed(2)} m past the top nosing`)
+      }
+    })
+    if (!foundLevelRail) problems.push('no level handrail found at all — did the rail disappear?')
+  } catch (e) {
+    problems.push(`THREW: ${(e as Error).message}`)
   }
-  void landingSouth
-  check('the stair (rails and landing) stays inside its own footprint — the corridor is clear',
+  check('the level handrail stops just past the top nosing — it does not span the corridor',
     problems.length === 0, problems.join(' | '))
 }
 

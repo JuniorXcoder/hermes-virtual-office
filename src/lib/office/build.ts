@@ -55,6 +55,7 @@ import {
   ROOM_SIGNS,
   STAIRS,
   STAIR_FLIGHT_TOP,
+  STAIR_RAIL_EXTENSION,
   WALL_H,
   WALL_T,
   paletteFor,
@@ -848,13 +849,23 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
         post.position.set(rx, h / 2, z)
         group.add(post)
       }
-      // Rail along the top landing, level, and no longer than the landing itself.
-      // It used to be `landing + 0.4` shifted 0.2 m north, so it hung 0.4 m into
-      // the corridor at handrail height. A rail that overhangs the floor it guards
-      // is a collision hazard, not a detail.
-      const lrail = box(0.07, 0.07, STAIRS.landing, 0x8a8f95, { metal: 0.6 })
-      lrail.position.set(rx, LEVEL_H + 0.95, STAIRS.z1 + STAIRS.landing / 2)
+      // Handrail past the top nosing: LEVEL, and only as long as a handrail should
+      // be — one tread, not the whole landing.
+      //
+      // It was `STAIRS.landing` (1.40 m), so a bar ran at waist height right across
+      // the corridor and read as a railing planted in the walkway. A handrail
+      // continues ~300 mm past the top riser so your hand has somewhere to go as you
+      // step off; beyond that it is an obstruction.
+      const lrail = box(0.07, 0.07, STAIR_RAIL_EXTENSION, 0x8a8f95, { metal: 0.6 })
+      lrail.position.set(rx, LEVEL_H + 0.95, STAIR_FLIGHT_TOP - STAIR_RAIL_EXTENSION / 2)
       group.add(lrail)
+      // a newel post at the end, so the rail terminates in something instead of
+      // stopping in mid-air
+      {
+        const post = cyl(0.045, 0.045, 1.0, 0x8a8f95, 8, 0.6)
+        post.position.set(rx, LEVEL_H + 0.5, STAIR_FLIGHT_TOP - STAIR_RAIL_EXTENSION)
+        group.add(post)
+      }
     }
   }
 

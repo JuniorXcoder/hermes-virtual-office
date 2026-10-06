@@ -415,6 +415,16 @@ export const STAIR_TOP = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: STAIRS.z1 + 0.3 }
 export const STAIR_FLIGHT_TOP = STAIRS.z1 + STAIRS.landing
 
 /**
+ * How far the handrail continues LEVEL past the top nosing, before it stops.
+ *
+ * A real handrail runs about one tread (≈300 mm) past the top riser and then ends —
+ * that is the whole point of the extension: your hand has somewhere to go as you
+ * step off. It must NOT run the full depth of the landing. This was 1.4 m (the whole
+ * landing), so a bar sat at waist height right across the corridor.
+ */
+export const STAIR_RAIL_EXTENSION = 0.35
+
+/**
  * Height of the walking surface at a point, for the climb animation.
  *
  * A body on the stair should rise as it walks, not teleport 3.4 m at the top. The
