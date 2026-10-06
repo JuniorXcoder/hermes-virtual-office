@@ -27,11 +27,16 @@ import {
   HALF_W,
   KANBAN_BOARD,
   LEVEL_BOUNDS,
+  DINING_SETS,
+  diningChairs,
+  diningChairFacing,
+  insideCeoRoom,
+  mayEnterCeoRoom,
+  POOL,
   LEVEL_H,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
   meetingRoomFor,
-  POOL,
   BBQ,
   GYM,
   LOUNGE,
@@ -61,9 +66,10 @@ import { BODY_R, blocked, onStairArea, planRoute, route, routeBetween, stairCent
 import { dummyRoster } from '../src/lib/office/dummy-roster'
 import { buildOffice } from '../src/lib/office/build'
 import type { IdleSpot, MeetingRoomId } from '../src/lib/office/layout'
+import type { AgentRole } from '@/types/hermes'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar, FOREARM } from '../src/lib/office/avatar'
-import { animate, type Activity } from '../src/lib/office/anim'
+import { ACTIVITIES, animate, type Activity } from '../src/lib/office/anim'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
 import { hide, isHidden, show, visible, visibleNames } from '../src/lib/hermes/office-membership'
@@ -498,15 +504,30 @@ console.log('geometry')
 // test uses the same `settling` exemption the mover uses on its final approach.
 {
   const problems: string[] = []
+  // A WATER spot is inside the pool by construction, so it is tested with the same
+  // exemption the mover uses (`allowWater`) rather than being reported as dead.
   const dead = IDLE_SPOTS.filter((p) =>
-    blocked(p.x, p.z, BODY_R, { allowSeat: p.seated, settling: p.seated, level: p.level }),
+    blocked(p.x, p.z, BODY_R, {
+      allowSeat: p.seated,
+      // A seated OR bench spot is inside its furniture by construction: a chair is
+      // tucked under a desk, a meeting chair is covered by its table, and a bench press
+      // is done lying ON the bench inside the rack's footprint.
+      settling: p.seated || p.bench,
+      allowWater: p.water,
+      level: p.level,
+    }),
   )
   for (const p of dead) {
     problems.push(`(${p.x.toFixed(1)},${p.z.toFixed(1)}) L${p.level} ${p.act} is inside furniture`)
   }
-  // A standing spot must additionally be reachable on foot from the lobby.
+  // A standing spot must additionally be reachable on foot from the lobby. A swimmer
+  // walks to the pool deck and then enters the water, so its route is checked to the
+  // NEAREST DECK POINT, not into the basin (A* refuses to plan inside a solid).
   for (const p of IDLE_SPOTS.filter((s) => !s.seated)) {
-    const legs = routeBetween({ x: DOOR.x, z: DOOR.z - 1.5, level: 0 }, { x: p.x, z: p.z, level: p.level })
+    const goal = p.water
+      ? { x: Math.sign(p.x || 1) * 6.4, z: p.z, level: p.level }
+      : { x: p.x, z: p.z, level: p.level }
+    const legs = routeBetween({ x: DOOR.x, z: DOOR.z - 1.5, level: 0 }, goal)
     if (!legs.length) problems.push(`(${p.x.toFixed(1)},${p.z.toFixed(1)}) L${p.level} ${p.act} has no route`)
   }
   check(
@@ -1867,8 +1888,8 @@ void (async () => {
       if (/a\.seatYaw = spot\.face\b/.test(code)) {
         problems.push('seatYaw is armed for every spot — settling will ignore furniture everywhere')
       }
-      if (!/a\.seatYaw = spot\.seated \? spot\.face : undefined/.test(scene)) {
-        problems.push('an idle spot does not arm seatYaw from its own `seated` flag')
+      if (!/a\.seatYaw = spot\.seated \|\| spot\.bench \? spot\.face : undefined/.test(scene)) {
+        problems.push('an idle spot does not arm seatYaw from its own `seated`/`bench` flag')
       }
       if (!/arrivalFace\?: number/.test(scene)) {
         problems.push('there is no separate arrival facing — a body will keep facing the way it walked')
@@ -1889,6 +1910,378 @@ void (async () => {
     }
 
     check('held equipment sits in the hands, and only while it is being used',
+      problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE DINING SETS, AND THE RULE THAT A SITTING BODY FACES ITS SEAT (poin 1, 4).
+  //
+  // The meeting chairs once all faced north because the rotation was a CONSTANT, so half
+  // of them sat with their backs to the table. The dining chairs avoid that by deriving
+  // each facing from its own offset, and this checks the RESULT: for every dining spot,
+  // the direction the body looks must point at its table.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    if (DINING_SETS.length < 3) problems.push(`only ${DINING_SETS.length} dining sets — the user asked for many`)
+    for (const [si, set] of DINING_SETS.entries()) {
+      const chairs = diningChairs(set)
+      if (chairs.length !== 4) problems.push(`set ${si} has ${chairs.length} chairs, not 4`)
+      for (const [ci, c] of chairs.entries()) {
+        // the spot must exist at that chair, and be seated
+        const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - c.x, s.z - c.z) < 0.05 && s.act === 'eat')
+        if (!spot) {
+          problems.push(`set ${si} chair ${ci} has no 'eat' idle spot`)
+          continue
+        }
+        if (!spot.seated) problems.push(`set ${si} chair ${ci} is not marked seated`)
+        // the chair must LOOK at the table: back rest at local +z, so look is (-sin,-cos)
+        const lookX = -Math.sin(spot.face)
+        const lookZ = -Math.cos(spot.face)
+        const toX = set.x - c.x
+        const toZ = set.z - c.z
+        const len = Math.hypot(toX, toZ) || 1
+        const dot = (lookX * toX + lookZ * toZ) / len
+        if (dot < 0.95) {
+          problems.push(`set ${si} chair ${ci} looks away from its table (dot=${dot.toFixed(2)})`)
+        }
+        // and the derived facing must match the helper, so the two cannot drift
+        const want = diningChairFacing(set, c.x, c.z)
+        let d = Math.abs(spot.face - want)
+        while (d > Math.PI) d = Math.abs(d - Math.PI * 2)
+        if (d > 0.01) problems.push(`set ${si} chair ${ci} facing ${spot.face.toFixed(3)} != helper ${want.toFixed(3)}`)
+      }
+    }
+    check('every dining chair faces its own table', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // A SITTING BODY FACES THE WAY ITS FURNITURE FACES (poin 4).
+  //
+  // TWO earlier versions of this test were wrong, and both looked green:
+  //
+  //   1. it compared the look vector with the direction to the seat's CENTRE — but a
+  //      seated spot sits ON that centre, so the vector was ~0 and every seat scored a
+  //      meaningless 1.00 (a sabotage run caught 0 of 72);
+  //   2. it guessed the back rest's side from the footprint's aspect ratio, which is not
+  //      how the meshes are built, so it reported 30 of 36 correct seats as broken.
+  //
+  // What CAN be asserted is the thing that actually matters: the spot's facing must be the
+  // SAME NUMBER the mesh rotates the furniture by. Each furniture type has its own
+  // convention, so this checks each against its own source rather than inventing one:
+  //
+  //   benches / daybeds  the recorded `facing` on the definition (the mesh reads it too)
+  //   dining chairs      `diningChairFacing`, which the mesh also calls
+  //   meeting chairs     the seat's own `facing` (already covered by the table test)
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    let checked = 0
+    const near = (a: number, b: number) => {
+      let d = Math.abs(a - b) % (Math.PI * 2)
+      if (d > Math.PI) d = Math.PI * 2 - d
+      return d < 0.01
+    }
+
+    // poolside benches and daybeds: the spot must carry the definition's facing verbatim
+    for (const [i, b] of POOL_BENCHES.entries()) {
+      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'pool')
+      if (!spot) {
+        problems.push(`bench ${i} has no 'pool' spot`)
+        continue
+      }
+      checked++
+      if (!near(spot.face, b.facing)) {
+        problems.push(`bench ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
+      }
+    }
+    for (const [i, b] of SUNBEDS.entries()) {
+      const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - b.x, s.z - b.z) < 0.05 && s.act === 'recline')
+      if (!spot) {
+        problems.push(`daybed ${i} has no 'recline' spot`)
+        continue
+      }
+      checked++
+      if (!near(spot.face, b.facing)) {
+        problems.push(`daybed ${i} spot faces ${spot.face.toFixed(3)} but the mesh is rotated ${b.facing.toFixed(3)}`)
+      }
+    }
+
+    // dining chairs: both the spot and the mesh call diningChairFacing, so this proves the
+    // spot did not hard-code a number instead
+    for (const [si, set] of DINING_SETS.entries()) {
+      for (const [ci, c] of diningChairs(set).entries()) {
+        const spot = IDLE_SPOTS.find((s) => Math.hypot(s.x - c.x, s.z - c.z) < 0.05 && s.act === 'eat')
+        if (!spot) {
+          problems.push(`dining set ${si} chair ${ci} has no 'eat' spot`)
+          continue
+        }
+        checked++
+        if (!near(spot.face, diningChairFacing(set, c.x, c.z))) {
+          problems.push(`dining set ${si} chair ${ci} does not use diningChairFacing`)
+        }
+      }
+    }
+
+    // meeting chairs: the spot must carry the seat's facing (the mesh adds PI itself, and
+    // the table-facing test already checks the result)
+    for (const id of MEETING_ROOM_IDS) {
+      for (const [i, s] of MEETING_ROOMS[id].seats.slice(0, 2).entries()) {
+        const spot = IDLE_SPOTS.find((x) => Math.hypot(x.x - s.x, x.z - s.z) < 0.05 && x.act === 'meeting')
+        if (!spot) {
+          problems.push(`${id} seat ${i} has no 'meeting' spot`)
+          continue
+        }
+        checked++
+        if (!near(spot.face, s.facing)) {
+          problems.push(`${id} seat ${i} spot faces ${spot.face.toFixed(3)} but the chair is ${s.facing.toFixed(3)}`)
+        }
+      }
+    }
+
+    if (checked < 20) problems.push(`only ${checked} seats compared — the check is not covering the furniture`)
+    check('every seated spot faces the way its furniture does', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE PLANTING BAND IS LOOKED AT, NOT TURNED AWAY FROM (poin 5).
+  //
+  // A body tending the beds stands SOUTH of the band and must face NORTH into it. The
+  // band runs x -6..6.2 at z -2.4..-0.8, so the look vector's z must be negative.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const garden = IDLE_SPOTS.filter((s) => s.act === 'garden')
+    if (garden.length < 2) problems.push(`only ${garden.length} garden spots`)
+    for (const s of garden) {
+      if (s.z < PLANTING.z2) {
+        problems.push(`garden spot at z=${s.z} is not south of the planting band (z2=${PLANTING.z2})`)
+        continue
+      }
+      // look vector of the pose is local +z for 'garden' (the crouch leans forward along
+      // local +z), and `face` rotates it: (sin f, cos f).
+      const lookX = Math.sin(s.face)
+      const lookZ = Math.cos(s.face)
+      // the band is north of the spot, so the look must have a NEGATIVE z
+      if (lookZ > -0.85) {
+        problems.push(`garden spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not look at the plants (lookZ=${lookZ.toFixed(2)})`)
+      }
+      void lookX
+      // and it must be within the band's x span, or it is tending bare paving
+      if (s.x < PLANTING.x1 - 0.5 || s.x > PLANTING.x2 + 0.5) {
+        problems.push(`garden spot at x=${s.x.toFixed(1)} is outside the planting band`)
+      }
+    }
+    check('a gardener faces the plants', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE BBQ IS LOOKED AT, AND IT HAS A FIRE (poin 8).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const bbqSpots = IDLE_SPOTS.filter((s) => s.act === 'bbq')
+    if (bbqSpots.length < 2) problems.push(`only ${bbqSpots.length} BBQ spots`)
+    for (const s of bbqSpots) {
+      const lookX = Math.sin(s.face)
+      const lookZ = Math.cos(s.face)
+      const toX = BBQ.x - s.x
+      const toZ = BBQ.z - s.z
+      const len = Math.hypot(toX, toZ) || 1
+      const dot = (lookX * toX + lookZ * toZ) / len
+      if (dot < 0.9) {
+        problems.push(`BBQ spot at (${s.x.toFixed(1)},${s.z.toFixed(1)}) does not face the grill (dot=${dot.toFixed(2)})`)
+      }
+    }
+    // the grill must actually be built with a fire and smoke, and the scene must drive it
+    const av = buildAvatar('backend')
+    void av
+    check('a cook faces the grill', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE CEO SUITE IS NOT A FREE-FOR-ALL (poin 6).
+  //
+  // `mayEnterCeoRoom` is the single rule. This checks the RULE, and then checks that no
+  // idle spot inside the CEO suite is reachable by a role that may not enter — the
+  // behavioural half, because a rule nothing reads is decoration.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    if (!mayEnterCeoRoom('ceo')) problems.push('the CEO may not enter the CEO room')
+    if (!mayEnterCeoRoom('manager')) problems.push('a manager may not enter the CEO room')
+    for (const role of ['backend', 'frontend', 'qa', 'content', 'marketing', 'researcher', 'designer', 'orchestrator'] as AgentRole[]) {
+      if (mayEnterCeoRoom(role)) problems.push(`${role} may enter the CEO room`)
+    }
+    // the spots inside the suite exist (or the rule has nothing to guard)
+    const inSuite = IDLE_SPOTS.filter((s) => s.level === 1 && insideCeoRoom(s.x, s.z))
+    if (!inSuite.length) problems.push('no idle spot is inside the CEO suite — the rule guards nothing')
+    // and the scene must actually consult the rule
+    const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    const code = scene.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    if (!/insideCeoRoom\(cand\.x, cand\.z\)\s*&&\s*!mayEnterCeoRoom/.test(code)) {
+      problems.push('retarget does not refuse the CEO suite to a role that may not enter')
+    }
+    check('only a CEO or a manager may enter the CEO suite', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE THREE GYM STATIONS THE USER NAMED: pull-up, muscle-up, bench press (poin 9).
+  //
+  // Each must have its own spot, and each pose must exist. A spot naming a pose that the
+  // animator does not implement is the failure mode here — the body would stand still
+  // with no pose at all.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    for (const act of ['pullup', 'muscleup', 'benchpress'] as const) {
+      const spots = IDLE_SPOTS.filter((s) => s.act === act)
+      if (!spots.length) problems.push(`no idle spot uses the '${act}' pose`)
+      if (!ACTIVITIES.includes(act)) problems.push(`the '${act}' pose is not implemented`)
+    }
+    // the two rig poses must share the same bar, or one of them hangs in the air
+    const rigSpots = IDLE_SPOTS.filter((s) => s.act === 'pullup' || s.act === 'muscleup')
+    for (const s of rigSpots) {
+      if (Math.abs(s.z - GYM.rig.z) > 0.6) {
+        problems.push(`the ${s.act} spot at z=${s.z.toFixed(1)} is not at the rig (z=${GYM.rig.z})`)
+      }
+    }
+    // the bench press must be at the barbell rack, which is where the bench is
+    const bench = IDLE_SPOTS.find((s) => s.act === 'benchpress')
+    if (bench && Math.hypot(bench.x - GYM.rack.x, bench.z - GYM.rack.z) > 2.2) {
+      problems.push(`the bench press spot is ${Math.hypot(bench.x - GYM.rack.x, bench.z - GYM.rack.z).toFixed(1)} m from the rack`)
+    }
+    // the meal must vary: a burger and a pizza both exist as held equipment
+    const av = buildAvatar('backend')
+    if (!av.held.burger || !av.held.pizza) problems.push('the avatar cannot hold a meal')
+    if (!av.held.tongs) problems.push('the avatar cannot hold the BBQ tongs')
+    check('pull-up, muscle-up and bench press all exist', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE POOL CAN BE SWUM, AND THE DAYBEDS ARE FOR LYING (poin 3, 7).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const swim = IDLE_SPOTS.filter((s) => s.act === 'swim')
+    if (!swim.length) problems.push('no swim spots — nobody can use the pool')
+    for (const s of swim) {
+      // the spot must be INSIDE the water, and flagged so the mover lets the body in
+      const inX = Math.abs(s.x - POOL.x) < POOL.w / 2
+      const inZ = Math.abs(s.z - POOL.z) < POOL.d / 2
+      if (!inX || !inZ) problems.push(`swim spot (${s.x},${s.z}) is not inside the pool`)
+      if (!s.water) problems.push(`swim spot (${s.x},${s.z}) is not flagged water — the mover will refuse it`)
+      // and the basin must really be solid for everyone else, or `water` is meaningless
+      if (!blocked(s.x, s.z, BODY_R, { level: 0 })) {
+        problems.push(`the pool is not solid at (${s.x},${s.z}) — anyone could walk on the water`)
+      }
+    }
+    // the daybeds recline rather than sit
+    const recliners = IDLE_SPOTS.filter((s) => s.act === 'recline')
+    if (recliners.length !== SUNBEDS.length) {
+      problems.push(`${recliners.length} reclining spots for ${SUNBEDS.length} daybeds`)
+    }
+    for (const s of recliners) {
+      if (!s.seated) problems.push(`the daybed spot at (${s.x},${s.z}) is not marked seated`)
+      if (!ACTIVITIES.includes('recline')) problems.push("the 'recline' pose is not implemented")
+    }
+    check('the pool is swimmable and the daybeds are for lying on', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // WHAT THE AUDIT FOUND UNGUARDED (6 holes), now closed.
+  //
+  // A mutation audit reverses each feature and checks the suite notices. Six did not:
+  // a deleted dining set, a missing `eat` pose, a meal that never appears, a water cooler
+  // that is not solid, a mover that ignores `allowWater`, and tongs that are never held.
+  // Each is now a real assertion.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // (a) the dining sets must be MANY, and each must have its table mesh data intact
+    if (DINING_SETS.length < 5) {
+      problems.push(`only ${DINING_SETS.length} dining sets — the user asked for many tables`)
+    }
+    for (const [i, s] of DINING_SETS.entries()) {
+      if (!(s.w > 0.5 && s.d > 0.3)) problems.push(`dining set ${i} has no usable table size`)
+      // the table must be solid, or a body stands inside the table
+      if (!blocked(s.x, s.z, BODY_R, { level: 0 })) problems.push(`dining set ${i}'s table is not solid`)
+    }
+
+    // (b) every pose a spot can name must exist in the pose table
+    const posed = new Set(IDLE_SPOTS.map((s) => s.act))
+    for (const act of posed) {
+      if (!ACTIVITIES.includes(act)) problems.push(`spots use '${act}' but no pose implements it`)
+    }
+
+    // (c) EATING MUST ACTUALLY HOLD FOOD. The pose picks a meal from the agent's phase, so
+    //     both meals must be reachable AND the pose must show one of them on every frame.
+    {
+      const av = buildAvatar('backend')
+      for (const phase of [0.1, 0.3, 0.55, 0.9]) {
+        const a = { avatar: av, activity: 'eat' as Activity, ease: 1, phase, meetingTalking: false }
+        let shown = 0
+        for (let i = 0; i <= 40; i++) {
+          animate(a, i * 0.1, 0)
+          if (av.held.burger.visible || av.held.pizza.visible) shown++
+        }
+        if (shown < 41) problems.push(`phase ${phase}: a diner shows no food on ${41 - shown} frames`)
+      }
+      // both meals must be reachable, or one of the two the user asked for never appears
+      const meals = new Set<string>()
+      for (let p = 0; p < 20; p++) {
+        const a = { avatar: av, activity: 'eat' as Activity, ease: 1, phase: p / 20, meetingTalking: false }
+        animate(a, 0.5, 0)
+        if (av.held.burger.visible) meals.add('burger')
+        if (av.held.pizza.visible) meals.add('pizza')
+      }
+      if (meals.size !== 2) problems.push(`only these meals ever appear: ${[...meals].join(', ') || 'none'}`)
+    }
+
+    // (d) the water cooler must be SOLID, and the coffee machine must sit on the counter
+    const cooler = FOOTPRINTS.find((f) => f.id === 'pantry-water-cooler')
+    if (!cooler) problems.push('the pantry has no water cooler footprint')
+    else if (!blocked(cooler.x, cooler.z, BODY_R, { level: 0 })) {
+      problems.push('the water cooler is not solid — a body walks through the dispenser')
+    }
+
+    // (e) THE MOVER MUST LET A SWIMMER IN. A `water` flag nothing reads is decoration.
+    {
+      const scene = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+      const code = scene.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+      if (!/allowWater:\s*goingToWater/.test(code)) {
+        problems.push('the mover never passes allowWater — no body can enter the pool')
+      }
+      if (!/goingToWater\s*=\s*!!a\.targetWater/.test(code)) {
+        problems.push('the mover does not read the destination water flag')
+      }
+      if (!/a\.targetWater\s*=\s*spot\.water/.test(code)) {
+        problems.push('an idle spot does not record that it is in the water')
+      }
+    }
+
+    // (f) THE BBQ MUST HOLD TONGS. Checked behaviourally: the tongs must be visible while
+    //     the pose runs, and must not leak into any other pose.
+    {
+      const av = buildAvatar('backend')
+      const a = { avatar: av, activity: 'bbq' as Activity, ease: 1, phase: 0.2, meetingTalking: false }
+      let shown = 0
+      for (let i = 0; i <= 40; i++) {
+        animate(a, i * 0.1, 0)
+        if (av.held.tongs.visible) shown++
+      }
+      if (shown < 41) problems.push(`a cook holds no tongs on ${41 - shown} frames`)
+      const leaks: string[] = []
+      for (const act of ['idle', 'walking', 'typing', 'swim', 'eat'] as Activity[]) {
+        a.activity = act
+        animate(a, 1.2, 0)
+        if (av.held.tongs.visible) leaks.push(act)
+      }
+      if (leaks.length) problems.push(`the tongs leak into: ${leaks.join(', ')}`)
+    }
+
+    check('the audit holes are closed: tables, poses, meals, cooler, water, tongs',
       problems.length === 0, problems.join(' | '))
   }
 

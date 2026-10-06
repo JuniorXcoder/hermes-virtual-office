@@ -689,6 +689,107 @@ export const LOUNGE_TV = { x: 22.5, z: -20.78, y: 1.5 }
 /** Coffee table, between the sofa and the TV. */
 export const LOUNGE_TABLE = { x: 22.5, z: -19.6 }
 
+/* -------------------------------------------------------- dining tables -- */
+
+/**
+ * A dining set: one table, four chairs.
+ *
+ * ONE definition read by the mesh, the collision footprints and the idle spots — the
+ * same rule as the courtyard zones, and for the same reason: when the model and the
+ * spots disagree, an avatar sits on nothing and walks into empty air.
+ *
+ * `facing` is the direction the whole set looks — the long axis of the table. The four
+ * chairs are placed on the two long sides and the two ends, and EACH ONE's facing is
+ * derived from its own offset to the table centre, never from a constant: that is the
+ * bug that once left half the meeting chairs with their backs to the table.
+ */
+export type DiningSet = {
+  /** Table centre. */
+  x: number
+  z: number
+  /** Which way the table's long axis runs, in radians (0 = along +z). */
+  facing: number
+  /** Table top size. */
+  w: number
+  d: number
+}
+
+export const DINING_SETS: DiningSet[] = [
+  // The pantry: three sets along the west side, clear of the counter (x 25.15..26.05)
+  // and of the partition at z = 2.
+  { x: 17.4, z: 5.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 17.4, z: 9.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 17.4, z: 14.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  // The leisure room: two more, north of the sofa group.
+  { x: 17.6, z: -8.0, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+  { x: 17.6, z: -13.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
+]
+
+/** Seat height of a dining chair — matches SEATS.chair, so the pose is unchanged. */
+export const DINING_CHAIR_OFFSET = 0.78
+
+/**
+ * The four chair positions of one set.
+ *
+ * The chairs sit on the two long sides (at `+-halfD` across the table) and the two ends
+ * (at `+-halfW` along it). The long-axis unit vector is (sin facing, cos facing) and the
+ * across vector is (cos facing, -sin facing), so a set at any angle still gets four
+ * chairs in the right places.
+ */
+export function diningChairs(set: DiningSet): { x: number; z: number }[] {
+  const ax = Math.sin(set.facing)
+  const az = Math.cos(set.facing)
+  // across the table
+  const bx = Math.cos(set.facing)
+  const bz = -Math.sin(set.facing)
+  const halfW = set.w / 2 + 0.42
+  const halfD = set.d / 2 + 0.42
+  return [
+    { x: set.x + ax * halfW, z: set.z + az * halfW },
+    { x: set.x - ax * halfW, z: set.z - az * halfW },
+    { x: set.x + bx * halfD, z: set.z + bz * halfD },
+    { x: set.x - bx * halfD, z: set.z - bz * halfD },
+  ]
+}
+
+/** Facing for a chair at (cx,cz) so it LOOKS at the table centre. */
+export function diningChairFacing(set: DiningSet, cx: number, cz: number): number {
+  // The chair mesh carries its back rest at local +z, so it looks along local -z, i.e.
+  // the look vector is (-sin f, -cos f). We want that to point at the table, so
+  // f = atan2(-(tx-cx), -(tz-cz)).
+  return Math.atan2(-(set.x - cx), -(set.z - cz))
+}
+
+/* ------------------------------------------------------------- access -- */
+
+/**
+ * Who may enter the CEO suite.
+ *
+ * The room is the CEO's, so the door is not a free-for-all: only a CEO and the division
+ * managers go in. Everyone else is turned away — including the `orchestrator` role, which
+ * is the default for an `exec` profile with no explicit role, because "exec" is a
+ * DIVISION (which floor you report to) and not a rank.
+ *
+ * Kept as data because two places read it: `retarget` refuses to send an agent in, and
+ * the self-test checks that the refusal actually happens rather than trusting a comment.
+ */
+export const CEO_ROOM_ROLES: readonly AgentRole[] = ['ceo', 'manager']
+
+/** May this role go into the CEO suite? */
+export function mayEnterCeoRoom(role: AgentRole): boolean {
+  return CEO_ROOM_ROLES.includes(role)
+}
+
+/**
+ * Is this point inside the CEO suite? `pad` widens the test, so a caller can ask
+ * "would standing here be inside the room".
+ */
+export function insideCeoRoom(x: number, z: number, pad = 0): boolean {
+  const r = ROOMS.find((room) => room.id === 'ceo')
+  if (!r) return false
+  return x > r.x1 - pad && x < r.x2 + pad && z > r.z1 - pad && z < r.z2 + pad
+}
+
 /* ------------------------------------------------------------- footprints -- */
 
 export type Footprint = {
@@ -884,6 +985,18 @@ export const FOOTPRINTS: Footprint[] = [
   /* -------------------------------------------------------------- pantry -- */
   fp('pantry-counter', PANTRY.x, PANTRY.z, 0.45, 3.2, 0.95),
   ...PANTRY_STOOLS.map((z, i) => fp(`stool-${i}`, PANTRY.x + PANTRY_STOOL_GAP, z, 0.24, 0.24, 0.62, 'seat')),
+  // The water cooler stands clear of the counter's south end; the coffee machine sits ON
+  // the counter, so it needs no footprint of its own (the counter already blocks there).
+  fp('pantry-water-cooler', PANTRY.x - 0.1, PANTRY.z + 3.6, 0.24, 0.24, 1.6),
+
+  /* --------------------------------------------------------- dining sets -- */
+  // Each set contributes a table (solid, `desk` so a body cannot stand in it) and four
+  // chairs (`seat`, so the settling exemption can step onto them). Every chair's own
+  // facing is derived from its offset, which is what keeps all four looking at the table.
+  ...DINING_SETS.flatMap((s, si) => [
+    fp(`dining-${si}-table`, s.x, s.z, s.d / 2 + 0.1, s.w / 2 + 0.1, 0.75, 'desk'),
+    ...diningChairs(s).map((c, ci) => fp(`dining-${si}-chair-${ci}`, c.x, c.z, 0.32, 0.32, 0.5, 'seat')),
+  ]),
 
   /* -------------------------------------------------------------- leisure -- */
   fp('lounge-sofa', LOUNGE.x, LOUNGE.z, 1.5, 0.55, 0.85, 'seat'),
@@ -913,6 +1026,22 @@ export type IdleSpot = {
   z: number
   act: IdleActivity
   seated?: boolean
+  /**
+   * This spot is LYING ON equipment that is itself solid.
+   *
+   * A bench press is done lying on the bench, and the bench is inside the rack's own
+   * footprint — so the destination is inside a solid by construction, exactly like a
+   * chair tucked under a desk. This flag is what tells the mover to allow the final step.
+   */
+  bench?: boolean
+  /**
+   * This spot is IN the pool.
+   *
+   * A swimmer has to enter the water, and the basin is a solid for everyone on foot —
+   * otherwise avatars stroll across the surface. The mover reads this to let the body
+   * in, exactly as `seated` lets it step onto a chair.
+   */
+  water?: boolean
   face: number
   level: 0 | 1
 }
@@ -930,17 +1059,36 @@ export type IdleSpot = {
  * body can actually step onto the chair (see `goingToSeat` in scene.ts).
  */
 export const IDLE_SPOTS: IdleSpot[] = [
-  /* ---- poolside: the south benches and the west daybeds ------------------ */
+  /* ---- poolside: the south benches, and the west daybeds to LIE on ------- */
   ...POOL_BENCHES.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
-  ...SUNBEDS.map((b) => ({ x: b.x, z: b.z, act: 'pool' as const, seated: true, face: b.facing, level: 0 as const })),
+  // The daybeds are for LYING, not sitting: they have a raised back rest, and a seated
+  // pose on one reads as somebody perched on the edge of a bed. `act: 'recline'` is what
+  // selects the lying pose — the activity picks the pose, exactly as 'barbell' does.
+  ...SUNBEDS.map((b) => ({ x: b.x, z: b.z, act: 'recline' as const, seated: true, face: b.facing, level: 0 as const })),
+
+  /* ---- IN the water: swimming ------------------------------------------- */
+  // Four lanes across the pool. `water` lets the mover in; without it the basin is a
+  // solid and nobody ever swims. The face points along the lane, so a swimmer is
+  // already looking where it is going.
+  { x: -4.0, z: 4.0, act: 'swim', water: true, face: -Math.PI / 2, level: 0 },
+  { x: -1.5, z: 4.0, act: 'swim', water: true, face: -Math.PI / 2, level: 0 },
+  { x: 1.5, z: 4.0, act: 'swim', water: true, face: Math.PI / 2, level: 0 },
+  { x: 4.0, z: 4.0, act: 'swim', water: true, face: Math.PI / 2, level: 0 },
 
   /* ---- the gym: one spot per station, and each station's pose uses it ----- */
   // The pose is chosen by the SPOT, not by the room: a body at the barbell rack holds
   // the barbell, a body under the rig hangs from it, a body at the dumbbell rack curls
   // them. Standing on the mat doing an air-press was the old behaviour, and it is why
   // the weights looked like scenery nobody touched.
+  //
+  // `face` points AT the equipment in every case, because a body exercising away from
+  // the thing it is using looks broken (poin 8 and 9).
   { x: GYM.rack.x + 1.15, z: GYM.rack.z + 0.75, act: 'barbell', face: -Math.PI / 2, level: 0 },
-  { x: GYM.rack.x + 0.45, z: GYM.rack.z + 1.55, act: 'barbell', face: Math.PI, level: 0 },
+  // BENCH PRESS: ON the bench, not beside it. The bench pad is at the rack's own centre
+  // (x -4.2, z -5.6), so the spot is the pad itself. The first version reused the
+  // standing-press offset and put the body 1.37 m away, lying on the floor next to the
+  // bench — measured, not guessed.
+  { x: GYM.rack.x, z: GYM.rack.z, act: 'benchpress', bench: true, face: -Math.PI / 2, level: 0 },
   // In FRONT of the dumbbell rack (the rack's own footprint spans x 3.1..5.3,
   // z -6.05..-5.15, so a spot at its centre is inside it). Facing north to the rack.
   { x: GYM.dumbbells.x - 0.6, z: GYM.dumbbells.z + 0.9, act: 'dumbbell', face: Math.PI, level: 0 },
@@ -948,16 +1096,28 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // directly under the bar: the pull-up pose solves its own height, so the body hangs
   // with its feet off the mat rather than standing beside the rig.
   { x: GYM.rig.x, z: GYM.rig.z, act: 'pullup', face: Math.PI, level: 0 },
+  // Muscle-up: on the same bar, but the body goes ABOVE it and the knees come up. A
+  // second spot so both can happen at once without two bodies in one place.
+  { x: GYM.rig.x + GYM.rig.span / 2 + 0.55, z: GYM.rig.z, act: 'muscleup', face: Math.PI, level: 0 },
 
-  /* ---- the BBQ: stand at the counter, and at the prep end ---------------- */
-  { x: BBQ.x - 1.5, z: BBQ.z, act: 'bbq', face: Math.PI / 2, level: 0 },
-  { x: BBQ.x, z: BBQ.z + 1.5, act: 'bbq', face: Math.PI, level: 0 },
-  { x: BBQ.x + 1.4, z: BBQ.z + 0.9, act: 'bbq', face: Math.PI, level: 0 },
+  /* ---- the BBQ: stand AT the grill, looking at it (poin 8) -------------- */
+  // The grill counter's footprint is x 7.45..9.35, z -7.02..-5.78. Every spot stands
+  // clear of it and its `face` is SOLVED to point at the counter centre: the cook pose
+  // leans along local +z, so the look vector is (sin f, cos f) and f = atan2(dx, dz).
+  //
+  // Two of these three used to be wrong — a fixed `Math.PI` and `0` left them facing
+  // away from the grill, which the self-test caught as dot = -0.97 and -0.53.
+  { x: BBQ.x - 1.55, z: BBQ.z, act: 'bbq', face: Math.atan2(1.55, 0), level: 0 },
+  { x: BBQ.x - 0.35, z: BBQ.z + 1.45, act: 'bbq', face: Math.atan2(0.35, -1.45), level: 0 },
+  { x: BBQ.x + 1.45, z: BBQ.z - 0.9, act: 'bbq', face: Math.atan2(-1.45, 0.9), level: 0 },
 
-  /* ---- the planting band ------------------------------------------------ */
-  { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
-  { x: (PLANTING.x1 + PLANTING.x2) / 2, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
-  { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.7, act: 'garden', face: Math.PI, level: 0 },
+  /* ---- the planting band: LOOK AT THE FLOWERS (poin 5) ------------------ */
+  // The band runs x -6..6.2 at z -2.4..-0.8. A body stands SOUTH of it and faces NORTH
+  // into the greenery: rotation PI turns the local +z look to -z. The old spots stood
+  // south but faced `Math.PI` from the wrong side, so they looked away from the beds.
+  { x: PLANTING.x1 + 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
+  { x: (PLANTING.x1 + PLANTING.x2) / 2, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
+  { x: PLANTING.x2 - 1.6, z: PLANTING.z2 + 0.75, act: 'garden', face: Math.PI, level: 0 },
 
   /* ---- pantry: the three stools ---------------------------------------- */
   ...PANTRY_STOOLS.map((z) => ({
@@ -965,9 +1125,24 @@ export const IDLE_SPOTS: IdleSpot[] = [
     z,
     act: 'coffee' as const,
     seated: true,
-    face: -Math.PI / 2,
+    // The stools are WEST of the counter (x 25.6), so the body faces EAST into it.
+    face: Math.PI / 2,
     level: 0 as const,
   })),
+
+  /* ---- the dining sets: four chairs each (poin 1 & 2) ------------------- */
+  // Each chair gets its own facing, derived from its offset to its table — never a
+  // constant. `eat` is the pose: seated, holding a burger or a pizza.
+  ...DINING_SETS.flatMap((s) =>
+    diningChairs(s).map((c) => ({
+      x: c.x,
+      z: c.z,
+      act: 'eat' as const,
+      seated: true,
+      face: diningChairFacing(s, c.x, c.z),
+      level: 0 as const,
+    })),
+  ),
 
   /* ---- the leisure room: the sofa, facing the TV ------------------------- */
   { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: 0, level: 0 },

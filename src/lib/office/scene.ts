@@ -37,6 +37,8 @@ import {
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
   LEVEL_H,
   stairHeightAt,
+  insideCeoRoom,
+  mayEnterCeoRoom,
   type Desk,
   type IdleSpot,
   type MeetingRoomId,
@@ -74,6 +76,14 @@ export type SceneAgent = AnimAgent & {
    * instead of turning to the water — the bench's `face` was lost the moment it set off.
    */
   arrivalFace?: number
+  /**
+   * Set when the destination is IN the pool.
+   *
+   * The basin is a solid for everyone on foot, so a swimmer could never enter it. This
+   * is the same kind of exemption as `seatYaw`, for the same reason: the destination is
+   * inside something by construction.
+   */
+  targetWater?: boolean
   /**
    * Set only when the destination is a SEAT. It switches on the `settling` exemption:
    * the final metre ignores ALL furniture, because a chair is tucked under a desk or
@@ -500,6 +510,7 @@ export function createScene(
   function retarget(a: SceneAgent, meeting: Meeting | null, index: number) {
     a.seatYaw = undefined
     a.arrivalFace = undefined
+    a.targetWater = undefined
 
     // ANCHORED bodies never get a destination. The receptionist stays behind the
     // counter: no wander, no meeting, no stroll to the pool (poin 2). Checked
@@ -611,11 +622,14 @@ export function createScene(
     let spot: IdleSpot | null = null
     for (let k = 0; k < IDLE_SPOTS.length; k++) {
       const cand = IDLE_SPOTS[(a.wanderIndex + k) % IDLE_SPOTS.length]
-      if (!taken.has(`${cand.x.toFixed(1)},${cand.z.toFixed(1)}`)) {
-        spot = cand
-        a.wanderIndex = (a.wanderIndex + k + 1) % IDLE_SPOTS.length
-        break
-      }
+      if (taken.has(`${cand.x.toFixed(1)},${cand.z.toFixed(1)}`)) continue
+      // ACCESS: the CEO suite is for the CEO and the managers. A body that may not go in
+      // does not merely get turned back at the door — the spot is never chosen, so it
+      // walks somewhere it is welcome instead of bouncing off a wall.
+      if (cand.level === 1 && insideCeoRoom(cand.x, cand.z) && !mayEnterCeoRoom(a.data.role)) continue
+      spot = cand
+      a.wanderIndex = (a.wanderIndex + k + 1) % IDLE_SPOTS.length
+      break
     }
     if (!spot) {
       a.target = null
@@ -639,7 +653,8 @@ export function createScene(
     // through whatever stood there — 49,586 frames inside solid furniture in a 30-minute
     // simulation, mostly the garden beds and the pantry wall.
     a.arrivalFace = spot.face
-    a.seatYaw = spot.seated ? spot.face : undefined
+    a.seatYaw = spot.seated || spot.bench ? spot.face : undefined
+    a.targetWater = spot.water
   }
 
   // ---- simulation ------------------------------------------------------------
@@ -799,12 +814,16 @@ export function createScene(
           // the end of it.
           const goingToSeat = a.seatYaw !== undefined
           const settling = goingToSeat && dist < 1.3
+          // A swimmer may enter the water, but only on its final approach — otherwise a
+          // body merely walking past the pool would cut across the surface.
+          const goingToWater = !!a.targetWater && dist < 2.2
           if (
             !blocked(nx, nz, BODY_R * 0.9, {
               level: a.level,
               onStair: climbing,
               allowSeat: goingToSeat,
               settling,
+              allowWater: goingToWater,
             })
           ) {
             g.position.set(nx, g.position.y, nz)
@@ -902,6 +921,8 @@ export function createScene(
     })
 
     office.animateStreet(dt, t)
+    // The grill's fire and smoke: the only live flame in the building.
+    office.animateBbq(t)
     controls.update()
     renderer.render(scene, camera)
     labelRenderer.render(scene, camera)

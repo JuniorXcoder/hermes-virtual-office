@@ -32,13 +32,19 @@ export type Avatar = {
    * Equipment the avatar can hold.
    *
    * A pose makes an item visible and puts it where the fists are; everything not held
-   * stays hidden. These are parented to the CHEST rather than to the scene, so they
-   * stay attached while the body turns and walks without the scene having to track
-   * them.
+   * stays hidden. These are parented to the avatar's GROUP (see the note where they are
+   * added), so they stay attached while the body turns and walks without the scene
+   * having to track them.
    */
   held: {
     barbell: THREE.Group
     dumbbells: [THREE.Group, THREE.Group]
+    /** A burger in the right hand; hidden when the meal is a pizza. */
+    burger: THREE.Group
+    /** A pizza box held in both hands; hidden when the meal is a burger. */
+    pizza: THREE.Group
+    /** BBQ tongs, one in the right hand. */
+    tongs: THREE.Group
   }
 }
 
@@ -153,6 +159,110 @@ function buildDumbbell(): THREE.Group {
   return g
 }
 
+/**
+ * A burger, held in one hand.
+ *
+ * Built as a stack of discs so it reads as a burger from any angle: bottom bun, patty,
+ * cheese, lettuce, top bun. Held with the fist wrapped around it, so the stack sits
+ * slightly ABOVE the fist centre (a hand holds the bottom half).
+ */
+function buildBurger(): THREE.Group {
+  const g = new THREE.Group()
+  const bun = new THREE.MeshStandardMaterial({ color: 0xc98a3e, roughness: 0.8 })
+  const patty = new THREE.MeshStandardMaterial({ color: 0x5a3620, roughness: 0.9 })
+  const cheese = new THREE.MeshStandardMaterial({ color: 0xe8b53a, roughness: 0.7 })
+  const lettuce = new THREE.MeshStandardMaterial({ color: 0x6aa84f, roughness: 0.85 })
+  const discs: [THREE.Material, number, number][] = [
+    [bun, 0.075, 0.028],
+    [patty, 0.072, 0.022],
+    [cheese, 0.074, 0.012],
+    [lettuce, 0.078, 0.014],
+    [bun, 0.073, 0.03],
+  ]
+  let y = 0
+  for (const [m, r, h] of discs) {
+    const d = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 14), m)
+    d.position.y = y + h / 2
+    y += h
+    g.add(d)
+  }
+  // the whole stack sits above the grip, because a fist holds the bottom
+  g.position.y = 0
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
+
+/**
+ * A pizza, held in both hands: an open box with the pie inside.
+ *
+ * Flat and wide, so it needs both fists — which is also why the eating pose uses both
+ * arms. The pie is a disc with a crust ring and four pepperoni.
+ */
+function buildPizza(): THREE.Group {
+  const g = new THREE.Group()
+  const boxMat = new THREE.MeshStandardMaterial({ color: 0xd8b98a, roughness: 0.9 })
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.025, 0.3), boxMat)
+  g.add(base)
+  const crust = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.13, 0.13, 0.022, 20),
+    new THREE.MeshStandardMaterial({ color: 0xd9a44e, roughness: 0.85 }),
+  )
+  crust.position.y = 0.024
+  g.add(crust)
+  const cheese = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.112, 0.112, 0.012, 20),
+    new THREE.MeshStandardMaterial({ color: 0xf0d27a, roughness: 0.6 }),
+  )
+  cheese.position.y = 0.036
+  g.add(cheese)
+  for (const [px, pz] of [
+    [-0.05, 0.03],
+    [0.05, -0.04],
+    [0.02, 0.06],
+    [-0.04, -0.06],
+  ] as const) {
+    const pep = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022, 0.022, 0.01, 12),
+      new THREE.MeshStandardMaterial({ color: 0xb33a2a, roughness: 0.7 }),
+    )
+    pep.position.set(px, 0.044, pz)
+    g.add(pep)
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
+
+/**
+ * BBQ tongs: two arms joined at a pivot, held in one fist.
+ *
+ * The pose squeezes them (the arms close by a few degrees), which is what makes the
+ * cooking read as handling food rather than standing at a counter.
+ */
+function buildTongs(): THREE.Group {
+  const g = new THREE.Group()
+  const steel = new THREE.MeshStandardMaterial({ color: 0x9aa2a8, metalness: 0.7, roughness: 0.35 })
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.26, 0.012), steel)
+    arm.position.set(side * 0.012, -0.13, 0)
+    arm.rotation.z = side * 0.05
+    g.add(arm)
+  }
+  const pivot = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.03, 10), steel)
+  pivot.rotation.z = Math.PI / 2
+  g.add(pivot)
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
+
 export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   const group = new THREE.Group()
   const accent = ROLE_COLORS[role] ?? 0x6f8fa8
@@ -248,6 +358,12 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   group.add(barbell)
   const dumbbells: [THREE.Group, THREE.Group] = [buildDumbbell(), buildDumbbell()]
   for (const d of dumbbells) group.add(d)
+  const burger = buildBurger()
+  group.add(burger)
+  const pizza = buildPizza()
+  group.add(pizza)
+  const tongs = buildTongs()
+  group.add(tongs)
 
   group.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
@@ -256,5 +372,5 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     }
   })
 
-  return { group, chest, neck, head, hips, arms, legs, badge, held: { barbell, dumbbells } }
+  return { group, chest, neck, head, hips, arms, legs, badge, held: { barbell, dumbbells, burger, pizza, tongs } }
 }

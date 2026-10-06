@@ -69,6 +69,60 @@ function holdDumbbells(a: AnimAgent) {
     d.rotation.set(0, 0, 0)
   }
 }
+
+/**
+ * WHICH MEAL this body is having.
+ *
+ * Random per body and stable for the whole rest, so a diner does not flip between a
+ * burger and a pizza every frame. `phase` is per-agent and constant, so it is the
+ * natural seed — and `Math.floor(phase * 7) % 2` needs no extra state on the agent.
+ */
+function mealFor(a: AnimAgent): 'burger' | 'pizza' {
+  return Math.floor(a.phase * 7) % 2 === 0 ? 'burger' : 'pizza'
+}
+
+/**
+ * A burger in the right fist, raised to the mouth.
+ *
+ * `lift` is 0 (hand at the table) .. 1 (at the mouth); the pose passes the chew cycle
+ * so the burger moves with the head rather than hovering in front of a still face.
+ */
+function holdBurger(a: AnimAgent, lift: number) {
+  const av = a.avatar
+  const f = fistInAvatar(av, 1, _fistB)
+  const b = av.held.burger
+  b.visible = true
+  b.position.copy(f)
+  // the stack sits on top of the fist, and tips slightly toward the mouth
+  b.position.y += 0.02
+  b.rotation.set(-lift * 0.5, 0, 0)
+}
+
+/** The pizza box, held level between both fists. */
+function holdPizza(a: AnimAgent) {
+  const av = a.avatar
+  const L = fistInAvatar(av, 0, _fistA)
+  const R = fistInAvatar(av, 1, _fistB)
+  const p = av.held.pizza
+  p.visible = true
+  p.position.set((L.x + R.x) / 2, (L.y + R.y) / 2, (L.z + R.z) / 2)
+  p.rotation.set(0, 0, 0)
+}
+
+/** The tongs, in the right fist, with the jaws squeezed by `grip`. */
+function holdTongs(a: AnimAgent, grip: number) {
+  const av = a.avatar
+  const f = fistInAvatar(av, 1, _fistB)
+  const t = av.held.tongs
+  t.visible = true
+  t.position.copy(f)
+  t.rotation.set(0, 0, 0)
+  // squeeze the arms: they hang from the pivot at the fist
+  const arms = t.children.slice(0, 2)
+  for (const [i, arm] of arms.entries()) {
+    arm.rotation.z = (i === 0 ? -1 : 1) * (0.05 + grip * 0.12)
+  }
+}
 /**
  * Seated hip height for an office/meeting chair.
  *
@@ -101,10 +155,20 @@ export type Activity =
   | 'coffee'
   /** Sitting on a poolside bench, watching the water. */
   | 'pool'
-  /** Benching under the bar at the rack, holding it. */
+  /** Swimming a lane in the pool. */
+  | 'swim'
+  /** Sitting at a dining table, eating a burger or a pizza. */
+  | 'eat'
+  /** Lying back on a daybed. */
+  | 'recline'
+  /** Standing at the rack, holding the bar. */
   | 'barbell'
+  /** Lying on the bench, pressing the bar. */
+  | 'benchpress'
   /** Hanging from the pull-up rig, doing a pull-up. */
   | 'pullup'
+  /** Pulling up until the bar reaches the waist. */
+  | 'muscleup'
   /** Curling a pair of dumbbells. */
   | 'dumbbell'
   /** Cooking at the grill. */
@@ -335,27 +399,6 @@ function coffee(a: AnimAgent, t: number) {
   L.elbow.rotation.x = -52 * D
 }
 
-/** Sitting on a poolside bench, watching the water. */
-function pool(a: AnimAgent, t: number) {
-  const av = a.avatar
-  sit(a, SEATS.bench.hip, SEATS.bench.thigh, SEATS.bench.knee)
-  // leaning back on the bench, hands resting on the lap
-  av.chest.rotation.x = 6 * D
-  av.chest.rotation.y = wave(t, 0.22, a.phase) * 4 * D
-  av.neck.rotation.x = -4 * D
-  av.head.rotation.x = 4 * D
-  av.head.rotation.y = wave(t, 0.18, a.phase) * 16 * D
-  const [L, R] = av.arms
-  for (const [arm, sign] of [
-    [L, -1],
-    [R, 1],
-  ] as const) {
-    arm.shoulder.rotation.x = -18 * D
-    arm.shoulder.rotation.z = sign * 14 * D
-    arm.elbow.rotation.x = -46 * D
-  }
-}
-
 /** Relaxed sit on the sofa without a controller. */
 function sofa(a: AnimAgent, t: number) {
   const av = a.avatar
@@ -372,6 +415,250 @@ function sofa(a: AnimAgent, t: number) {
   R.shoulder.rotation.z = 18 * D
   R.elbow.rotation.x = -46 * D
   av.hips.position.y = 0.54 + wave(t, 1.1, a.phase) * 0.01
+}
+
+/**
+ * Benching under the bar: LYING on the bench, pressing upward.
+ *
+ * The body is horizontal, which is what makes it a bench press rather than a standing
+ * press. The rig's bench pad is at y 0.46 with the bar above it at 1.32, so the torso
+ * lies at roughly hip 0.62 and the bar travels from chest (1.30) to lockout (1.78).
+ *
+ * `holdBarbell` places the bar from the fists, so the bar rides the arms automatically.
+ */
+function benchpress(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  // The bench is 0.46 high; lying on it puts the hips a little above the pad.
+  const HIP_LIE = 0.62
+  av.hips.position.y = HIP_LIE - (HIP_LIE - HIP_STAND) * (1 - k) * 0
+  // LEGS: knees up, feet flat on the floor beside the bench.
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.x = m(-78 * D)
+    leg.shoulder.rotation.z = sign * m(10 * D)
+    leg.elbow.rotation.x = m(80 * D)
+  }
+  // TORSO: flat on the bench, slight arch.
+  av.chest.rotation.x = m(-6 * D)
+  av.chest.rotation.y = 0
+  av.neck.rotation.x = m(4 * D)
+  av.head.rotation.x = m(6 * D)
+  av.head.rotation.y = wave(t, 0.3, a.phase) * 5 * D
+  // ARMS: press from the chest to lockout. At the bottom the elbows are wide and bent;
+  // at the top they are straight.
+  const press = (Math.sin(t * 0.95 + a.phase) + 1) / 2
+  const [L, R] = av.arms
+  for (const [arm, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    arm.shoulder.rotation.x = m(-70 * D) - press * 34 * D
+    arm.shoulder.rotation.z = sign * m(34 * D)
+    arm.elbow.rotation.x = m(-84 * D) + press * 78 * D
+  }
+  holdBarbell(a)
+}
+
+/**
+ * Swimming a lane.
+ *
+ * The body is IN the water: the pool surface is at y 0.05, so the whole avatar sits low
+ * and horizontal, with the head up for breath. The arms alternate a front crawl and the
+ * legs flutter.
+ *
+ * The hips ride BELOW standing height by design — a swimmer is not standing in the pool,
+ * and a body at standing height in 1.2 m of water is visibly wrong.
+ */
+function swim(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  // A crawl stroke: one full cycle per ~2.2 s, the two arms half a cycle apart.
+  const stroke = (off: number) => Math.sin(t * 2.85 + a.phase + off)
+  // AT THE SURFACE. Solved by sampling the rig, not guessed: the torso pivots at the
+  // chest, so the body's centre sits about 0.4 m above the hip. hipY -0.37 puts that
+  // centre at 0.05 — the water line — with the head and shoulders breaking the surface
+  // and the legs just under it.
+  //
+  // The first value (0.30) floated the whole body 0.8 m ABOVE the water, which the probe
+  // caught; 0.02 still left it 0.38 m high.
+  av.hips.position.y = -0.37 * k + HIP_STAND * (1 - k)
+  // The body lies face-DOWN and horizontal. The rig has no waist joint, so a flat
+  // swimmer is built from the chest pivot: leaning the torso forward 80 deg lays it out.
+  av.chest.rotation.x = m(84 * D)
+  av.chest.rotation.y = wave(t, 1.4, a.phase) * 6 * D
+  // head up for breath, turning with the stroke
+  av.neck.rotation.x = m(-64 * D)
+  av.head.rotation.x = m(-18 * D)
+  av.head.rotation.y = wave(t, 1.4, a.phase) * 26 * D
+  // LEGS: flutter kick, straight behind — and raised to the surface, because a swimmer's
+  // legs do not drag on the bottom.
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.x = m(-96 * D) + wave(t, 5.5, a.phase + (sign > 0 ? Math.PI : 0)) * 14 * D
+    leg.shoulder.rotation.z = sign * m(3 * D)
+    leg.elbow.rotation.x = m(10 * D)
+  }
+  // ARMS: the crawl. Each arm sweeps from in front, down past the hip, and recovers.
+  const [L, R] = av.arms
+  for (const [arm, sign, off] of [
+    [L, -1, 0],
+    [R, 1, Math.PI],
+  ] as const) {
+    const s = stroke(off)
+    arm.shoulder.rotation.x = m(-150 * D) + s * 95 * D
+    arm.shoulder.rotation.z = sign * m(18 * D)
+    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D
+  }
+}
+
+/**
+ * Lying back on a daybed, hands behind the head.
+ *
+ * The daybed's back rest is RAISED, so this is a recline, not a flat lie: the torso is
+ * about 35 deg off horizontal and the legs go out along the bed.
+ *
+ * `face` on the spot already points the body the right way — head away from the water,
+ * looking across it — so this pose only has to lay the body down.
+ */
+function recline(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  // The bed surface is 0.5; lying on it puts the hips there.
+  const HIP_LIE = 0.54
+  av.hips.position.y = HIP_LIE * k + HIP_STAND * (1 - k)
+  // LEGS: straight out along the bed, one knee loosely bent.
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.x = m(-88 * D) + (sign > 0 ? m(14 * D) : 0)
+    leg.shoulder.rotation.z = sign * m(6 * D)
+    leg.elbow.rotation.x = m(sign > 0 ? 30 * D : 8 * D)
+  }
+  // TORSO: propped up on the raised back rest.
+  av.chest.rotation.x = m(-38 * D)
+  av.chest.rotation.y = wave(t, 0.25, a.phase) * 4 * D
+  av.neck.rotation.x = m(16 * D)
+  av.head.rotation.x = m(10 * D)
+  av.head.rotation.y = wave(t, 0.2, a.phase) * 20 * D
+  // ARMS: hands behind the head, elbows out. That is what makes a recline read as
+  // relaxing rather than as a body that fell over.
+  const [L, R] = av.arms
+  for (const [arm, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    arm.shoulder.rotation.x = m(-118 * D)
+    arm.shoulder.rotation.z = sign * m(52 * D)
+    arm.elbow.rotation.x = m(-112 * D)
+  }
+}
+
+/**
+ * Eating at a dining table.
+ *
+ * Two meals, chosen per body by `mealFor` and stable for the whole sitting:
+ *
+ *   burger  one hand raises it to the mouth on a chew cycle
+ *   pizza   both hands hold the box at chest height, and the head dips to it
+ *
+ * Both use `SEATS.chair`, because a dining chair is the same height as a desk chair —
+ * that is why there is no fifth seat profile.
+ */
+function eat(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  sit(a, HIP_SIT, SEATS.chair.thigh, SEATS.chair.knee)
+  // chewing: a small head bob plus a jaw-ish nod
+  const chew = wave(t, 3.2, a.phase)
+  av.chest.rotation.x = m(-6 * D)
+  av.chest.rotation.y = wave(t, 0.35, a.phase) * 5 * D
+  av.neck.rotation.x = m(8 * D) + chew * 3 * D
+  av.head.rotation.x = m(10 * D) + chew * 5 * D
+  av.head.rotation.y = wave(t, 0.4, a.phase) * 8 * D
+
+  const [L, R] = av.arms
+  if (mealFor(a) === 'burger') {
+    // right hand carries the burger: down to the plate, up to the mouth
+    const lift = (Math.sin(t * 0.9 + a.phase) + 1) / 2
+    R.shoulder.rotation.x = m(-34 * D) - lift * 46 * D
+    R.shoulder.rotation.z = m(14 * D)
+    R.elbow.rotation.x = m(-58 * D) - lift * 46 * D
+    // left hand rests on the table
+    L.shoulder.rotation.x = m(-30 * D)
+    L.shoulder.rotation.z = m(-16 * D)
+    L.elbow.rotation.x = m(-56 * D)
+    holdBurger(a, lift)
+  } else {
+    // both hands on the box, held at chest height; the head dips to it
+    for (const [arm, sign] of [
+      [L, -1],
+      [R, 1],
+    ] as const) {
+      arm.shoulder.rotation.x = m(-52 * D) + chew * 5 * D
+      arm.shoulder.rotation.z = sign * m(20 * D)
+      arm.elbow.rotation.x = m(-78 * D)
+    }
+    holdPizza(a)
+  }
+}
+
+/**
+ * Hanging from the rig, doing a MUSCLE-UP.
+ *
+ * Different from a pull-up: the body rises until the bar reaches the WAIST, which is
+ * above the pull-up's top, and the knees tuck at the top. `GYM.rig.barY` is the same
+ * data the pull-up solves against, so the two cannot disagree about where the bar is.
+ */
+function muscleup(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  const m = (v: number) => v * k
+  // 0 = dead hang, 1 = supported above the bar
+  const up = (Math.sin(t * 0.62 + a.phase) + 1) / 2
+  const swing = wave(t, 0.7, a.phase)
+  // LEGS: hang straight, then tuck hard at the top.
+  for (const [leg, sign] of [
+    [av.legs[0], -1],
+    [av.legs[1], 1],
+  ] as const) {
+    leg.shoulder.rotation.x = m(4 * D) + swing * 6 * D + up * 96 * D
+    leg.shoulder.rotation.z = sign * m(5 * D)
+    leg.elbow.rotation.x = m(10 * D) + up * 78 * D
+  }
+  av.chest.rotation.x = m(4 * D) - up * 14 * D
+  av.chest.rotation.y = swing * 3 * D
+  av.neck.rotation.x = m(-6 * D)
+  av.head.rotation.x = m(-8 * D) - up * 10 * D
+  av.head.rotation.y = wave(t, 0.3, a.phase) * 7 * D
+  // ARMS: straight at the hang, then the elbows fold hard and drive down past the ribs.
+  const [L, R] = av.arms
+  for (const [arm, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    arm.shoulder.rotation.x = m(-170 * D) + up * 118 * D
+    arm.shoulder.rotation.z = sign * m(9 * D)
+    arm.elbow.rotation.x = m(-4 * D) - up * 118 * D
+  }
+  // Solve the hip height so the fists land ON the bar, exactly as the pull-up does.
+  //
+  // The whole pull is then driven by the ARMS, not by moving the body: at the top the
+  // elbows fold and the chest rises to the bar. The first version ALSO raised the hips by
+  // `up * 0.34`, which lifted the fists 0.34 m clear of the bar — the hands let go of the
+  // thing they were supposed to be gripping. The measurement caught it.
+  av.hips.position.y = HIP_STAND
+  const f = fistInAvatar(av, 0, _fistA)
+  av.hips.position.y += GYM.rig.barY - f.y
 }
 
 /**
@@ -500,10 +787,11 @@ function pullup(a: AnimAgent, t: number) {
 }
 
 /**
- * At the grill: leaning slightly forward, one arm turning something.
+ * At the grill: leaning slightly forward, tongs in hand, turning something.
  *
- * The hand does a small repeated rotation — the read is "cooking", not "standing
- * next to a counter".
+ * The tongs are HELD (derived from the fist), and the jaws squeeze on the beat — the
+ * read is "cooking", not "standing next to a counter". The `face` on the spot points the
+ * body at the counter, so the smoke and the cook line up.
  */
 function bbq(a: AnimAgent, t: number) {
   const av = a.avatar
@@ -521,11 +809,39 @@ function bbq(a: AnimAgent, t: number) {
   L.shoulder.rotation.x = m(-52 * D)
   L.shoulder.rotation.z = m(-14 * D)
   L.elbow.rotation.x = m(-58 * D)
-  // right hand turns the tongs
+  // right hand works the tongs: a slow turn plus a squeeze
   const turn = Math.sin(t * 1.9 + a.phase)
+  const grip = (Math.sin(t * 3.1 + a.phase) + 1) / 2
   R.shoulder.rotation.x = m(-58 * D) + turn * 10 * D
   R.shoulder.rotation.z = m(12 * D)
   R.elbow.rotation.x = m(-64 * D) + turn * 18 * D
+  holdTongs(a, grip)
+}
+
+/**
+ * Sitting on a poolside bench, watching the water.
+ *
+ * The spot's `face` points at the water (the benches are south of the pool and look
+ * north), so this pose only has to sit the body down.
+ */
+function pool(a: AnimAgent, t: number) {
+  const av = a.avatar
+  sit(a, SEATS.bench.hip, SEATS.bench.thigh, SEATS.bench.knee)
+  // leaning back on the bench, hands resting on the lap
+  av.chest.rotation.x = 6 * D
+  av.chest.rotation.y = wave(t, 0.22, a.phase) * 4 * D
+  av.neck.rotation.x = -4 * D
+  av.head.rotation.x = 4 * D
+  av.head.rotation.y = wave(t, 0.18, a.phase) * 16 * D
+  const [L, R] = av.arms
+  for (const [arm, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    arm.shoulder.rotation.x = -18 * D
+    arm.shoulder.rotation.z = sign * 14 * D
+    arm.elbow.rotation.x = -46 * D
+  }
 }
 
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
@@ -553,8 +869,13 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   read,
   coffee,
   pool,
+  swim,
+  eat,
+  recline,
   barbell,
+  benchpress,
   pullup,
+  muscleup,
   dumbbell,
   bbq,
 }
@@ -563,12 +884,15 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
 export function animate(a: AnimAgent, t: number, dt: number) {
   a.ease = Math.min(1, a.ease + dt * 3.5)
   // Equipment is re-hidden every frame and a pose re-shows what it needs. Doing it here
-  // (rather than in each of the fifteen poses) means a pose cannot forget: an avatar
+  // (rather than in each of the eighteen poses) means a pose cannot forget: an avatar
   // leaving the gym would otherwise keep carrying the barbell to its desk.
   const held = a.avatar.held
   held.barbell.visible = false
   held.dumbbells[0].visible = false
   held.dumbbells[1].visible = false
+  held.burger.visible = false
+  held.pizza.visible = false
+  held.tongs.visible = false
   const fn = TABLE[a.activity] || TABLE.idle
   fn(a, t)
   // blend the first frames in from a neutral posture

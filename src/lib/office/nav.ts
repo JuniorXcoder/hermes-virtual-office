@@ -142,7 +142,7 @@ export function blocked(
   x: number,
   z: number,
   pad = BODY_R,
-  opts: { allowSeat?: boolean; level?: Level; onStair?: boolean; settling?: boolean } = {},
+  opts: { allowSeat?: boolean; level?: Level; onStair?: boolean; settling?: boolean; allowWater?: boolean } = {},
 ): boolean {
   const level: Level = opts.level ?? 0
   const b = LEVEL_BOUNDS[level]
@@ -169,6 +169,10 @@ export function blocked(
   for (const w of wallsByLevel[level]) {
     if (inside(w, x, z, pad) && !inOpening(x, z, pad, level)) return true
   }
+  // A swimmer is IN the water. The basin is a solid for everyone on foot — you do not
+  // walk across a pool — but a body whose destination is a swim spot has to enter it,
+  // and A* proved the route exists before this is asked. Walls still apply.
+  if (opts.allowWater) return false
   // Settling onto a seat: furniture is what you are stepping onto, not an obstacle.
   if (opts.settling) return false
   for (const p of propsByLevel[level]) {

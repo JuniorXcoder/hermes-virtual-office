@@ -24,6 +24,9 @@ import {
 import {
   BARS,
   BBQ,
+  DINING_SETS,
+  diningChairs,
+  diningChairFacing,
   BOARD_COLUMNS,
   CEILING_Y,
   CONFERENCE,
@@ -309,6 +312,13 @@ export type OfficeProps = {
   sun: THREE.DirectionalLight
   /** Advance pedestrians, traffic and street foliage. */
   animateStreet: (dt: number, t: number) => void
+  /**
+   * Drive the grill: the smoke puffs rise and fade on a loop and the fire flickers.
+   *
+   * The BBQ is the only place in the office with a live flame, and smoke that hangs
+   * motionless in the air reads as a grey ball rather than as cooking.
+   */
+  animateBbq: (t: number) => void
   applyPalette: (hour: number) => void
   dispose: () => void
 }
@@ -316,6 +326,9 @@ export type OfficeProps = {
 export function buildOffice(scene: THREE.Scene, hour: number) {
   const group = new THREE.Group()
   scene.add(group)
+  /** The BBQ smoke puffs and fire, collected so `animateBbq` can drive them. */
+  const bbqSmoke: THREE.Mesh[] = []
+  let bbqFire: THREE.Mesh | null = null
   let pal: Palette = paletteFor(hour)
   const disposables: { dispose(): void }[] = []
   const track = <T extends { dispose(): void }>(t: T): T => {
@@ -748,6 +761,31 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       knob.position.set(0.35 + i * 0.22, 0.72, 0.6)
       g.add(knob)
     }
+    // The FIRE: an emissive bar under the grate, so the grill glows. Named, because the
+    // scene pulses its emissive intensity rather than leaving it constant.
+    const fire = box(0.95, 0.05, 0.62, 0xff5a1e, { emissive: 0xff5a1e, ei: 1.4 })
+    fire.name = 'bbq-fire'
+    fire.position.set(-0.35, 0.97, 0)
+    g.add(fire)
+    bbqFire = fire
+    // The SMOKE: three translucent puffs above the hood, rising and fading on a loop.
+    // They are `MeshBasicMaterial` with depthWrite off, so they read as haze rather than
+    // as grey balls, and they are named so the scene can animate them.
+    for (let i = 0; i < 3; i++) {
+      const puff = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16 + i * 0.05, 10, 8),
+        new THREE.MeshBasicMaterial({
+          color: 0xdfe4e8,
+          transparent: true,
+          opacity: 0.3 - i * 0.07,
+          depthWrite: false,
+        }),
+      )
+      puff.name = `bbq-smoke-${i}`
+      puff.position.set(-0.35 + (i - 1) * 0.12, 1.45 + i * 0.34, 0)
+      g.add(puff)
+      bbqSmoke.push(puff)
+    }
     group.add(g)
   }
 
@@ -772,6 +810,55 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       g.add(bush)
     }
     group.add(g)
+  }
+
+  /* ---- dining sets: one table and four chairs each ---------------------- */
+  // Read straight from DINING_SETS, so the mesh, the collision footprints and the idle
+  // spots cannot disagree about where a table is. Each chair is turned to LOOK at its own
+  // table centre, which is the bug that once left half the meeting chairs back-to-front.
+  for (const set of DINING_SETS) {
+    const g = new THREE.Group()
+    g.position.set(set.x, 0, set.z)
+    g.rotation.y = set.facing
+    // table top and a central pedestal
+    const top = new THREE.Mesh(rbox(set.d, 0.06, set.w, 0.03), woodMat)
+    top.position.y = 0.74
+    top.castShadow = true
+    g.add(top)
+    const stem = cyl(0.07, 0.09, 0.72, 0x6f5334, 10, 0.2)
+    stem.position.y = 0.37
+    g.add(stem)
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.05, 16), stdMat(0x5c4429, { rough: 0.7 }))
+    foot.position.y = 0.025
+    g.add(foot)
+    group.add(g)
+
+    // the four chairs, each rotated to face the table centre
+    for (const c of diningChairs(set)) {
+      const cg = new THREE.Group()
+      cg.position.set(c.x, 0, c.z)
+      cg.rotation.y = diningChairFacing(set, c.x, c.z)
+      const seat = new THREE.Mesh(rbox(0.44, 0.07, 0.44, 0.02), woodMat)
+      seat.position.y = 0.46
+      seat.castShadow = true
+      cg.add(seat)
+      // the back rest, at local +z — which is why the chair LOOKS along local -z
+      const back = new THREE.Mesh(rbox(0.44, 0.5, 0.06, 0.02), woodMat)
+      back.position.set(0, 0.73, 0.19)
+      back.castShadow = true
+      cg.add(back)
+      for (const [lx, lz] of [
+        [-0.18, -0.18],
+        [0.18, -0.18],
+        [-0.18, 0.18],
+        [0.18, 0.18],
+      ] as const) {
+        const leg = box(0.05, 0.46, 0.05, 0x6f5334, { rough: 0.7 })
+        leg.position.set(lx, 0.23, lz)
+        cg.add(leg)
+      }
+      group.add(cg)
+    }
   }
 
   /* --------------------------------------------------------------- walls -- */
@@ -1518,6 +1605,65 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       shelf.position.set(-0.55, 1.35 + i * 0.42, 1.6)
       g.add(shelf)
     }
+    // WATER COOLER: a dispenser with a full bottle on top, at the south end of the
+    // counter. `PANTRY.z + 3.6` is clear of the counter's own footprint (which ends at
+    // z 11.2) and of the wall, and the bottle is translucent so it reads as water.
+    {
+      const cg = new THREE.Group()
+      cg.position.set(PANTRY.x - 0.1, 0, PANTRY.z + 3.6)
+      const body = box(0.42, 1.05, 0.42, 0xe4e8ea, { metal: 0.3, rough: 0.35 })
+      body.position.y = 0.52
+      cg.add(body)
+      // the tap recess
+      const tap = cyl(0.035, 0.035, 0.16, 0x9aa2a8, 10, 0.8)
+      tap.rotation.x = Math.PI / 2
+      tap.position.set(0, 0.72, -0.24)
+      cg.add(tap)
+      // the bottle: translucent blue, sitting in the collar
+      const collar = cyl(0.11, 0.13, 0.1, 0xcfd6da, 14, 0.3)
+      collar.position.y = 1.09
+      cg.add(collar)
+      const bottle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.15, 0.44, 16),
+        new THREE.MeshStandardMaterial({
+          color: 0x6fb6d8,
+          transparent: true,
+          opacity: 0.55,
+          roughness: 0.25,
+        }),
+      )
+      bottle.position.y = 1.36
+      cg.add(bottle)
+      const neck = cyl(0.07, 0.09, 0.09, 0x6fb6d8, 12, 0.2)
+      neck.position.y = 1.12
+      cg.add(neck)
+      g.add(cg)
+    }
+    // COFFEE MACHINE, on the counter top. Its drip tray, group head and a warming plate
+    // on top, so it reads as a machine rather than as a box.
+    {
+      const mg = new THREE.Group()
+      mg.position.set(PANTRY.x, 0.98, PANTRY.z - 2.5)
+      const body = box(0.36, 0.44, 0.34, 0x2f3438, { metal: 0.4, rough: 0.4 })
+      body.position.y = 0.22
+      mg.add(body)
+      const head = box(0.3, 0.1, 0.26, 0x3d4449, { metal: 0.5, rough: 0.35 })
+      head.position.set(0, 0.12, -0.14)
+      mg.add(head)
+      const tray = box(0.3, 0.03, 0.2, 0x9aa2a8, { metal: 0.7, rough: 0.3 })
+      tray.position.set(0, 0.03, 0.13)
+      mg.add(tray)
+      const plate = box(0.3, 0.02, 0.26, 0x6f767c, { metal: 0.6, rough: 0.4 })
+      plate.position.y = 0.45
+      mg.add(plate)
+      // two cups on the warming plate
+      for (const cx of [-0.08, 0.08]) {
+        const cup = cyl(0.035, 0.028, 0.07, 0xf2efe8, 12, 0.1)
+        cup.position.set(cx, 0.49, 0)
+        mg.add(cup)
+      }
+      g.add(mg)
+    }
     group.add(g)
     // stools at the counter, on the room side
     for (const sz of PANTRY_STOOLS) {
@@ -1861,6 +2007,33 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   void KANBAN_BOARD
   void STAIRS
 
+  /**
+   * The grill, alive: the fire flickers and the smoke rises.
+   *
+   * Each puff has its own offset in the loop, and rises about a metre before fading out
+   * and starting again. The opacity is multiplied by the base the mesh was built with, so
+   * the three puffs keep their graded faintness instead of all becoming equally solid.
+   */
+  function animateBbq(t: number) {
+    if (bbqFire) {
+      const mat = bbqFire.material as THREE.MeshStandardMaterial
+      // two frequencies, so the flicker does not read as a sine wave
+      mat.emissiveIntensity = 1.25 + Math.sin(t * 7.3) * 0.22 + Math.sin(t * 11.9) * 0.12
+    }
+    for (const [i, puff] of bbqSmoke.entries()) {
+      const cycle = ((t * 0.22 + i * 0.33) % 1 + 1) % 1
+      const base = 0.3 - i * 0.07
+      const mat = puff.material as THREE.MeshBasicMaterial
+      // fade in over the first fifth, out over the rest
+      const fade = cycle < 0.2 ? cycle / 0.2 : 1 - (cycle - 0.2) / 0.8
+      mat.opacity = base * Math.max(0, fade)
+      puff.position.y = 1.45 + i * 0.34 + cycle * 0.9
+      puff.position.x = -0.35 + (i - 1) * 0.12 + Math.sin(t * 0.6 + i) * 0.1
+      const s = 0.8 + cycle * 0.9
+      puff.scale.set(s, s * 0.85, s)
+    }
+  }
+
   return {
     group,
     monitors,
@@ -1869,6 +2042,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     streaks,
     streetGroup,
     animateStreet,
+    animateBbq,
     sun,
     applyPalette,
     dispose,
