@@ -267,6 +267,30 @@ export const DIVISION_MEETING_ROOM: Record<AgentDivision, MeetingRoomId> = {
   exec: 'merapi',
 }
 
+/**
+ * Which room a meeting uses, from its participant list and their divisions.
+ *
+ * One division → that division's own room. An exec-heavy small meeting (the CEO
+ * with the three managers) → Merapi. Anything spanning divisions → Rinjani, the
+ * ten-seat room.
+ *
+ * This lives here, next to the room table, rather than in the 3D scene: BOTH views
+ * need it (the sprite map seats people too), and the scene imports three.js, which
+ * a 2D component must not pull in.
+ */
+export function meetingRoomFor(
+  participants: string[],
+  divisions: Map<string, AgentDivision>,
+): MeetingRoomId {
+  const divs = new Set(participants.map((p) => divisions.get(p) ?? 'tech'))
+  if (divs.size === 1) {
+    const only = [...divs][0]
+    if (only !== 'exec') return DIVISION_MEETING_ROOM[only]
+  }
+  if (participants.length <= 4 && divs.has('exec')) return 'merapi'
+  return 'rinjani'
+}
+
 /* -------------------------------------------------------------- meeting --- */
 
 export type MeetingRoom = {

@@ -29,6 +29,7 @@ import {
   LEVEL_H,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
+  meetingRoomFor,
   POOL,
   ROOMS,
   blockingFootprints,
@@ -41,7 +42,7 @@ import {
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { dummyRoster } from '../src/lib/office/dummy-roster'
-import { meetingRoomFor } from '../src/lib/office/scene'
+import { buildOffice } from '../src/lib/office/build'
 import type { MeetingRoomId } from '../src/lib/office/layout'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
@@ -699,6 +700,60 @@ console.log('geometry')
     if (got !== want) problems.push(`${participants.join('+')} -> ${got}, want ${want}`)
   }
   check('meeting rooms are routed by division', problems.length === 0, problems.join(' | '))
+}
+
+// Clicking the board must actually hit it. The board is on a wall in a room full
+// of furniture, so "it exists in the scene" is not the same as "a click reaches
+// it" — this raycasts from the default camera at the board's own projected pixel
+// and asserts the FIRST hit is the board, not something in front of it.
+{
+  const problems: string[] = []
+  const camera = new THREE.PerspectiveCamera(45, 1280 / 577, 0.1, 400)
+  camera.position.set(14, 34, 40)
+  camera.lookAt(0, 1.5, -2)
+  camera.updateMatrixWorld(true)
+  const scene = new THREE.Scene()
+  // buildOffice needs a DOM for its canvas textures; a minimal stub is enough and
+  // keeps this check honest about geometry without pulling in jsdom.
+  const g = globalThis as unknown as { document?: unknown; window?: unknown }
+  const hadDoc = 'document' in g
+  if (!hadDoc) {
+    g.document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1, font: '', textAlign: '', textBaseline: '',
+          fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {},
+          arc() {}, ellipse() {},
+          createLinearGradient: () => ({ addColorStop() {} }),
+          createRadialGradient: () => ({ addColorStop() {} }),
+          drawImage() {},
+          getImageData: (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+          putImageData() {}, fillText() {}, save() {}, restore() {},
+        }),
+      }),
+    }
+    g.window = { devicePixelRatio: 1 }
+  }
+  try {
+    buildOffice(scene, 12)
+    scene.updateMatrixWorld(true)
+    const at = new THREE.Vector3(KANBAN_BOARD.x, KANBAN_BOARD.y, KANBAN_BOARD.z)
+    at.project(camera)
+    const ray = new THREE.Raycaster()
+    ray.setFromCamera(new THREE.Vector2(at.x, at.y), camera)
+    const hits = ray.intersectObjects(scene.children, true)
+    const first = hits[0]?.object
+    const isBoard = first?.name === 'kanban-board' || (first?.userData as { kind?: string })?.kind === 'whiteboard'
+    if (!isBoard) {
+      problems.push(`first hit is ${first?.name || first?.type || 'nothing'}, not the whiteboard`)
+    }
+  } catch (e) {
+    problems.push(`THREW: ${(e as Error).message}`)
+  }
+  check('clicking the board actually hits the board (raycast from the default camera)',
+    problems.length === 0, problems.join(' | '))
 }
 
 /* ---------------------------------------------------------------- movement -- */

@@ -31,7 +31,7 @@ import {
   deskSeatWorld,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
-  DIVISION_MEETING_ROOM,
+  meetingRoomFor,
   ROOM_SIGNS,
   visitorSpot,
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
@@ -166,19 +166,6 @@ function envContrastTexture(): THREE.Texture {
   t.colorSpace = THREE.SRGBColorSpace
   t.mapping = THREE.EquirectangularReflectionMapping
   return t
-}
-
-/** Pick the meeting room for a participant list, from their divisions. */
-export function meetingRoomFor(participants: string[], divisions: Map<string, AgentDivision>): MeetingRoomId {
-  const divs = new Set(participants.map((p) => divisions.get(p) ?? 'tech'))
-  // One division only → that division's room.
-  if (divs.size === 1) {
-    const only = [...divs][0]
-    if (only !== 'exec') return DIVISION_MEETING_ROOM[only]
-  }
-  // Managers + CEO (small, exec-heavy) → Merapi. Everyone → Rinjani.
-  if (participants.length <= 4 && divs.has('exec')) return 'merapi'
-  return 'rinjani'
 }
 
 export function createScene(

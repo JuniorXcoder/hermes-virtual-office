@@ -6,10 +6,13 @@ import { useOffice } from '@/lib/store'
 import { columnOf } from '@/lib/office/board'
 import { NIGHT_PALETTE, paletteFor } from '@/lib/office/layout'
 import {
-  CONFERENCE, CONFERENCE_CHAIRS, DESKS, DOOR,
-  IDLE_SPOTS, KANBAN_BOARD, ROLE_COLORS, deskSeatWorld, visitorSpot,
+  BARS, BBQ, DESKS, DOOR, FOOTPRINTS, GARDEN, HALF_D, HALF_W,
+  IDLE_SPOTS, KANBAN_BOARD, LEVEL_H, LOUNGE, MEETING_ROOMS, MEETING_ROOM_IDS,
+  MEETING_TABLES, PANTRY, PANTRY_STOOLS, PANTRY_STOOL_GAP, POOL, POOL_BENCHES,
+  POOL_LOUNGERS, RECEPTION, ROLE_COLORS, STAIRS, WALL_T,
+  deskSeatWorld, meetingRoomFor, roomCentre, visitorSpot,
 } from '@/lib/office/layout'
-import { route } from '@/lib/office/nav'
+import { route, stairCentre } from '@/lib/office/nav'
 
 /*
  * Isometric pixel map of the SAME office the 3D view builds.
@@ -24,12 +27,12 @@ import { route } from '@/lib/office/nav'
  * layer, then each frame only blits it and redraws the handful of things that
  * move (agents, kanban cards) at 12 fps, stopping entirely while the tab is hidden.
  */
-const T = 12
-const U = 11
-const OX = 392
-const OY = 236
-const W = 784
-const H = 520
+const T = 8.6
+const U = 8
+const OX = 400
+const OY = 300
+const W = 820
+const H = 560
 const sx = (x: number, z: number) => OX + (x - z) * T
 const sy = (x: number, z: number) => OY + (x + z) * T / 2
 type Pt = [number, number]
@@ -84,7 +87,13 @@ function solid(
   poly(ctx, [at(x1, z1, h), at(x2, z1, h), at(x2, z2, h), at(x1, z2, h)], top)
 }
 
-/** Static room: floor + the free-standing kanban board. Rasterised once. */
+/**
+ * Static map: the SAME U-shaped, split-level office the 3D view builds.
+ *
+ * Ground floor is drawn at y=0; the exec floor is drawn at y=LEVEL_H, so the two
+ * storeys read as two stacked plates in the isometric projection. Rooms, walls,
+ * desks, the pool and the green board all come from `layout.ts`.
+ */
 function buildStatic(): HTMLCanvasElement {
   const cv = document.createElement('canvas')
   cv.width = W
@@ -94,14 +103,131 @@ function buildStatic(): HTMLCanvasElement {
   ctx.fillStyle = '#141d24'
   ctx.fillRect(0, 0, W, H)
 
-  // No floor, no walls, no furniture — an empty plot. Only the kanban board (a
-  // feature, not furniture) and the meeting ring stand on it.
-
-  // Painter's order: everything is sorted by depth (x + z), so near props cover far ones.
+  // Painter's order: sort by depth (x + z); the exec floor is drawn after the
+  // ground floor so it sits above it.
   const items: { d: number; f: () => void }[] = []
   const push = (x: number, z: number, f: () => void) => items.push({ d: x + z, f })
 
-  /* ---- kanban board: free-standing on the open floor (walls are gone) ----- */
+  /* ------------------------------------------------ ground floor slabs --- */
+  for (const bar of [BARS.west, BARS.north, BARS.east, BARS.lobby]) {
+    push((bar.x1 + bar.x2) / 2, (bar.z1 + bar.z2) / 2, () => {
+      flat(ctx, (bar.x1 + bar.x2) / 2, (bar.z1 + bar.z2) / 2, bar.x2 - bar.x1, bar.z2 - bar.z1, C.floorB)
+    })
+  }
+  // courtyard paving, split around the pool so the water shows
+  {
+    const c = BARS.courtyard
+    const px1 = POOL.x - POOL.w / 2
+    const px2 = POOL.x + POOL.w / 2
+    const pz1 = POOL.z - POOL.d / 2
+    const pz2 = POOL.z + POOL.d / 2
+    push(0, c.z1, () => flat(ctx, 0, (c.z1 + pz1) / 2, c.x2 - c.x1, pz1 - c.z1, '#cfc7b4'))
+    push(0, c.z2, () => flat(ctx, 0, (pz2 + c.z2) / 2, c.x2 - c.x1, c.z2 - pz2, '#cfc7b4'))
+    push(c.x1, POOL.z, () => flat(ctx, (c.x1 + px1) / 2, POOL.z, px1 - c.x1, POOL.d, '#cfc7b4'))
+    push(c.x2, POOL.z, () => flat(ctx, (px2 + c.x2) / 2, POOL.z, c.x2 - px2, POOL.d, '#cfc7b4'))
+  }
+  // the pool itself: blue water with a stone rim
+  push(POOL.x, POOL.z, () => {
+    flat(ctx, POOL.x, POOL.z, POOL.w + 0.7, POOL.d + 0.7, '#b9b2a2')
+    flat(ctx, POOL.x, POOL.z, POOL.w, POOL.d, '#2f8fb5')
+    flat(ctx, POOL.x, POOL.z, POOL.w - 0.8, POOL.d - 0.8, '#3aa3c9')
+  })
+  // grass patches
+  for (const [gx, gz, gw, gd] of [
+    [-9.5, 8.5, 6, 4],
+    [9.5, 8.5, 6, 4],
+    [-9.5, 0.5, 4, 4],
+    [9.5, 0.5, 4, 4],
+  ] as const) {
+    push(gx, gz, () => flat(ctx, gx, gz, gw, gd, C.rug))
+  }
+
+  /* ---------------------------------------------------------- the walls --- */
+  // Ground-floor shell, drawn as short walls (the 3D view dollhouse-cuts them).
+  const wallH = 1.6
+  const wall = (x1: number, z1: number, x2: number, z2: number, level: 0 | 1 = 0) => {
+    const horizontal = Math.abs(x2 - x1) > Math.abs(z2 - z1)
+    const len = horizontal ? Math.abs(x2 - x1) : Math.abs(z2 - z1)
+    const cx = (x1 + x2) / 2
+    const cz = (z1 + z2) / 2
+    const y = level * LEVEL_H
+    push(cx, cz, () => {
+      const [ax, ay] = at(cx, cz, y + wallH)
+      const [bx] = at(cx, cz, y)
+      if (horizontal) {
+        solid(ctx, cx, cz, len, WALL_T, wallH, C.wallTop, C.wallSide, 's')
+      } else {
+        solid(ctx, cx, cz, WALL_T, len, wallH, C.wallTop, C.wallSide, 'e')
+      }
+      void ax
+      void ay
+      void bx
+    })
+  }
+  wall(-HALF_W, -HALF_D, HALF_W, -HALF_D)
+  wall(-HALF_W, -HALF_D, -HALF_W, HALF_D)
+  wall(HALF_W, -HALF_D, HALF_W, HALF_D)
+  wall(-HALF_W, HALF_D, -14, HALF_D)
+  wall(14, HALF_D, HALF_W, HALF_D)
+  wall(-14, HALF_D, DOOR.x - 2.2, HALF_D)
+  wall(DOOR.x + 2.2, HALF_D, 14, HALF_D)
+  wall(-14, -9, -14, HALF_D)
+  wall(14, -9, 14, HALF_D)
+  wall(-14, 16, -4, 16)
+  wall(4, 16, 14, 16)
+  wall(-HALF_W, -6.9, -14, -6.9)
+  wall(-HALF_W, 6.9, -14, 6.9)
+  wall(14, 2, HALF_W, 2)
+  // exec floor
+  wall(-HALF_W, -HALF_D, HALF_W, -HALF_D, 1)
+  wall(-HALF_W, -HALF_D, -HALF_W, -9, 1)
+  wall(HALF_W, -HALF_D, HALF_W, -9, 1)
+  for (const f of FOOTPRINTS.filter((x) => x.level === 1 && x.kind === 'wall' && !x.id.startsWith('stair-'))) {
+    push(f.x, f.z, () => {
+      solid(
+        ctx, f.x, f.z, f.hw * 2, f.hd * 2, 1.5,
+        C.partTop, C.partSide,
+        Math.abs(f.hw) > Math.abs(f.hd) ? 's' : 'e',
+      )
+    })
+  }
+
+  /* ------------------------------------------------------------ stairs --- */
+  push(stairCentre.x, stairCentre.z, () => {
+    solid(ctx, stairCentre.x, stairCentre.z, STAIRS.x2 - STAIRS.x1, STAIRS.z2 - STAIRS.z1, LEVEL_H, '#c3bba6', '#8f8878')
+  })
+
+  /* ------------------------------------------------------- the furniture -- */
+  // desks (ground floor)
+  for (const desk of DESKS) {
+    push(desk.x, desk.z, () => {
+      solid(ctx, desk.x, desk.z, 1.8, 1.0, 0.72, C.woodTop, C.wood)
+      const mx = desk.x - Math.sin(desk.facing) * 0.28
+      const mz = desk.z - Math.cos(desk.facing) * 0.28
+      solid(ctx, mx, mz, 0.7, 0.16, 0.5, C.screen, '#3a4750')
+    })
+    const seat = deskSeatWorld(desk)
+    push(seat.x, seat.z, () => solid(ctx, seat.x, seat.z, 0.6, 0.6, 0.5, C.metal, '#3f4a52'))
+  }
+  // meeting tables + chairs (exec floor)
+  for (const id of MEETING_ROOM_IDS) {
+    const t = MEETING_TABLES[id]
+    push(t.x, t.z, () => {
+      const [cx, cy] = at(t.x, t.z, LEVEL_H)
+      ctx.fillStyle = C.woodTop
+      ctx.beginPath()
+      ctx.ellipse(cx, cy, t.rx * T * 1.4, t.rz * T * 0.7, 0, 0, Math.PI * 2)
+      ctx.fill()
+    })
+    for (const s of MEETING_ROOMS[id].seats) {
+      push(s.x, s.z, () => {
+        const [cx, cy] = at(s.x, s.z, LEVEL_H)
+        ctx.fillStyle = C.metal
+        ctx.fillRect(cx - 4, cy - 4, 8, 8)
+      })
+    }
+  }
+  // the green whiteboard in Rinjani
   push(KANBAN_BOARD.x, KANBAN_BOARD.z, () => {
     const [cx, cy] = at(KANBAN_BOARD.x, KANBAN_BOARD.z, KANBAN_BOARD.y)
     const rx = KANBAN_BOARD.w * T * Math.SQRT2 / 2
@@ -111,29 +237,35 @@ function buildStatic(): HTMLCanvasElement {
     for (let i = 0; i < 4; i++) {
       const hx = cx - rx + rx * 2 * (i + 0.5) / 4
       ctx.fillStyle = '#8fd0ae'
-      ctx.fillRect(hx - 6, cy - ry + 3, 12, 3)
+      ctx.fillRect(hx - 5, cy - ry + 3, 10, 3)
     }
   })
-
-  /* ---- meeting ring: a circle of chairs where the table will be rebuilt --- */
-  for (let i = 0; i < CONFERENCE_CHAIRS.count; i++) {
-    const ang = CONFERENCE_CHAIRS.offset + i / CONFERENCE_CHAIRS.count * Math.PI * 2
-    const cx = CONFERENCE.x + Math.cos(ang) * CONFERENCE_CHAIRS.ring
-    const cz = CONFERENCE.z + Math.sin(ang) * CONFERENCE_CHAIRS.ring
-    push(cx, cz, () => solid(ctx, cx, cz, 0.6, 0.6, 0.5, C.metal, '#3f4a52'))
+  // CEO suite desk
+  {
+    const c = roomCentre('ceo')
+    push(c.x, c.z, () => solid(ctx, c.x, c.z - 1.5, 2.2, 1.2, 0.74, C.woodTop, C.wood))
   }
-
-  /* ---- work stations (none until the rebuild) ---------------------------- */
-  for (const desk of DESKS) {
-    push(desk.x, desk.z, () => {
-      solid(ctx, desk.x, desk.z, 2.0, 1.0, 0.78, C.woodTop, C.metal)
-      const mx = desk.x - Math.sin(desk.facing) * 0.28
-      const mz = desk.z - Math.cos(desk.facing) * 0.28
-      solid(ctx, mx, mz, 0.8, 0.2, 0.92, C.screen, '#3a4750')
-    })
-    const seat = deskSeatWorld(desk)
-    push(seat.x, seat.z, () => solid(ctx, seat.x, seat.z, 0.7, 0.7, 0.5, C.metal, '#3f4a52'))
+  // poolside benches + loungers, BBQ, garden
+  for (const b of POOL_BENCHES) {
+    push(b.x, b.z, () => solid(ctx, b.x, b.z, 1.6, 0.52, 0.5, C.woodTop, C.wood))
   }
+  for (const l of POOL_LOUNGERS) {
+    push(l.x, l.z, () => solid(ctx, l.x, l.z, 0.62, 1.7, 0.42, C.woodTop, C.wood))
+  }
+  push(BBQ.x, BBQ.z, () => solid(ctx, BBQ.x, BBQ.z, 1.8, 1.1, 0.95, '#4a5054', '#2f3336'))
+  push(GARDEN.x, GARDEN.z, () => solid(ctx, GARDEN.x, GARDEN.z, 2.4, 1.8, 0.5, '#8a6a45', '#6a4f34'))
+  // reception counter + chair
+  push(RECEPTION.x, RECEPTION.z, () => solid(ctx, RECEPTION.x, RECEPTION.z, 3.6, 0.9, 1.05, C.woodTop, C.wood))
+  push(RECEPTION.x, RECEPTION.z - 1.15, () => solid(ctx, RECEPTION.x, RECEPTION.z - 1.15, 0.6, 0.6, 0.5, C.metal, '#3f4a52'))
+  // pantry counter + stools
+  push(PANTRY.x, PANTRY.z, () => solid(ctx, PANTRY.x, PANTRY.z, 1.0, 6.4, 0.94, C.woodTop, C.wood))
+  for (const sz of PANTRY_STOOLS) {
+    push(PANTRY.x + PANTRY_STOOL_GAP, sz, () =>
+      solid(ctx, PANTRY.x + PANTRY_STOOL_GAP, sz, 0.44, 0.44, 0.64, C.woodTop, C.wood),
+    )
+  }
+  // leisure sofa
+  push(LOUNGE.x, LOUNGE.z, () => solid(ctx, LOUNGE.x, LOUNGE.z, 2.8, 1.0, 0.6, C.sofa, '#3f6486'))
 
   items.sort((a, b) => a.d - b.d)
   for (const item of items) item.f()
@@ -143,9 +275,15 @@ function buildStatic(): HTMLCanvasElement {
 /** Same destination rules as the 3D simulation, so agents stand in the same places. */
 function agentSpot(a: Agent, i: number, meeting: Meeting | null) {
   if (meeting && (meeting.state === 'queued' || meeting.state === 'running') && meeting.participants.includes(a.name)) {
-    const n = meeting.participants.indexOf(a.name) % CONFERENCE_CHAIRS.count
-    const ang = CONFERENCE_CHAIRS.offset + n * Math.PI * 2 / CONFERENCE_CHAIRS.count
-    return { x: CONFERENCE.x + Math.cos(ang) * CONFERENCE_CHAIRS.ring, z: CONFERENCE.z + Math.sin(ang) * CONFERENCE_CHAIRS.ring, seated: true }
+    // Same routing as the 3D view: one division → its own room, exec-heavy →
+    // Merapi, everyone → Rinjani.
+    const roomId = meetingRoomFor(
+      meeting.participants,
+      new Map(meeting.participants.map((p) => [p, a.division ?? 'tech'])),
+    )
+    const room = MEETING_ROOMS[roomId]
+    const seat = room.seats[meeting.participants.indexOf(a.name) % room.seats.length]
+    return { x: seat.x, z: seat.z, seated: true }
   }
   const desk = a.deskIndex == null ? undefined : DESKS.find((d) => d.index === a.deskIndex)
   if (desk && (a.status === 'working' || a.status === 'blocked')) {
