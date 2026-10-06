@@ -2215,16 +2215,33 @@ void (async () => {
       if (!/a\.targetWater\s*=\s*spot\.water/.test(code)) {
         problems.push('an idle spot does not record that it is in the water')
       }
-      // (e2) A BODY ALREADY IN THE WATER MUST SWIM, NOT WALK. The activity line used to be
-      // `walking > 0.5 ? 'walking' : a.activity`, so a body crossing the pool played the
-      // WALK cycle the whole way and only swam once it stopped — reported as "moving from
-      // the pool edge to the target point in the pool involves walking instead of
-      // swimming". The condition now consults the basin footprint.
-      if (!/inWaterNow\s*\?\s*'swim'\s*:\s*'walking'/.test(code)) {
+      // (e2) A BODY IN THE WATER MUST SWIM, NOT WALK — and BOTH places that decide the
+      // shown activity must say so.
+      //
+      // This bug had two halves. The render path gated the swim pose on `a.targetWater`,
+      // which is only set while a body is en route to a swim LANE, so a body crossing the
+      // water kept walking. Fixing only that changed nothing visible, because
+      // `flushPositions()` — which runs FIRST each frame and writes the activity to the
+      // database the UI reads — had its own copy of the old formula. Traced: 13 frames at
+      // x -6.0..-4.1, z 7.3..4.2 with the DB reporting 'walking' while the body was in the
+      // basin. Both now call one shared helper, and this checks that.
+      if (!/function shownActivity\(/.test(code)) {
+        problems.push('there is no shared shown-activity rule for the water test')
+      }
+      const helperBlock = code.slice(code.indexOf('function shownActivity('), code.indexOf('function shownActivity(') + 420)
+      if (!/POOL\.w\s*\/\s*2/.test(helperBlock) || !/POOL\.d\s*\/\s*2/.test(helperBlock)) {
+        problems.push('the swim-while-moving test does not use the basin footprint')
+      }
+      if (!/inWater\s*\?\s*'swim'\s*:\s*'walking'/.test(helperBlock)) {
         problems.push('the mover does not switch to the swim pose while crossing the water')
       }
-      if (!/a\.targetWater\s*&&[\s\S]{0,160}POOL\.w\s*\/\s*2/.test(code)) {
-        problems.push('the swim-while-moving test does not use the basin footprint')
+      // and there must be NO leftover copy of the old formula anywhere
+      if (/a\.walking > 0\.5 \? 'walking' : a\.activity/.test(code)) {
+        problems.push('a copy of the old shown-activity formula survives — a body in the water would still be written to the DB as walking')
+      }
+      const calls = (code.match(/shownActivity\(a, g\)/g) || []).length
+      if (calls < 2) {
+        problems.push(`only ${calls} caller(s) of the shared shown-activity rule; the render path AND flushPositions must both use it`)
       }
     }
 

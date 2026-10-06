@@ -770,6 +770,33 @@ export function createScene(
   /** Snapshot of what the DB currently holds, so we only send CHANGES. */
   const lastSaved = new Map<string, string>()
 
+  /**
+   * WHAT IS ACTUALLY ON SCREEN, for a body at `g`.
+   *
+   * Two things must agree here and used to disagree:
+   *
+   *   `a.activity`   the activity of the SPOT BEING WALKED TO — retarget() sets it when
+   *                  the spot is claimed. A body striding toward the barbell rack reads
+   *                  'barbell' from 13 m away.
+   *   water          a body inside the pool must read 'swim' whatever it is heading to.
+   *
+   * This formula existed twice: once in the render path (which I had fixed) and once in
+   * flushPositions (which I had not). flushPositions runs FIRST, every frame, and writes
+   * its answer to the database — so the render fix was invisible: the DB said 'walking'
+   * for a body crossing the water, and that is what the UI and every other client drew.
+   * Traced: 13 consecutive frames at x -6.0..-4.1, z 7.3..4.2 with the DB reporting
+   * 'walking' while the body was in the basin.
+   *
+   * Kept as one function so the two cannot drift apart again.
+   */
+  function shownActivity(a: SceneAgent, g: THREE.Object3D): Activity {
+    if (a.walking <= 0.5) return a.activity
+    const inWater =
+      Math.abs(g.position.x - POOL.x) < POOL.w / 2 &&
+      Math.abs(g.position.z - POOL.z) < POOL.d / 2
+    return inWater ? 'swim' : 'walking'
+  }
+
   function flushPositions() {
     if (!events.onSaveAvatars) return
     const out: AvatarState[] = []
@@ -782,7 +809,7 @@ export function createScene(
       // barbell rack was stored as `activity: 'barbell'`, at a position 13 m from the
       // rack. Reading the DB then said "two avatars are lifting in a corridor", which is
       // not what the scene showed and not what a user watching the room would see.
-      const shown: Activity = a.walking > 0.5 ? 'walking' : a.activity
+      const shown: Activity = shownActivity(a, g)
       const key = `${g.position.x.toFixed(1)},${g.position.z.toFixed(1)},${a.level},${shown}`
       // Skip bodies that have not moved and are not doing anything new.
       if (lastSaved.get(a.avatarId) === key) continue
@@ -992,17 +1019,20 @@ export function createScene(
         a.face = a.arrivalFace
       }
 
-      // IN THE WATER, SWIM — even while still travelling. The activity line below shows
-      // the WALK cycle whenever `a.walking > 0.5`, so without this a body crossed the
-      // whole pool doing a walking animation and only started swimming on arrival.
-      // Measured: the old code showed 'walking' for the entire deck-to-lane crossing.
-      // The basin footprint (not the coping) is the test: the coping is deck you walk
-      // on, the water inside it is where you swim.
-      const inWaterNow =
-        !!a.targetWater &&
-        Math.abs(g.position.x - POOL.x) < POOL.w / 2 &&
-        Math.abs(g.position.z - POOL.z) < POOL.d / 2
-      const activity: Activity = a.walking > 0.5 ? (inWaterNow ? 'swim' : 'walking') : a.activity
+      // IN THE WATER, SWIM.
+      //
+      // Decided by WHERE THE BODY IS, not by what it is heading to. The earlier version
+      // gated this on `a.targetWater`, which is only set while a body is en route to a
+      // swim LANE — so it did nothing for the case the user actually reported: a body
+      // that steps off the coping and crosses the water. Traced frame by frame, such a
+      // body showed `walking` for 12 consecutive frames in the middle of the pool
+      // (x -5.8..-4.2, z 7.0..4.3) and only switched to `swim` on arrival at the lane.
+      // The pose must follow the body's position: inside the basin means swimming,
+      // whatever the destination is.
+      //
+      // The basin footprint — not the coping — is the test, matching the numbers the deck
+      // cut-out and the pool footprint use. The coping is deck you walk on.
+      const activity: Activity = shownActivity(a, g)
       const anim: AnimAgent = {
         avatar: a.avatar,
         activity,
@@ -1196,7 +1226,7 @@ export function createScene(
       // only say WHERE a body is, never which way it ended up pointing — and "which way it
       // points" is exactly the thing that was wrong.
       rotation: a.avatar.group.rotation.y,
-      shown: a.walking > 0.5 ? 'walking' : a.activity,
+      shown: shownActivity(a, a.avatar.group),
       walking: a.walking,
       seated: a.seatYaw !== undefined,
       // The internals: what the body is steering toward, and where it thinks it is going.

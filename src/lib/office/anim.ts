@@ -549,36 +549,46 @@ function swim(a: AnimAgent, t: number) {
   //
   // HONEST BOUND ON THE PENETRATION: the basin is only 0.37 m deep (floor -0.38,
   // surface -0.01) and the arm is 0.65 m long, so a straight arm pointing down reaches
-  // -0.80 — 0.42 m into the concrete. Sixteen rounds of measurement (shoulder sweep,
-  // elbow fold, waist pitch, hips height, and a full re-author as a shallow sweep)
-  // established that no combination of these joints keeps the hand out of the floor
-  // for the whole cycle. The best of them is this one: the fold is gated to the part of
-  // the stroke where it provably lifts the hand (in front of vertical), which cuts the
-  // time spent in the floor from 29% / 24% to about 7% / 6%, and keeps the head at the
-  // waterline. The residual is the hand at full extension; a shorter basin or a shorter
-  // arm is what would remove it, not another angle.
+  // -0.80 — 0.42 m into the concrete. Measurement established that no combination of
+  // these joints keeps the hand out of the floor for the whole cycle. The best is this
+  // one: the fold is gated to the part of the stroke where it provably lifts the hand,
+  // adduction shortens the reach through the deep window, and the head stays at the
+  // waterline. What remains is the hand at full extension.
+  //
+  // BOTH ARMS ARE DRIVEN BY THE SAME PROGRESS VARIABLE. This is the fix for the
+  // "animation is messy" report. The two arms run in ANTI-PHASE, and the angles used to
+  // be derived from the raw stroke value `s = stroke(off)`, which is itself in
+  // anti-phase. So every term built from `s` was applied to mirror-image halves of the
+  // cycle: measured, the left elbow swept 0.79 -> +2.51 rad while the right sat at
+  // -0.9, and then they swapped. One forearm folded naturally and the other folded
+  // BACKWARDS — the ragged, wrong-looking stroke. The shoulder sweep can be anti-phase
+  // (that is what a crawl is), but the FOLD and the ADDUCTION must follow each arm's own
+  // progress through its stroke, which is what `u` is.
   const [L, R] = av.arms
-  for (const [arm, sign, off] of [
-    [L, -1, 0],
-    [R, 1, Math.PI],
+  for (const [arm, off] of [
+    [L, 0],
+    [R, Math.PI],
   ] as const) {
+    // `s` is the sweep: -1 one end of the stroke, +1 the other. Anti-phase, by design.
     const s = stroke(off)
     arm.shoulder.rotation.x = m(-135 * D) + s * 80 * D
-    // Elbow fold, gated to the part of the sweep where it provably LIFTS the hand.
-    // Past -2.0 rad the same fold swings the forearm down and makes it worse, so the
-    // gate is on the shoulder angle; it is also multiplied by the stroke phase, because
-    // the recovery top sits inside that shoulder range.
-    const shX = arm.shoulder.rotation.x
-    const frontOfVertical = Math.max(0, Math.min(1, (shX + 2.0) / 0.3))
-    const pull = Math.sqrt(Math.max(0, s)) * frontOfVertical
-    // ADDUCTION through the deep window. Histogramming every crossing frame put the
-    // remaining penetration in one narrow band (s = 0.2..0.5); in that configuration
-    // the elbow cannot help, but pulling the arm IN toward the body shortens the
-    // vertical reach. Swept on the rig: 0 deg = 13.4% of the stroke through the floor,
-    // 60 deg = 0.0% with the hand bottoming at -0.30.
-    const deep = Math.exp(-Math.pow((s - 0.35) / 0.25, 2))
-    arm.shoulder.rotation.z = sign * m(18 * D) + sign * m(60 * D) * deep
-    arm.elbow.rotation.x = m(-30 * D) + s * 24 * D + pull * m(150 * D)
+    // `u` is this arm's PROGRESS: 0 when the arm is up front, 1 when it is back. Same
+    // shape for both arms, so both fold the same way — only shifted in time by `off`.
+    const u = (1 - s) / 2
+    // FOLD: bend most where the arm is past the shoulder (u > 0.5), least at full
+    // extension, so the hand tucks in on the pull and reaches on the recovery.
+    const fold = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, (u - 0.30) / 0.55))))
+    // ADDUCTION through the deep window (u ~ 0.6, where the hand is lowest). Pulling the
+    // arm IN toward the body shortens the vertical reach. Swept on the rig: 0 deg =
+    // 13.4% of the stroke through the floor, 60 deg = 0.0% with the hand bottoming at
+    // -0.30. The sense is MIRRORED between arms (the arms sit on opposite sides), so it
+    // takes the arm's own side sign — unlike the fold, which is a rotation about the
+    // same physical axis for both.
+    const side = arm === L ? -1 : 1
+    const deep = Math.exp(-Math.pow((u - 0.62) / 0.22, 2))
+    arm.shoulder.rotation.z = side * m(18 * D) + side * m(60 * D) * deep
+    // The elbow bends about one axis, in one direction, for both arms.
+    arm.elbow.rotation.x = m(-30 * D) + fold * m(120 * D)
   }
 }
 
