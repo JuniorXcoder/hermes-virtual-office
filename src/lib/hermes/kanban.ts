@@ -475,6 +475,9 @@ const ROLE_KEYWORDS: [RegExp, AgentRole][] = [
 const ROLE_DIVISION: Record<AgentRole, AgentDivision> = {
   ceo: 'exec',
   orchestrator: 'exec',
+  // A manager's division comes from its SOUL marker, not from the role alone; this
+  // is only the fallback for a manager profile with no marker on disk.
+  manager: 'tech',
   backend: 'tech',
   frontend: 'tech',
   qa: 'tech',

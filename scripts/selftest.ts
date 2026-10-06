@@ -13,22 +13,32 @@ import { readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  BARS,
   BOARD_COLUMNS,
   CEILING_Y,
   DESKS,
   deskByIndex,
   desksForDivision,
+  DIVISION_MEETING_ROOM,
+  DOOR,
   FOOTPRINTS,
   HALF_D,
   HALF_W,
   KANBAN_BOARD,
-  DOOR,
+  LEVEL_H,
+  MEETING_ROOMS,
+  MEETING_ROOM_IDS,
+  POOL,
+  ROOMS,
   blockingFootprints,
+  deskSeatWorld,
   layoutConflicts,
+  roomById,
+  roomCentre,
   WALL_H,
   WALL_T,
 } from '../src/lib/office/layout'
-import { BODY_R, blocked, route } from '../src/lib/office/nav'
+import { BODY_R, blocked, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar } from '../src/lib/office/avatar'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
@@ -70,39 +80,132 @@ console.log('geometry')
   check('all task states fit a rendered 3D kanban column', invalid.length === 0, invalid.join(', '))
 }
 
-// Kanban board: free-standing on the open floor, above it and below the ceiling.
+// The Kanban board is the green whiteboard on Rinjani's north wall, on level 1.
 {
+  const r = roomById('rinjani')!
   const left = KANBAN_BOARD.x - KANBAN_BOARD.w / 2
   const right = KANBAN_BOARD.x + KANBAN_BOARD.w / 2
   const bottom = KANBAN_BOARD.y - KANBAN_BOARD.h / 2
   const top = KANBAN_BOARD.y + KANBAN_BOARD.h / 2
   check(
-    'kanban board stands inside the floor plan',
-    left > -HALF_W && right < HALF_W && KANBAN_BOARD.z > -HALF_D && KANBAN_BOARD.z < HALF_D,
-    `x ${f2(left)}..${f2(right)} z ${f2(KANBAN_BOARD.z)}`,
+    'kanban board fits inside the Rinjani room',
+    left > r.x1 && right < r.x2,
+    `x ${f2(left)}..${f2(right)} vs room ${f2(r.x1)}..${f2(r.x2)}`,
   )
   check(
-    'kanban board is above the floor and below the ceiling',
-    bottom > 0 && top < CEILING_Y,
-    `y ${f2(bottom)}..${f2(top)} vs ceiling ${CEILING_Y}`,
+    'kanban board is above its floor and below the ceiling',
+    bottom > LEVEL_H && top < LEVEL_H + WALL_H,
+    `y ${f2(bottom)}..${f2(top)} vs level 1 band ${LEVEL_H}..${f2(LEVEL_H + WALL_H)}`,
   )
 }
 
-// The interior is demolished: the plan must be EMPTY. This is the check that
-// would fail the moment a stray wall or desk is left behind, and it flips back to
-// the furniture-collision check below once the rebuild adds footprints.
+// The U is a real plan now: walls, rooms and furniture must all be present, and
+// nothing may overlap anything else on its own level.
 {
-  check('open floor: no walls remain on the plan', FOOTPRINTS.filter((f) => f.kind === 'wall').length === 0,
-    `${FOOTPRINTS.length} footprints`)
-  check('open floor: no furniture remains on the plan', blockingFootprints().length === 0,
-    `${blockingFootprints().length} solids`)
+  const walls = FOOTPRINTS.filter((f) => f.kind === 'wall').length
+  const solids = blockingFootprints().length
+  check('the plan has walls and furniture again', walls > 10 && solids > 10,
+    `${walls} walls, ${solids} solids`)
+  const bad = layoutConflicts()
+  check('no furniture overlaps furniture on the same level', bad.length === 0,
+    bad.slice(0, 4).map((c) => `${c.a}<->${c.b}`).join(', '))
 }
 
-// Footprints must not sit on top of one another — via layoutConflicts(), the
-// single source of truth.
+// The building is a U: the courtyard must be OUTSIDE the bars, and every room
+// must be reachable from the entrance. This is the check that catches a room
+// walled off by its own partitions.
 {
-  const bad = layoutConflicts()
-  check('no furniture overlaps furniture', bad.length === 0, bad.slice(0, 4).map((c) => `${c.a}<->${c.b}`).join(', '))
+  const problems: string[] = []
+  // courtyard is not inside any bar
+  const cy = roomCentre('courtyard')
+  if (cy.x > BARS.west.x2 && cy.x < BARS.east.x1) {
+    // fine: between the two side bars
+  } else {
+    problems.push(`courtyard centre x=${cy.x} is not between the bars`)
+  }
+  if (!(cy.z > BARS.north.z2 && cy.z < BARS.lobby.z1)) {
+    problems.push(`courtyard centre z=${cy.z} is not between the north bar and the lobby`)
+  }
+  // the courtyard is open to the sky
+  if (!roomById('courtyard')?.outdoor) problems.push('courtyard is not marked outdoor')
+
+  // every level-0 room reachable on foot from the door
+  for (const r of ROOMS.filter((x) => x.level === 0 && x.id !== 'terrace')) {
+    const c = roomCentre(r.id)
+    const legs = route({ x: DOOR.x, z: DOOR.z - 1.5 }, c, 0)
+    if (!legs.length) problems.push(`no route door->${r.id}`)
+  }
+  // every level-1 room reachable VIA THE STAIRS
+  for (const r of ROOMS.filter((x) => x.level === 1)) {
+    const c = roomCentre(r.id)
+    const legs = routeBetween({ x: DOOR.x, z: DOOR.z - 1.5, level: 0 }, { ...c, level: 1 })
+    if (!legs.length) problems.push(`no route door->${r.id} (via stairs)`)
+  }
+  check('U plan: courtyard open, every room reachable from the door', problems.length === 0, problems.join(' | '))
+}
+
+// Split level: the work rooms are on level 0 and the meeting rooms on level 1 —
+// the whole point of the redesign. And Rinjani (the 10-seat room) must sit next
+// to the CEO suite, with Merapi (managers + CEO) also in the north bar.
+{
+  const problems: string[] = []
+  // division -> the room its desks live in (the ids differ: tech works in `dev`)
+  const WORK_ROOM: Record<'tech' | 'growth' | 'content', string> = {
+    tech: 'dev',
+    growth: 'mkt',
+    content: 'content',
+  }
+  for (const div of ['tech', 'growth', 'content'] as const) {
+    const work = roomById(WORK_ROOM[div])
+    const meet = MEETING_ROOMS[DIVISION_MEETING_ROOM[div]]
+    const meetRoom = roomById(meet.roomId)
+    if (!work || !meetRoom) {
+      problems.push(`${div}: room missing`)
+      continue
+    }
+    if (work.level !== 0) problems.push(`${div} work room is not on level 0`)
+    if (meetRoom.level !== 1) problems.push(`${div} meeting room is not on level 1`)
+    if (work.id === meetRoom.id) problems.push(`${div} work and meeting share a room`)
+  }
+  // Rinjani is the biggest, and next door to the CEO.
+  const rinjani = roomById('rinjani')
+  const ceo = roomById('ceo')
+  const merapi = roomById('merapi')
+  if (!rinjani || !ceo || !merapi) {
+    problems.push('rinjani/ceo/merapi room missing')
+  } else {
+    if (MEETING_ROOMS.rinjani.seats.length !== 10) problems.push('rinjani does not seat 10')
+    for (const [a, b, label] of [
+      [rinjani, ceo, 'rinjani<->ceo'],
+      [rinjani, merapi, 'rinjani<->merapi'],
+    ] as const) {
+      const gap = Math.max(a.x1, b.x1) < Math.min(a.x2, b.x2) && Math.max(a.z1, b.z1) < Math.min(a.z2, b.z2)
+      const touching = Math.abs(a.x1 - b.x2) < 1.5 || Math.abs(b.x1 - a.x2) < 1.5
+      if (!touching && !gap) problems.push(`${label} are not neighbours`)
+    }
+    // the biggest room must actually be the biggest
+    const area = (r: typeof rinjani) => (r.x2 - r.x1) * (r.z2 - r.z1)
+    for (const id of MEETING_ROOM_IDS) {
+      const other = roomById(id)
+      if (other && area(other) > area(rinjani)) problems.push(`${id} is bigger than rinjani`)
+    }
+  }
+  // Merapi seats the 3 managers + CEO
+  if (MEETING_ROOMS.merapi.seats.length !== 4) problems.push('merapi does not seat 4')
+  check('split level: work on L0, meeting on L1, rinjani biggest next to CEO',
+    problems.length === 0, problems.join(' | '))
+}
+
+// Every division has exactly three desks, exactly one of them the manager's.
+{
+  const problems: string[] = []
+  for (const div of ['tech', 'growth', 'content'] as const) {
+    const desks = desksForDivision(div)
+    if (desks.length !== 3) problems.push(`${div} has ${desks.length} desks, want 3`)
+    const managers = desks.filter((d) => d.seat === 'manager')
+    if (managers.length !== 1) problems.push(`${div} has ${managers.length} managers, want 1`)
+  }
+  check('every division has 3 desks: 1 manager + 2 staff', problems.length === 0, problems.join(' | '))
 }
 
 // A desk is addressed by its LABEL. `DESKS` is flat-mapped column by column, so
@@ -116,8 +219,8 @@ console.log('geometry')
   check('deskByIndex(n) returns the desk labelled n', wrong.length === 0, wrong.join(', '))
 }
 
-// Nothing may block the entrance: with the interior gone, the whole floor — and
-// the doorway — must be clear.
+// Nothing may block the entrance: a visitor must be able to walk in and reach the
+// courtyard without a counter or a planter in the way.
 {
   const gaps = [{ x: DOOR.x, z: DOOR.z, hw: 1.7, hd: 1.2 }]
   const blockedDoor: string[] = []
@@ -407,46 +510,51 @@ console.log('geometry')
   check('listProfiles includes the default profile', problems.length === 0, problems.join(' | '))
 }
 
-// Open floor: the doorway and the whole plan must be walkable end to end. With
-// no walls or furniture, the only thing that can block a walker is the floor edge
-// (nav.ts). This is the check that would catch a stray solid left behind.
+// The plan must be walkable end to end: in at the door, across the lobby, through
+// the courtyard, into every division room, and up the stairs to the exec floor.
 {
   const problems: string[] = []
 
-  // 1. The centre axis, from the entrance inward, must be clear.
-  const laneBlocked: string[] = []
-  for (let z = HALF_D - WALL_T - 0.4; z >= -HALF_D + WALL_T + 0.4; z -= 0.2) {
-    if (blocked(0, z, BODY_R)) laneBlocked.push(z.toFixed(1))
-  }
-  if (laneBlocked.length) {
-    problems.push(`centre axis blocked at z ${laneBlocked.join(', ')}`)
-  }
-
-  // 2. The entrance approach must be clear.
-  if (blocked(DOOR.x, HALF_D - WALL_T - 0.8, BODY_R)) {
+  // 1. The entrance approach must be clear.
+  if (blocked(DOOR.x, HALF_D - WALL_T - 0.8, BODY_R, { level: 0 })) {
     problems.push('entrance approach blocked')
   }
 
-  // 3. Every idle spot must be reachable from the door (an open floor means they
-  //    all are; a stray prop would strand one).
+  // 2. Every idle spot must be reachable from the door, on its OWN level — a spot
+  //    on the exec floor is reached through the stair portal.
   for (const spot of IDLE_SPOTS) {
-    const legs = route({ x: DOOR.x, z: DOOR.z - 1 }, { x: spot.x, z: spot.z })
-    if (!legs.length) problems.push(`idle spot (${spot.x},${spot.z}) unreachable`)
+    const from = { x: DOOR.x, z: DOOR.z - 1.5, level: 0 as const }
+    const legs = spot.level === 0
+      ? route(from, { x: spot.x, z: spot.z }, 0)
+      : routeBetween(from, { x: spot.x, z: spot.z, level: 1 })
+    if (!legs.length) problems.push(`idle spot (${spot.x},${spot.z}) L${spot.level} unreachable`)
   }
 
-  // 4. No two solids may overlap anywhere on the plan.
-  const solid = blockingFootprints()
-  for (let i = 0; i < solid.length; i++) {
-    for (let j = i + 1; j < solid.length; j++) {
-      const a = solid[i]
-      const b = solid[j]
-      const dx = Math.abs(a.x - b.x) - (a.hw + b.hw)
-      const dz = Math.abs(a.z - b.z) - (a.hd + b.hd)
-      if (dx < 0 && dz < 0) problems.push(`${a.id} overlaps ${b.id}`)
-    }
+  // 3. Every desk must be reachable from the door (same level).
+  for (const d of DESKS) {
+    const seat = deskSeatWorld(d)
+    const legs = route({ x: DOOR.x, z: DOOR.z - 1.5 }, { x: seat.x, z: seat.z }, 0)
+    if (!legs.length) problems.push(`desk ${d.index} unreachable`)
   }
 
-  check('open floor: doorway, centre axis and every idle spot are reachable', problems.length === 0, problems.join(' | '))
+  check('plan is walkable: door, courtyard, every desk and every idle spot',
+    problems.length === 0, problems.join(' | '))
+}
+
+// The pool is water: a walker must not be able to stand in it. This caught the
+// basin slipping through the blocker threshold at exactly 0.5.
+{
+  check('the pool is solid (you cannot walk on water)', blocked(POOL.x, POOL.z, BODY_R, { level: 0 }))
+}
+
+// The stair shaft is walkable on BOTH levels, and is the only place that is —
+// that is what makes it a portal rather than a hole.
+{
+  const problems: string[] = []
+  const c = stairCentre
+  if (blocked(c.x, c.z, BODY_R, { level: 0 })) problems.push('stair not walkable on level 0')
+  if (blocked(c.x, c.z, BODY_R, { level: 1 })) problems.push('stair not walkable on level 1')
+  check('the stair shaft is the level portal', problems.length === 0, problems.join(' | '))
 }
 
 

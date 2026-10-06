@@ -115,6 +115,8 @@ export const DIVISION_LABEL: Record<AgentDivision, string> = {
 export type AgentRole =
   | 'ceo'
   | 'orchestrator'
+  /** Division lead. Every staff member reports to one (poin 3). */
+  | 'manager'
   | 'backend'
   | 'frontend'
   | 'qa'

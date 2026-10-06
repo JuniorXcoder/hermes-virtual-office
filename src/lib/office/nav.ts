@@ -1,17 +1,19 @@
 /**
- * Walkable-space collision and pathfinding.
+ * Walkable-space collision and pathfinding, now LEVEL-AWARE.
  *
- * Avatars used to walk straight through desks and sofas because movement was
- * plain "move toward the target". Two pieces fix that, and both read the same
- * footprint table the furniture is built from:
+ * The building is split level: the ground floor holds the lobby, the three
+ * division rooms, the pantry and the leisure room; the first floor holds the CEO
+ * suite and the five meeting rooms. A walker therefore has a LEVEL as well as a
+ * position, and the two floors must not leak into each other:
  *
- *   - `blocked()` is a point test against inflated prop boxes, so a walker with
- *     a radius can slide along a desk instead of entering it.
- *   - `route()` is A* over a uniform grid with corner-cut prevention. Every leg
- *     therefore bends around furniture instead of through it.
+ *   - each level has its own grid, built from the footprints whose `level` matches,
+ *   - the first floor only exists over the north bar, so stepping off it anywhere
+ *     else is void, not floor,
+ *   - the stair shaft is the ONE place both grids are walkable at the same x/z, so
+ *     `routeBetween()` can hand a walker from one floor to the other.
  *
- * The grid is coarse (0.5 m) on purpose: it is built once, it keeps A* cheap for
- * a handful of agents, and 0.5 m is finer than any doorway here.
+ * The grid is coarse (0.5 m) on purpose: it is built once per level, it keeps A*
+ * cheap for a handful of agents, and 0.5 m is finer than any doorway here.
  */
 import {
   blockingFootprints,
@@ -19,7 +21,9 @@ import {
   FOOTPRINTS,
   HALF_D,
   HALF_W,
+  LEVEL_BOUNDS,
   OPENINGS,
+  STAIRS,
   WALL_T,
   type Footprint,
 } from './layout'
@@ -39,41 +43,70 @@ export const worldZ = (cz: number) => -HALF_D + (cz + 0.5) * CELL
 export const gridX = (x: number) => Math.floor((x + HALF_W) / CELL)
 export const gridZ = (z: number) => Math.floor((z + HALF_D) / CELL)
 
-const solidWalls: Footprint[] = FOOTPRINTS.filter((f) => f.kind === 'wall')
-const solidProps = blockingFootprints()
+export type Level = 0 | 1
+
+const wallsAt = (level: Level): Footprint[] => FOOTPRINTS.filter((f) => f.kind === 'wall' && f.level === level)
+const propsAt = (level: Level): Footprint[] =>
+  blockingFootprints().filter((f) => f.level === level)
+
+const wallsByLevel: Record<Level, Footprint[]> = { 0: wallsAt(0), 1: wallsAt(1) }
+const propsByLevel: Record<Level, Footprint[]> = { 0: propsAt(0), 1: propsAt(1) }
 
 /** True when `p` lies inside a footprint inflated by `pad`. */
 function inside(f: Footprint, x: number, z: number, pad: number) {
   return Math.abs(x - f.x) < f.hw + pad && Math.abs(z - f.z) < f.hd + pad
 }
 
-/** An opening cuts a wall for anything strictly inside it. */
-function inOpening(x: number, z: number, pad: number) {
-  return OPENINGS.some((o) => Math.abs(x - o.x) < o.hw - pad && Math.abs(z - o.z) < o.hd + 0.6)
+/** An opening cuts a wall for anything strictly inside it, on its own level. */
+function inOpening(x: number, z: number, pad: number, level: Level) {
+  return OPENINGS.some(
+    (o) => o.level === level && Math.abs(x - o.x) < o.hw - pad && Math.abs(z - o.z) < o.hd + 0.6,
+  )
 }
+
+/** The stair shaft, inflated slightly, is the level portal. */
+export function inStairs(x: number, z: number): boolean {
+  return (
+    x > STAIRS.x1 - 0.4 && x < STAIRS.x2 + 0.4 && z > STAIRS.z1 - 0.4 && z < STAIRS.z2 + 0.4
+  )
+}
+
+export const stairCentre = { x: (STAIRS.x1 + STAIRS.x2) / 2, z: (STAIRS.z1 + STAIRS.z2) / 2 }
 
 /**
  * Point test used by the mover. `pad` is the body radius, so callers get
  * "would my centre at (x,z) put my body inside something".
  *
- * `opts.allowSeat` ignores chair/sofa footprints. Walking must respect them (you
- * cannot walk through a sofa) but a SEATED IDLE SPOT is by definition ON a seat,
- * so validating those with seats solid discarded every sit-down spot — including
- * the `sofa` spot that had been silently absent long before this change.
+ * `opts.allowSeat` ignores chair/sofa footprints: a SEATED IDLE SPOT is by
+ * definition ON a seat, so validating those with seats solid discarded every
+ * sit-down spot.
  */
 export function blocked(
   x: number,
   z: number,
   pad = BODY_R,
-  opts: { allowSeat?: boolean } = {},
+  opts: { allowSeat?: boolean; level?: Level } = {},
 ): boolean {
-  // Outside the building. Kept inside the wall line (not the wall centre) so the
-  // walkable band matches the room the avatar can actually see.
-  if (Math.abs(x) > HALF_W - WALL_T - BODY_R * 0.5 || Math.abs(z) > HALF_D - WALL_T - BODY_R * 0.5) return true
-  for (const w of solidWalls) {
-    if (inside(w, x, z, pad) && !inOpening(x, z, pad)) return true
+  const level: Level = opts.level ?? 0
+  const b = LEVEL_BOUNDS[level]
+  // Outside this level's floor plate. Kept inside the wall line (not the wall
+  // centre) so the walkable band matches the room the avatar can actually see.
+  if (
+    x < b.x1 + WALL_T + BODY_R * 0.5 ||
+    x > b.x2 - WALL_T - BODY_R * 0.5 ||
+    z < b.z1 + WALL_T + BODY_R * 0.5 ||
+    z > b.z2 - WALL_T - BODY_R * 0.5
+  ) {
+    return true
   }
-  for (const p of solidProps) {
+  // The stair shaft is a hole in the first floor's plate: it is walkable on BOTH
+  // levels, which is what makes it a portal rather than a wall.
+  if (inStairs(x, z)) return false
+
+  for (const w of wallsByLevel[level]) {
+    if (inside(w, x, z, pad) && !inOpening(x, z, pad, level)) return true
+  }
+  for (const p of propsByLevel[level]) {
     if (opts.allowSeat && p.kind === 'seat') continue
     if (inside(p, x, z, pad)) return true
   }
@@ -82,22 +115,27 @@ export function blocked(
 
 /* ------------------------------------------------------------------- grid -- */
 
-const walkable = new Uint8Array(COLS * ROWS)
+const walkable: Record<Level, Uint8Array> = {
+  0: new Uint8Array(COLS * ROWS),
+  1: new Uint8Array(COLS * ROWS),
+}
 
 function buildGrid() {
-  for (let cz = 0; cz < ROWS; cz++) {
-    for (let cx = 0; cx < COLS; cx++) {
-      const ok = blocked(worldX(cx), worldZ(cz), BODY_R) ? 0 : 1
-      walkable[cz * COLS + cx] = ok
+  for (const level of [0, 1] as Level[]) {
+    for (let cz = 0; cz < ROWS; cz++) {
+      for (let cx = 0; cx < COLS; cx++) {
+        const ok = blocked(worldX(cx), worldZ(cz), BODY_R, { level }) ? 0 : 1
+        walkable[level][cz * COLS + cx] = ok
+      }
     }
   }
 }
 buildGrid()
 
-/** True when the cell is free. Diagonal moves additionally require both orthogonal neighbours. */
-function free(cx: number, cz: number) {
+/** True when the cell is free on this level. */
+function free(cx: number, cz: number, level: Level) {
   if (cx < 0 || cz < 0 || cx >= COLS || cz >= ROWS) return false
-  return walkable[cz * COLS + cx] === 1
+  return walkable[level][cz * COLS + cx] === 1
 }
 
 /**
@@ -105,13 +143,13 @@ function free(cx: number, cz: number) {
  * Targets frequently land on a chair or inside a desk footprint (the seat of a
  * chair IS inside one), so a route has to snap to the closest standing room.
  */
-function nearestFree(cx: number, cz: number, maxRings = 14): [number, number] | null {
-  if (free(cx, cz)) return [cx, cz]
+function nearestFree(cx: number, cz: number, level: Level, maxRings = 14): [number, number] | null {
+  if (free(cx, cz, level)) return [cx, cz]
   for (let r = 1; r <= maxRings; r++) {
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
         if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue
-        if (free(cx + dx, cz + dz)) return [cx + dx, cz + dz]
+        if (free(cx + dx, cz + dz, level)) return [cx + dx, cz + dz]
       }
     }
   }
@@ -130,17 +168,14 @@ const STEPS: [number, number][] = [
   [-1, -1],
 ]
 
-/**
- * A* between two world points. Returns waypoints in world space, or an empty
- * array when no route exists (caller then falls back to a straight line so an
- * agent never freezes in place).
- */
-export function route(
+/** A* on ONE level. Returns [] when no route exists. */
+function routeOnLevel(
   from: { x: number; z: number },
   to: { x: number; z: number },
+  level: Level,
 ): { x: number; z: number }[] {
-  const start = nearestFree(gridX(from.x), gridZ(from.z))
-  const goal = nearestFree(gridX(to.x), gridZ(to.z))
+  const start = nearestFree(gridX(from.x), gridZ(from.z), level)
+  const goal = nearestFree(gridX(to.x), gridZ(to.z), level)
   if (!start || !goal) return []
   if (start[0] === goal[0] && start[1] === goal[1]) return [{ x: to.x, z: to.z }]
 
@@ -152,14 +187,12 @@ export function route(
   const idx = (cx: number, cz: number) => cz * COLS + cx
 
   const goalI = idx(goal[0], goal[1])
-  const h = (cx: number, cz: number) =>
-    Math.hypot(cx - goal[0], cz - goal[1]) * 1.0001 // tiny tie-break
+  const h = (cx: number, cz: number) => Math.hypot(cx - goal[0], cz - goal[1]) * 1.0001
 
   const startI = idx(start[0], start[1])
   g[startI] = 0
   f[startI] = h(start[0], start[1])
 
-  // binary heap keyed on f
   const heap: number[] = [startI]
   const push = (i: number) => {
     heap.push(i)
@@ -203,9 +236,8 @@ export function route(
     for (const [dx, dz] of STEPS) {
       const nx = cx + dx
       const nz = cz + dz
-      if (!free(nx, nz)) continue
-      // no cutting: both orthogonal neighbours must be free for a diagonal
-      if (dx !== 0 && dz !== 0 && (!free(cx + dx, cz) || !free(cx, cz + dz))) continue
+      if (!free(nx, nz, level)) continue
+      if (dx !== 0 && dz !== 0 && (!free(cx + dx, cz, level) || !free(cx, cz + dz, level))) continue
       const ni = idx(nx, nz)
       if (closed[ni]) continue
       const step = dx !== 0 && dz !== 0 ? 1.4142 : 1
@@ -221,7 +253,6 @@ export function route(
 
   if (prev[goalI] === -1 && goalI !== startI) return []
 
-  // walk back
   const cells: number[] = []
   for (let c = goalI; c !== -1 && cells.length < 4000; c = prev[c]) {
     cells.push(c)
@@ -230,7 +261,6 @@ export function route(
   if (cells[cells.length - 1] !== startI) return []
   cells.reverse()
 
-  // collapse collinear runs, then append the true destination
   const pts: { x: number; z: number }[] = []
   const dir = (a: number, b: number) => {
     const ax = a % COLS
@@ -246,9 +276,50 @@ export function route(
     const cz = (cells[i] - cx) / COLS
     pts.push({ x: worldX(cx), z: worldZ(cz) })
   }
-  // snap the final waypoint onto the real target
   pts[pts.length - 1] = { x: to.x, z: to.z }
   return pts
 }
 
+/**
+ * A* between two world points ON THE SAME LEVEL. Kept for callers that already
+ * know their level (the sprite view, the self-test). Returns an empty array when
+ * no route exists — the caller then falls back to a straight line so an agent
+ * never freezes in place.
+ */
+export function route(
+  from: { x: number; z: number },
+  to: { x: number; z: number },
+  level: Level = 0,
+): { x: number; z: number }[] {
+  return routeOnLevel(from, to, level)
+}
+
+export type Waypoint = { x: number; z: number; level: Level }
+
+/**
+ * A* ACROSS levels, via the stair shaft.
+ *
+ * Same level: one route. Different levels: walk to the stair on the current floor,
+ * climb (the shaft is walkable on both grids, so this is the hand-off), then walk
+ * from the stair to the destination on the other floor. The stair waypoint is
+ * emitted twice with different levels, which is what tells the mover to climb.
+ */
+export function routeBetween(
+  from: { x: number; z: number; level: Level },
+  to: { x: number; z: number; level: Level },
+): Waypoint[] {
+  if (from.level === to.level) {
+    return routeOnLevel(from, to, from.level).map((p) => ({ ...p, level: from.level }))
+  }
+  const toStair = routeOnLevel(from, stairCentre, from.level)
+  const fromStair = routeOnLevel(stairCentre, to, to.level)
+  if (!toStair.length || !fromStair.length) return []
+  return [
+    ...toStair.map((p) => ({ ...p, level: from.level })),
+    { x: stairCentre.x, z: stairCentre.z, level: to.level },
+    ...fromStair.map((p) => ({ ...p, level: to.level })),
+  ]
+}
+
 /** Exposed for the self-check and for debugging the nav grid. */
+export const NAV_DEBUG = { COLS, ROWS, walkable }

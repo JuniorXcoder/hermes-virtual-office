@@ -42,6 +42,8 @@ export type Activity =
   | 'garden'
   | 'read'
   | 'coffee'
+  /** Sitting on a poolside bench, watching the water. */
+  | 'pool'
 
 export type AnimAgent = {
   avatar: Avatar
@@ -225,7 +227,7 @@ function garden(a: AnimAgent, t: number) {
 /** Seated in the armchair with a book: page turns every few seconds. */
 function read(a: AnimAgent, t: number) {
   const av = a.avatar
-  sit(a, SEATS.nook.hip, SEATS.nook.thigh, SEATS.nook.knee)
+  sit(a, SEATS.bench.hip, SEATS.bench.thigh, SEATS.bench.knee)
   av.chest.rotation.x = -14 * D
   av.chest.rotation.y = wave(t, 0.28, a.phase) * 5 * D
   av.neck.rotation.x = 14 * D
@@ -266,6 +268,27 @@ function coffee(a: AnimAgent, t: number) {
   L.shoulder.rotation.x = -28 * D
   L.shoulder.rotation.z = -16 * D
   L.elbow.rotation.x = -52 * D
+}
+
+/** Sitting on a poolside bench, watching the water. */
+function pool(a: AnimAgent, t: number) {
+  const av = a.avatar
+  sit(a, SEATS.bench.hip, SEATS.bench.thigh, SEATS.bench.knee)
+  // leaning back on the bench, hands resting on the lap
+  av.chest.rotation.x = 6 * D
+  av.chest.rotation.y = wave(t, 0.22, a.phase) * 4 * D
+  av.neck.rotation.x = -4 * D
+  av.head.rotation.x = 4 * D
+  av.head.rotation.y = wave(t, 0.18, a.phase) * 16 * D
+  const [L, R] = av.arms
+  for (const [arm, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    arm.shoulder.rotation.x = -18 * D
+    arm.shoulder.rotation.z = sign * 14 * D
+    arm.elbow.rotation.x = -46 * D
+  }
 }
 
 /** Relaxed sit on the sofa without a controller. */
@@ -310,6 +333,7 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   garden,
   read,
   coffee,
+  pool,
 }
 
 /** Apply the pose for this frame. `dt` ramps `ease` so transitions are not snaps. */

@@ -22,6 +22,7 @@ export function parseSoulMarker(soul: string): { role?: AgentRole; division?: Ag
 export const ROLE_LABEL: Record<AgentRole, string> = {
   ceo: 'CEO',
   orchestrator: 'Orchestrator',
+  manager: 'Manager',
   backend: 'Backend',
   frontend: 'Frontend',
   qa: 'QA',
@@ -36,6 +37,7 @@ export const ROLE_LABEL: Record<AgentRole, string> = {
 const ROLE_JOB: Record<AgentRole, string> = {
   ceo: 'ambil keputusan akhir, bagi tugas ke divisi, jaga visi',
   orchestrator: 'orkestrasi task antar agent, pastikan tidak ada yang stuck',
+  manager: 'pimpin divisi, bagi kerja ke staff, jawab pertanyaan staff (Q&A)',
   backend: 'API, database, logika server — kode yang jalan, bukan janji',
   frontend: 'UI/UX yang rapi, responsif, enak dipakai',
   qa: 'verifikasi hasil dengan bukti nyata, tolak klaim tanpa evidence',
