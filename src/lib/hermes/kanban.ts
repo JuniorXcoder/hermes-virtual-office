@@ -170,6 +170,49 @@ export async function listTasks(opts: { includeArchived?: boolean } = {}): Promi
   return rows.map(toTask)
 }
 
+/**
+ * Satu task DENGAN DETAILNYA — peristiwa, komentar, induk, dan error terakhir.
+ *
+ * `detail` ditambahkan karena `list --json` tidak membawanya: kolom papan memberi tahu SEBUAH
+ * task diblokir, tapi hanya peristiwa `blocked` yang memberi tahu KENAPA. Versi sebelumnya
+ * mengambil `show --json` lalu membuang empat bidang yang paling berguna di dalamnya
+ * (`events`, `comments`, `latest_summary`, `last_failure_error`), jadi UI-nya hanya bisa
+ * menampilkan kolom — dan itulah kenapa sebuah papan bisa penuh tanpa satu pun sebab.
+ */
+export type TaskDetail = {
+  events: { kind: string; payload?: Record<string, unknown>; created_at?: number }[]
+  comments: { author?: string; body?: string; created_at?: number }[]
+  latestSummary: string | null
+  lastFailureError: string | null
+  children: string[]
+}
+
+export async function getTaskDetail(id: string): Promise<TaskDetail | null> {
+  const out = await kanban(['show', id, '--json']).catch(() => '')
+  const start = out.search(/[[{]/)
+  if (start < 0) return null
+  try {
+    const parsed = JSON.parse(out.slice(start)) as {
+      task?: { last_failure_error?: string | null }
+      events?: { kind: string; payload?: Record<string, unknown>; created_at?: number }[]
+      comments?: { author?: string; body?: string; created_at?: number }[]
+      latest_summary?: string | null
+      children?: unknown
+    }
+    return {
+      events: Array.isArray(parsed.events) ? parsed.events : [],
+      comments: Array.isArray(parsed.comments) ? parsed.comments : [],
+      latestSummary: parsed.latest_summary ?? null,
+      lastFailureError: parsed.task?.last_failure_error ?? null,
+      children: Array.isArray(parsed.children)
+        ? parsed.children.filter((c): c is string => typeof c === 'string')
+        : [],
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function getTask(id: string): Promise<Task | null> {
   const out = await kanban(['show', id, '--json']).catch(() => '')
   const start = out.search(/[[{]/)
@@ -844,4 +887,50 @@ export async function listRuns(taskId: string): Promise<RunInfo[]> {
 /** Raw log tail for a task, used as the terminal-peeker body. */
 export async function taskLog(taskId: string, bytes = 16_000): Promise<string> {
   return kanban(['log', taskId, '--tail', String(bytes)]).catch(() => '')
+}
+
+/* ------------------------------------------------------------------ ESTOP -- */
+
+/**
+ * Jeda / lanjutkan SELURUH sistem.
+ *
+ * `hermes pause` menulis sentinel `$HERMES_HOME/ESTOP`; `hermes resume` menghapusnya. Ini
+ * SATU-SATUNYA aksi di office yang memengaruhi seluruh instalasi, bukan satu task — jadi
+ * hanya berjalan kalau manusia memintanya, dan alasannya wajib (`checkAction` yang memutuskan,
+ * bukan berkas ini).
+ */
+export async function pauseAll(reason: string): Promise<string> {
+  return hermesWrite(['pause', '--reason', reason])
+}
+
+export async function resumeAll(): Promise<string> {
+  return hermesWrite(['resume'])
+}
+
+/** Buka blokir dengan jenis yang dipilih manusia. Lihat `control.ts` untuk arti tiap jenis. */
+export async function advanceTask(
+  action: 'unblock' | 'promote' | 'release',
+  taskId: string,
+  reason?: string,
+): Promise<string> {
+  switch (action) {
+    case 'unblock':
+      return kanban(['unblock', taskId, '--reason', reason || 'dibuka dari office'])
+    case 'promote':
+      return kanban(['promote', taskId, reason || 'didorong dari office'])
+    case 'release':
+      return kanban(['reclaim', taskId])
+  }
+}
+
+/**
+ * Kirim instruksi ke worker yang sedang jalan, TANPA menghentikannya.
+ *
+ * Ini yang disebut "steer": agent yang sedang bekerja diberi arahan baru di tengah jalan.
+ * Dasarnya adalah `hermes kanban comment`, yang oleh CLI diteruskan ke sesi worker — jadi
+ * tidak ada mekanisme baru yang diciptakan di sini, dan tidak ada worker yang perlu dibunuh.
+ */
+export async function steerTask(taskId: string, instruction: string): Promise<boolean> {
+  await kanban(['comment', taskId, instruction])
+  return true
 }

@@ -9,9 +9,19 @@
  *
  * Run: npm run selftest
  */
-import { readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { facingProblems } from '../src/lib/office/facing'
 import { assessHealth, HEALTH_COLOR, HEALTH_THRESHOLDS } from '../src/lib/office/health'
+import {
+  LOOP_THRESHOLD,
+  STUCK_MINUTES,
+  needsHuman,
+  readBlock,
+  readBoard,
+  readStuck,
+} from '../src/lib/hermes/board'
+import { ACTION_EFFECT, ESTOP_PATH, checkAction, readPause, type ActionKind } from '../src/lib/hermes/control'
+import type { Task } from '../src/types/hermes'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -3700,6 +3710,105 @@ void (async () => {
     }
 
     check('health tells danger from calm, and the lobby lamp shows it', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // KENDALI: APA YANG MENUNGGU MANUSIA, DAN APA YANG BOLEH DITEKAN.
+  //
+  // Ini satu-satunya bagian office yang MENGUBAH keadaan Hermes, jadi yang diuji bukan
+  // tampilannya: yang diuji adalah KEPUTUSANNYA. Dua hal paling penting, dan dua-duanya
+  // adalah cara panel yang membuat kegagalan terlihat justru jadi alat yang salah:
+  //
+  //   1. Sebab blokir harus dibedakan. "Tunggu task lain" selesai SENDIRI; "tunggu keputusan"
+  //      menunggu SELAMANYA. Papan yang menyamakan keduanya membuat operator memeriksa hal
+  //      yang tidak perlu, dan melewatkan yang perlu.
+  //   2. Aksi berbahaya harus DITOLAK tanpa alasan tertulis. Yang paling gawat: `pauseAll`
+  //      menghentikan seluruh sistem.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // ── sebab blokir ──
+    const blocked = (kind: string | null, recurrences = 1) => [
+      { kind: 'created', payload: {} },
+      { kind: 'blocked', payload: { reason: 'menunggu vendor jawab', kind, recurrences } },
+    ]
+    const dep = readBlock(blocked('dependency'))
+    const need = readBlock(blocked('needs_input'))
+    if (!dep || !need) problems.push('sebab blokir tidak terbaca dari peristiwa')
+    else {
+      if (needsHuman(dep.kind)) problems.push('"tunggu task lain" dianggap menunggu MANUSIA — akan salah masuk daftar kerja')
+      if (!needsHuman(need.kind)) problems.push('"tunggu keputusan" TIDAK dianggap menunggu manusia — justru itu yang menunggu selamanya')
+      if (dep.reason !== 'menunggu vendor jawab') problems.push('teks alasan blokir tidak terbaca')
+      if (!dep.looping && readBlock(blocked('dependency', LOOP_THRESHOLD))?.looping !== true) {
+        problems.push(`blokir ${LOOP_THRESHOLD}x tidak ditandai berputar di tempat`)
+      }
+    }
+    // Yang TERAKHIR yang berlaku: task bisa diblokir berkali-kali.
+    const twice = readBlock([
+      { kind: 'blocked', payload: { kind: 'dependency', reason: 'pertama' } },
+      { kind: 'unblocked', payload: {} },
+      { kind: 'blocked', payload: { kind: 'capability', reason: 'kedua' } },
+    ])
+    if (twice?.reason !== 'kedua') problems.push('sebab blokir yang dipakai bukan yang TERAKHIR')
+
+    // ── izin aksi ──
+    if (checkAction({ action: 'pauseAll' }).allowed) {
+      problems.push('menghentikan SELURUH sistem boleh tanpa alasan — catatannya akan jadi "seseorang menjeda semuanya"')
+    }
+    if (!checkAction({ action: 'pauseAll', reason: 'provider 5xx terus' }).allowed) {
+      problems.push('pause dengan alasan yang sah malah ditolak')
+    }
+    if (checkAction({ action: 'unblock', taskId: 't_12345678' }).allowed) {
+      problems.push('membuka blokir boleh tanpa alasan — kenapa blokirnya dicabut tidak akan tercatat')
+    }
+    if (checkAction({ action: 'unblock', taskId: 'bukan-id', reason: 'x y z' }).allowed) {
+      problems.push('unblock menerima id task yang tidak sah')
+    }
+    const bad = 'pauseAll' as ActionKind
+    if (ACTION_EFFECT[bad].danger !== true) {
+      problems.push('menghentikan seluruh sistem tidak ditandai berbahaya — UI tidak akan minta konfirmasi kedua')
+    }
+    if (!/TIDAK dibunuh/.test(ACTION_EFFECT[bad].effect)) {
+      problems.push('akibat pause tidak menjelaskan bahwa kerja yang sedang jalan TIDAK dibunuh — itu yang paling sering disalahpahami')
+    }
+
+    // ── macet: ambang harus BEDA per kolom ──
+    // Menyamakan ambang akan menandai seluruh backlog sebagai macet, dan papan yang menandai
+    // semuanya sama saja dengan papan yang tidak menandai apa pun.
+    if (STUCK_MINUTES.running >= STUCK_MINUTES.ready) {
+      problems.push('ambang macet untuk "running" tidak lebih ketat dari "ready" — seluruh backlog akan ditandai macet')
+    }
+    const runTask = { id: 't_12345678', title: 'x', status: 'running' } as Task
+    if (readStuck(runTask, STUCK_MINUTES.running - 5) !== null) problems.push('task running yang belum lewat ambang sudah ditandai macet')
+    if (readStuck(runTask, STUCK_MINUTES.running + 5) === null) problems.push('task running yang lewat ambang TIDAK ditandai macet')
+
+    // ── satu papan utuh ──
+    const tasks = [
+      { id: 't_11111111', title: 'A', status: 'blocked' },
+      { id: 't_22222222', title: 'B', status: 'blocked' },
+      { id: 't_33333333', title: 'C', status: 'done' },
+    ] as Task[]
+    const detail = new Map([
+      ['t_11111111', { events: blocked('needs_input') }],
+      ['t_22222222', { events: blocked('dependency') }],
+    ])
+    const board = readBoard(tasks, detail)
+    if (board.waitingOnHuman.length !== 1) {
+      problems.push(`papan menyebut ${board.waitingOnHuman.length} task menunggu manusia, seharusnya 1`)
+    }
+    if (!board.waitingOnHuman.every((w) => w.id === 't_11111111')) {
+      problems.push('papan memasukkan task "tunggu task lain" ke daftar menunggu manusia')
+    }
+    const calmBoard = readBoard([{ id: 't_33333333', title: 'C', status: 'done' } as Task], new Map())
+    if (!calmBoard.calm) problems.push('papan yang tenang tidak dilaporkan tenang')
+
+    // ── ESTOP dibaca dari BERKAS, dan berkas rusak tetap dihitung jeda ──
+    if (readPause().paused !== existsSync(ESTOP_PATH)) {
+      problems.push('keadaan jeda tidak sesuai dengan keberadaan sentinel')
+    }
+
+    check('control knows what needs a human, and what needs a reason', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */
