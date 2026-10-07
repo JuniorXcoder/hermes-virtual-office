@@ -195,6 +195,8 @@ export type Activity =
   | 'bbq'
   /** Sitting in the racing simulator, hands on the wheel, feet on the pedals. */
   | 'racing'
+  /** On the bowling approach, ball in hand, swinging it down the lane. */
+  | 'bowling'
 
 export type AnimAgent = {
   avatar: Avatar
@@ -987,6 +989,70 @@ function racing(a: AnimAgent, t: number) {
   RA.elbow.rotation.x = -10 * D
 }
 
+/** The bowling ball, in the right fist. */
+function holdBowlingBall(a: AnimAgent) {
+  const av = a.avatar
+  const f = fistInAvatar(av, 1, _fistB)
+  const b = av.held.bowlingBall
+  b.visible = true
+  b.position.copy(f)
+  b.rotation.set(0, 0, 0)
+}
+
+/**
+ * The bowling delivery: ball in the right hand, a pendulum swing, a release, a follow-through.
+ *
+ * ANIMATED, NOT KEYED. A bowling action IS a pendulum — the ball runs back, swings down
+ * through the release, and the arm carries on up behind the head — so the arm angle is a
+ * sine of the cycle. Hand-keying four poses to fake that is how you get a mime that stalls
+ * between keys.
+ *
+ * The body follows the arm the way a real bowler's does: a forward lean that deepens through
+ * the release, a counterweight left arm swinging the other way, and a small knee dip at the
+ * bottom of the swing. `standLegs` alone would hold the legs rigid through all of it, which
+ * is exactly what makes a throwing pose read as a statue rather than a throw.
+ *
+ * The ball leaves the hand just past the bottom of the arc — which is where a real release
+ * happens, and the only frame where hiding it is not a pop.
+ */
+function bowling(a: AnimAgent, t: number) {
+  const av = a.avatar
+  // one delivery per ~3.2 s
+  const c = (t * 0.31 + a.phase) % 1
+  const ph = c * Math.PI * 2
+  // +1 = top of the BACKSWING, -1 = top of the FOLLOW-THROUGH
+  const s = Math.sin(ph)
+  // 0 at the backswing through to 1 at the follow-through: drives the body, not the arm
+  const carry = (1 - Math.cos(ph)) / 2
+
+  // legs: a stance that dips and drives rather than standing to attention
+  const [L, R] = av.legs
+  L.shoulder.rotation.x = (-8 - carry * 10) * D
+  R.shoulder.rotation.x = (-16 - carry * 8) * D
+  L.elbow.rotation.x = (12 + carry * 6) * D
+  R.elbow.rotation.x = (26 - carry * 10) * D
+  av.hips.position.y = HIP_STAND - carry * 0.07
+
+  // the torso leans into the delivery; the head stays on the pins
+  av.chest.rotation.x = (-4 - carry * 22) * D
+  av.chest.rotation.y = (6 - carry * 12) * D
+  av.head.rotation.x = (2 + carry * 12) * D
+  av.head.rotation.y = (-4 + carry * 8) * D
+
+  const [LA, RA] = av.arms
+  // the bowling arm: back at s=+1, through at s=-1
+  RA.shoulder.rotation.x = (14 + s * 52 - carry * 22) * D
+  RA.shoulder.rotation.z = (10 + carry * 8) * D
+  RA.elbow.rotation.x = (-18 - carry * 14) * D
+  // the left arm counterweights, then tucks in
+  LA.shoulder.rotation.x = (-30 - s * 26) * D
+  LA.shoulder.rotation.z = (-16 - carry * 10) * D
+  LA.elbow.rotation.x = (-36 - carry * 10) * D
+
+  // the ball rides the right fist until the release, just past the bottom of the arc
+  if (c < 0.56) holdBowlingBall(a)
+}
+
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   idle: (a, t) => {
     standLegs(a, t)
@@ -1022,6 +1088,7 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   dumbbell,
   bbq,
   racing,
+  bowling,
 }
 
 /** Apply the pose for this frame. `dt` ramps `ease` so transitions are not snaps. */
@@ -1037,6 +1104,7 @@ export function animate(a: AnimAgent, t: number, dt: number) {
   held.burger.visible = false
   held.pizza.visible = false
   held.tongs.visible = false
+  held.bowlingBall.visible = false
   // THE WAIST IS RESET EVERY FRAME, for the same reason the equipment is.
   //
   // Only three poses set it (swim, benchpress, recline), so without this a body that had

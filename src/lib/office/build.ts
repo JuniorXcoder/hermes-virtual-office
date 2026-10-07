@@ -52,6 +52,11 @@ import {
   DART_THROW,
   RACING_RIGS,
   RACING_SEAT_H,
+  BOWLING,
+  PIN_R,
+  PIN_H,
+  BALL_R,
+  PIN_OFFSETS,
   courtyardWallSegments,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
@@ -213,6 +218,41 @@ function pavementTexture(base: string, joint: string) {
       c.moveTo(0, i * t)
       c.lineTo(s, i * t)
       c.stroke()
+    }
+  })
+}
+
+/**
+ * The bowling lane's boards: long maple strips with grain and a dark seam between each pair.
+ *
+ * BOARDS, not planks. A lane is 39 strips running its LENGTH, so the texture has to be
+ * mapped so the seams run down the lane — a generic wood texture laid across it reads as a
+ * table top, which is a different object entirely. The seams are also the strongest single
+ * cue that says "bowling lane" from across a room.
+ */
+function laneTexture() {
+  return canvasTex(512, (c, s) => {
+    const rand = rng(41)
+    const boards = 16
+    const w = s / boards
+    for (let i = 0; i < boards; i++) {
+      // each board a slightly different tone, which is what stops it reading as printed
+      const t = 0.86 + rand() * 0.28
+      c.fillStyle = `rgb(${Math.round(201 * t)},${Math.round(160 * t)},${Math.round(106 * t)})`
+      c.fillRect(i * w, 0, w, s)
+      for (let g = 0; g < 7; g++) {
+        c.globalAlpha = 0.05 + rand() * 0.07
+        c.strokeStyle = rand() > 0.5 ? '#8a6a3c' : '#e8cfa4'
+        c.lineWidth = 1
+        const x = i * w + rand() * w
+        c.beginPath()
+        c.moveTo(x, 0)
+        c.lineTo(x + (rand() - 0.5) * 6, s)
+        c.stroke()
+        c.globalAlpha = 1
+      }
+      c.fillStyle = 'rgba(60,40,20,0.5)'
+      c.fillRect(i * w, 0, 1.5, s)
     }
   })
 }
@@ -2583,6 +2623,121 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       rg.add(mat)
       group.add(rg)
     }
+  }
+
+  /* ------------------------------------------------------------------ bowling -- */
+  // One shortened arcade lane down the middle of the lounge's south half, behind the racing
+  // bay. Everything is placed from BOWLING, so the surface, the pins, the foul line and the
+  // bowler's idle spot cannot disagree about where the lane is — the same rule as the rec
+  // gear above, and for the same reason.
+  {
+    const laneLen = BOWLING.zFoul - BOWLING.zEnd
+    const midZ = (BOWLING.zFoul + BOWLING.zEnd) / 2
+    const halfW = BOWLING.w / 2
+
+    // The playing surface. The boards must run its LENGTH: the map's U axis lands across the
+    // box top, so the texture's seams (columns of the canvas) end up running along z. Laid
+    // the other way it is a table top, which is a different object.
+    const laneTex = track(laneTexture())
+    laneTex.repeat.set(39 / 16, laneLen / 2.4)
+    const surface = new THREE.Mesh(
+      new THREE.BoxGeometry(BOWLING.w, 0.06, laneLen),
+      new THREE.MeshStandardMaterial({ map: laneTex, roughness: 0.22, metalness: 0.05 }),
+    )
+    surface.position.set(BOWLING.x, BOWLING.y - 0.03, midZ)
+    surface.receiveShadow = true
+    group.add(surface)
+
+    // gutters: a channel each side, dropped below the boards, with an outer wall so it reads
+    // as a channel rather than as a painted stripe
+    for (const side of [-1, 1]) {
+      const floor = box(BOWLING.gutter, 0.05, laneLen, 0x4a5158, { rough: 0.55 })
+      floor.position.set(BOWLING.x + side * (halfW + BOWLING.gutter / 2), -0.02, midZ)
+      group.add(floor)
+      const wall = box(0.05, 0.18, laneLen, 0x2b3138, { rough: 0.5 })
+      wall.position.set(BOWLING.x + side * (halfW + BOWLING.gutter), -0.005, midZ)
+      group.add(wall)
+    }
+
+    // the approach, laid flush with the floor south of the foul line
+    const approach = box(BOWLING.w + 0.9, 0.024, 1.4, 0x9a8266, { rough: 0.85 })
+    approach.position.set(BOWLING.x, 0.006, BOWLING.zFoul + 0.7)
+    group.add(approach)
+
+    // the foul line, and the seven aiming arrows. The arrows stagger: the centre sits deepest,
+    // which is the shape a real lane uses to point you at the pocket.
+    const foul = box(BOWLING.w, 0.014, 0.06, 0x161c20, { rough: 0.6 })
+    foul.position.set(BOWLING.x, BOWLING.y + 0.007, BOWLING.zFoul - 0.04)
+    group.add(foul)
+    for (const ax of [-0.28, -0.19, -0.09, 0, 0.09, 0.19, 0.28]) {
+      const arrow = box(0.035, 0.012, 0.1, 0x2b3138, { rough: 0.6 })
+      arrow.position.set(BOWLING.x + ax, BOWLING.y + 0.006, BOWLING.zFoul - (4.9 - Math.abs(ax) * 1.6))
+      group.add(arrow)
+    }
+    // a slightly darker deck under the pins, so the triangle is not floating on open boards
+    const deck = box(BOWLING.w, 0.014, 1.0, 0x8a6a44, { rough: 0.5 })
+    deck.position.set(BOWLING.x, BOWLING.y + 0.005, BOWLING.headPinZ - 0.45)
+    group.add(deck)
+
+    // the ten pins, from the one triangle definition
+    for (const [across, back] of PIN_OFFSETS) {
+      const pin = new THREE.Group()
+      pin.position.set(
+        BOWLING.x + across * BOWLING.pinSpacing,
+        BOWLING.y,
+        BOWLING.headPinZ - back * BOWLING.pinSpacing,
+      )
+      // body: fat at the belly, tapered to the neck
+      const body = cyl(PIN_R * 0.6, PIN_R, PIN_H * 0.72, 0xf4f1e8, 12, 0)
+      body.position.y = PIN_H * 0.36
+      pin.add(body)
+      const neck = cyl(PIN_R * 0.26, PIN_R * 0.6, PIN_H * 0.16, 0xf4f1e8, 12, 0)
+      neck.position.y = PIN_H * 0.72 + PIN_H * 0.08
+      pin.add(neck)
+      const head = new THREE.Mesh(new THREE.SphereGeometry(PIN_R * 0.3, 12, 10), stdMat(0xf4f1e8, { rough: 0.42 }))
+      head.position.y = PIN_H * 0.88 + PIN_R * 0.2
+      pin.add(head)
+      // the two red neck rings — what makes ten white sticks read as tenpins
+      for (const ry of [PIN_H * 0.62, PIN_H * 0.7]) {
+        const ring = cyl(PIN_R * 0.62, PIN_R * 0.62, 0.012, 0xc0392b, 14, 0)
+        ring.position.y = ry
+        pin.add(ring)
+      }
+      group.add(pin)
+    }
+
+    // the ball return: a rack beside the approach with three house balls racked on it
+    const retX = BOWLING.x + halfW + BOWLING.gutter + 0.36
+    const retZ = BOWLING.zFoul - 0.1
+    const retBody = box(0.34, 0.9, 1.9, 0x2b3138, { metal: 0.35, rough: 0.45 })
+    retBody.position.set(retX, 0.45, retZ)
+    group.add(retBody)
+    const retRail = box(0.32, 0.07, 1.9, 0x3d454d, { metal: 0.6, rough: 0.3 })
+    retRail.position.set(retX, 0.935, retZ)
+    group.add(retRail)
+    for (const [i, rz] of [-0.56, 0, 0.56].entries()) {
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_R, 16, 12),
+        stdMat([0x1d3f8f, 0xb03030, 0x2f7f4f][i], { rough: 0.3 }),
+      )
+      ball.position.set(retX, 0.97 + BALL_R, retZ + rz)
+      group.add(ball)
+    }
+
+    // the score screen over the pin deck, on two posts clear of the lane
+    const scrY = BOWLING.y + 1.9
+    const scrZ = BOWLING.zEnd - 0.34
+    for (const side of [-1, 1]) {
+      const post = cyl(0.04, 0.04, scrY, 0x2b3138, 8, 0.6)
+      post.position.set(BOWLING.x + side * 0.86, scrY / 2, scrZ + 0.08)
+      group.add(post)
+    }
+    const scrBody = box(1.7, 0.52, 0.06, 0x141a1f, { metal: 0.3, rough: 0.35 })
+    scrBody.position.set(BOWLING.x, scrY, scrZ)
+    group.add(scrBody)
+    const scrFace = box(1.58, 0.44, 0.02, 0x0e1620, { emissive: 0x2a5a8a, ei: 0.55 })
+    scrFace.position.set(BOWLING.x, scrY, scrZ + 0.04)
+    group.add(scrFace)
   }
 
   /* ------------------------------------------------------------ lighting -- */

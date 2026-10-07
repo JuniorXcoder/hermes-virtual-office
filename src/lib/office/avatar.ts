@@ -11,7 +11,7 @@
  * which is why every posed arm ended up beside the ears.
  */
 import * as THREE from 'three'
-import { ROLE_COLORS } from './layout'
+import { BALL_R, ROLE_COLORS } from './layout'
 import type { AgentRole } from '@/types/hermes'
 
 export type Limb = {
@@ -64,6 +64,13 @@ export type Avatar = {
     pizza: THREE.Group
     /** BBQ tongs, one in the right hand. */
     tongs: THREE.Group
+    /**
+     * A bowling ball, on the right palm.
+     *
+     * The FIST is the ball's TOP, not its centre: a hand rests on top of a 0.218 m ball, so
+     * centring it on the fist would sink half the ball through the wrist.
+     */
+    bowlingBall: THREE.Group
   }
 }
 
@@ -284,6 +291,41 @@ function buildTongs(): THREE.Group {
   return g
 }
 
+/**
+ * A bowling ball, held in one fist.
+ *
+ * Built with the fist at the ball's TOP: the shell hangs 0.109 below the grip point, so the
+ * palm sits on it the way a hand actually carries a house ball. Centring it would bury half
+ * the ball in the forearm.
+ *
+ * The three finger holes are what stop it reading as a plain sphere — a glossy blue ball with
+ * no holes is a ball, not a bowling ball.
+ */
+function buildBowlingBall(): THREE.Group {
+  const g = new THREE.Group()
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_R, 20, 14),
+    new THREE.MeshStandardMaterial({ color: 0x1d3f8f, roughness: 0.32, metalness: 0.18 }),
+  )
+  shell.position.y = -BALL_R
+  g.add(shell)
+  const holeMat = new THREE.MeshStandardMaterial({ color: 0x0a1220, roughness: 0.95 })
+  for (const [hx, hz] of [
+    [-0.033, -0.022],
+    [0.033, -0.022],
+    [0, 0.042],
+  ] as const) {
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.06, 8), holeMat)
+    hole.position.set(hx, -BALL_R + 0.085, hz)
+    g.add(hole)
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true
+  })
+  g.visible = false
+  return g
+}
+
 export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   const group = new THREE.Group()
   const accent = ROLE_COLORS[role] ?? 0x6f8fa8
@@ -393,6 +435,8 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   group.add(pizza)
   const tongs = buildTongs()
   group.add(tongs)
+  const bowlingBall = buildBowlingBall()
+  group.add(bowlingBall)
 
   group.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
@@ -401,5 +445,5 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     }
   })
 
-  return { group, chest, neck, head, hips, waist, arms, legs, badge, held: { barbell, barbellGrips, dumbbells, burger, pizza, tongs } }
+  return { group, chest, neck, head, hips, waist, arms, legs, badge, held: { barbell, barbellGrips, dumbbells, burger, pizza, tongs, bowlingBall } }
 }

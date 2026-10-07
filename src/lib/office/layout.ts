@@ -1003,6 +1003,61 @@ export const RACING_RIGS = [
 /** Seat surface height — from SEATS.chair, so the seated pose is unchanged. */
 export const RACING_SEAT_H = 0.46
 
+/* --------------------------------------------------------------- bowling -- */
+
+/**
+ * The bowling lane: one shortened arcade lane down the middle of the lounge's south half,
+ * behind the racing bay.
+ *
+ * Measured, not guessed. The lounge is x 14.15..27.85, z -20.85..2, but its free run is only
+ * z -11.0 .. 1.5: the sofa group takes the north end and the racing bay occupies z
+ * -15.8..-13.2. That gives 12 m from foul line to pin deck rather than the regulation 18.3 m,
+ * which is what an arcade lane is anyway.
+ *
+ * It runs ALONG z with the bowler at the SOUTH end throwing north. That is forced: the room
+ * is 13.7 m wide and 22.85 m deep, so a lane across x would be shorter still, and a lane
+ * aimed at a side wall is not a lane.
+ *
+ * ONE definition, read by the mesh, the footprints and the idle spot — the same rule as
+ * everything else here, for the same reason.
+ */
+export const BOWLING = {
+  /** Centre of the lane, across its width. */
+  x: 21.0,
+  /** The playing surface, across. A real lane is 1.05 m; the gutters sit outside it. */
+  w: 1.06,
+  /** Gutter width, each side. */
+  gutter: 0.24,
+  /** Foul line (south, where the bowler stands) and the far end of the surface. */
+  zFoul: 0.5,
+  zEnd: -10.6,
+  /** The lane surface rides this far above the floor slab it is laid on. */
+  y: 0.05,
+  /** The head pin's centre, and the spacing that builds the other nine around it. */
+  headPinZ: -9.6,
+  pinSpacing: 0.305,
+} as const
+/** A pin: 0.121 m across the belly and 0.38 m tall, regulation. */
+export const PIN_R = 0.06
+export const PIN_H = 0.38
+/** 0.218 m across — the regulation ball, and what the fingers wrap. */
+export const BALL_R = 0.109
+/** Where the bowler stands: on the approach, this far behind the foul line. */
+export const BOWLING_STAND_Z = BOWLING.zFoul + 0.75
+/**
+ * The nine pins behind the head pin, as (across, back) offsets in PIN SPACING units.
+ *
+ * Rows run back from the head pin at `sin(60°)` of the spacing, which is what makes the
+ * triangle equilateral rather than a grid — a square grid is the classic tell that a lane
+ * was laid out by eye.
+ */
+export const PIN_OFFSETS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [-0.5, 0.866], [0.5, 0.866],
+  [-1, 1.732], [0, 1.732], [1, 1.732],
+  [-1.5, 2.598], [-0.5, 2.598], [0.5, 2.598], [1.5, 2.598],
+] as const
+
 /* -------------------------------------------------------- dining tables -- */
 
 /**
@@ -1527,6 +1582,25 @@ export const FOOTPRINTS: Footprint[] = [
   // thrower's feet would fence off the very spot they stand on.
   ...RACING_RIGS.map((r, i) => fp(`lounge-racing-${i}`, r.x, r.z - 0.5, 0.7, 1.3, 0.9)),
   fp('lounge-dartboard', DARTBOARD.x, DARTBOARD.z, 0.08, DARTBOARD.r * 1.2, DARTBOARD.y + DARTBOARD.r),
+  // The bowling lane and its ball return. The lane footprint is the LANE (pins and surface),
+  // not the approach — fencing off the approach would wall in the very spot the bowler
+  // stands on, which is the mistake the dartboard comment above records.
+  fp(
+    'lounge-bowling',
+    BOWLING.x,
+    (BOWLING.zFoul + BOWLING.zEnd) / 2,
+    BOWLING.w / 2 + BOWLING.gutter,
+    (BOWLING.zFoul - BOWLING.zEnd) / 2,
+    BOWLING.y + PIN_H,
+  ),
+  fp(
+    'lounge-bowling-return',
+    BOWLING.x + BOWLING.w / 2 + BOWLING.gutter + 0.36,
+    BOWLING.zFoul - 0.1,
+    0.22,
+    1.15,
+    BOWLING.y + 0.95,
+  ),
 
   /* ------------------------------------------------------------ ceo suite -- */
   fp('ceo-desk', roomCentre('ceo').x, roomCentre('ceo').z - 1.5, 1.1, 0.6, 0.75, 'desk', 1),
@@ -1745,6 +1819,15 @@ export const IDLE_SPOTS: IdleSpot[] = [
   ...RACING_RIGS.map((r) => ({
     x: r.x, z: r.z, act: 'racing' as const, seated: true, face: r.facing + Math.PI, level: 0 as const,
   })),
+  // One bowler on the approach, aiming at the pins. The face is DERIVED from the lane, so
+  // moving the lane moves the aim with it instead of leaving the bowler throwing at a wall.
+  {
+    x: BOWLING.x,
+    z: BOWLING_STAND_Z,
+    act: 'bowling',
+    face: faceToward(BOWLING.x, BOWLING_STAND_Z, BOWLING.x, BOWLING.headPinZ),
+    level: 0,
+  },
 
   /* ---- under the second floor: the covered terrace ------------------------ */
   // The work bar: a body perched on each stool, facing the bar (north, toward the counter).

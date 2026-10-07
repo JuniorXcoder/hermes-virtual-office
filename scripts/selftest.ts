@@ -67,6 +67,8 @@ import {
   ROOM_SIGNS,
   RACING_RIGS,
   RACING_SEAT_H,
+  BOWLING,
+  PIN_H,
   DARTBOARD,
   TERRACE_PROPS,
   ROOM_PROPS,
@@ -3319,6 +3321,90 @@ void (async () => {
     }
 
     check("the racing wheel is on the column's driver side and the hands grip it", problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE BOWLING LANE: TEN PINS ON THE BOARDS, AND A BOWLER ON THE APPROACH.
+  //
+  // The lane is the kind of feature that fails silently. Pins can sit off the end of the
+  // surface, and the bowler's spot can land ON the lane instead of behind the foul line —
+  // which looks fine from above and means the avatar is standing in the gutter. Both are
+  // measured off the built mesh and the layout data.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const scene = new THREE.Scene()
+    buildOffice(scene, 12)
+    scene.updateMatrixWorld(true)
+
+    // the pins, identified by the body cylinder's exact height
+    const pins: THREE.Vector3[] = []
+    scene.traverse((n: any) => {
+      if (!n.isMesh || !n.geometry) return
+      const g: any = n.geometry
+      if (g.type !== 'CylinderGeometry') return
+      if (Math.abs((g.parameters?.height ?? 0) - PIN_H * 0.72) > 0.005) return
+      const v = new THREE.Vector3()
+      n.getWorldPosition(v)
+      if (Math.abs(v.x - BOWLING.x) > 1.5 || v.z > BOWLING.zFoul || v.z < BOWLING.zEnd - 1) return
+      pins.push(v)
+    })
+    if (pins.length !== 10) {
+      problems.push(`the lane has ${pins.length} pins, expected 10`)
+    } else {
+      for (const p of pins) {
+        if (Math.abs(p.x - BOWLING.x) > BOWLING.w / 2 + 0.01) {
+          problems.push(`a pin at x ${p.x.toFixed(2)} is off the side of the lane (half-width ${BOWLING.w / 2})`)
+        }
+        if (p.z < BOWLING.zEnd + 0.2 || p.z > BOWLING.zFoul) {
+          problems.push(`a pin at z ${p.z.toFixed(2)} is off the end of the lane (${BOWLING.zEnd}..${BOWLING.zFoul})`)
+        }
+      }
+      // the head pin must be exactly where the layout says, or the bowler is aiming at a guess
+      const head = pins.reduce((a, b) => (b.z > a.z ? b : a))
+      if (Math.abs(head.z - BOWLING.headPinZ) > 0.01 || Math.abs(head.x - BOWLING.x) > 0.01) {
+        problems.push(`the head pin sits at (${head.x.toFixed(2)}, ${head.z.toFixed(2)}), not (${BOWLING.x}, ${BOWLING.headPinZ})`)
+      }
+      // and the bowler must face it
+      const spot = IDLE_SPOTS.find((s) => s.act === 'bowling')
+      if (!spot) {
+        problems.push('no bowling idle spot, so nobody can ever use the lane')
+      } else {
+        if (Math.abs(spot.x - BOWLING.x) > BOWLING.w / 2 + BOWLING.gutter || spot.z <= BOWLING.zFoul) {
+          problems.push(`the bowler stands at (${spot.x}, ${spot.z}), which is on the lane rather than on the approach`)
+        }
+        const look = { x: Math.sin(spot.face), z: Math.cos(spot.face) }
+        const to = { x: head.x - spot.x, z: head.z - spot.z }
+        const dot = (look.x * to.x + look.z * to.z) / Math.hypot(to.x, to.z)
+        if (dot < 0.99) problems.push(`the bowler faces away from the head pin (dot ${dot.toFixed(2)})`)
+      }
+    }
+
+    // the ball must actually be IN the hand during the delivery, not near it
+    {
+      const av = buildAvatar('backend')
+      const pose = { avatar: av, activity: 'bowling' as Activity, ease: 1, phase: 0, meetingTalking: false }
+      let held = 0
+      let samples = 0
+      for (let i = 0; i < 40; i++) {
+        animate(pose, i * 0.08, 1 / 60)
+        av.group.updateMatrixWorld(true)
+        samples++
+        if (!av.held.bowlingBall.visible) continue
+        held++
+        const bp = new THREE.Vector3()
+        av.held.bowlingBall.getWorldPosition(bp)
+        const e = new THREE.Vector3()
+        av.arms[1].elbow.getWorldPosition(e)
+        const down = new THREE.Vector3(0, -1, 0).applyQuaternion(av.arms[1].elbow.getWorldQuaternion(new THREE.Quaternion()))
+        const gap = bp.distanceTo(e.addScaledVector(down, FIST_FROM_ELBOW))
+        if (gap > 0.02) problems.push(`the bowling ball is ${gap.toFixed(3)} m from the fist while held`)
+      }
+      if (held === 0) problems.push('the bowler never holds the ball')
+      if (held >= samples) problems.push('the ball is never released, so the delivery has no release')
+    }
+
+    check('the bowling lane has ten pins on the boards and a bowler aiming at them', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */
