@@ -25,6 +25,8 @@ import { MIN_SAMPLES, readProviders, type ProviderStat } from '../src/lib/hermes
 import { planFallback, readFallback } from '../src/lib/hermes/fallback'
 import { auditPathFor, beginAudit, readAudit } from '../src/lib/hermes/audit'
 import { readUsage } from '../src/lib/hermes/observability'
+import { EVIDENCE_BATCH_CAP, EVIDENCE_MARK_LABEL, readEvidence, splitEvidenceBatch, type EvidenceInput } from '../src/lib/hermes/evidence'
+import { markClass, markOf } from '../src/components/useEvidenceMarks'
 import type { Task } from '../src/types/hermes'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
@@ -4077,6 +4079,77 @@ void (async () => {
     }
 
     check('every control action is recorded before it runs, with its outcome', problems.length === 0, problems.join(' | '))
+  }
+
+  /* ---------------------------------------------- bukti hasil kerja (5.2) -- */
+  {
+    const none: EvidenceInput = {
+      latestSummary: null,
+      lastRunSummary: null,
+      lastRunOutcome: null,
+      lastRunMeta: null,
+      hasLog: false,
+      attachmentNames: [],
+    }
+
+    // Bentuk t_a07c2103 yang nyata: ringkasan panjang + metadata commit, log ada, lampiran [].
+    const proven = readEvidence(
+      { status: 'done', completedAt: '2026-10-08T03:00:00.000Z' },
+      {
+        ...none,
+        latestSummary: 'antrean persetujuan menghentikan agent; selftest lulus',
+        lastRunSummary: 'antrean persetujuan menghentikan agent; selftest lulus',
+        lastRunOutcome: 'completed',
+        lastRunMeta: { branch: 'stage5', commit: '412b68a', selftest: 'pass' },
+        hasLog: true,
+        attachmentNames: ['diff.patch'],
+      },
+    )
+    const p1: string[] = []
+    if (proven.verdict !== 'proven') p1.push(`verdict ${proven.verdict}, bukan proven`)
+    for (const k of ['summary', 'run', 'log', 'attachment'] as const) {
+      if (!proven.items.some((i) => i.kind === k)) p1.push(`item ${k} tidak tampil`)
+    }
+    const runItem = proven.items.find((i) => i.kind === 'run')
+    if (!runItem?.body?.includes('commit: 412b68a')) p1.push('metadata commit run tidak tampil')
+    if (!runItem?.label.includes('completed')) p1.push('outcome run tidak tampil')
+    if (runItem?.body?.includes('selftest lulus')) p1.push('ringkasan yang sama dengan latest_summary dihitung dua kali')
+    if (proven.completedAt !== '2026-10-08T03:00:00.000Z') p1.push('completedAt hilang')
+    check('a done task with a summary, run metadata, log and attachment reads as proven, every item shown', p1.length === 0, p1.join(' | '))
+
+    // Done tanpa satu pun bukti — termasuk run yang HANYA berkata "completed".
+    const p2: string[] = []
+    const bare = readEvidence({ status: 'done' }, none)
+    if (bare.verdict !== 'unproven') p2.push(`done tanpa bukti terbaca ${bare.verdict}`)
+    const outcomeOnly = readEvidence({ status: 'done' }, { ...none, lastRunOutcome: 'completed', lastRunSummary: '  ', lastRunMeta: { commit: '' } })
+    if (outcomeOnly.verdict !== 'unproven') p2.push('outcome "completed" saja dianggap bukti')
+    if (EVIDENCE_MARK_LABEL.unproven !== 'tanpa bukti') p2.push('label unproven bukan "tanpa bukti"')
+    if (markClass('unproven') === markClass('proven')) p2.push('unproven tampil sama dengan proven (hijau)')
+    check('a done task with no evidence reads as unproven, not as a plain "selesai"', p2.length === 0, p2.join(' | '))
+
+    // Netral: task belum done, id di luar batas batch, sumber gagal / belum terbaca.
+    const p3: string[] = []
+    const open = readEvidence({ status: 'running' }, { ...none, latestSummary: 'setengah jalan' })
+    if (open.verdict !== 'open') p3.push(`task running dinilai ${open.verdict}`)
+    if (!open.items.length) p3.push('item task terbuka tidak ditampilkan')
+    const ids = Array.from({ length: EVIDENCE_BATCH_CAP + 5 }, (_, i) => `t_${i.toString(16).padStart(8, '0')}`)
+    const split = splitEvidenceBatch([...ids, ids[0], 'bukan-id', 42])
+    if (split.checked.length !== EVIDENCE_BATCH_CAP) p3.push(`batch memeriksa ${split.checked.length}, bukan ${EVIDENCE_BATCH_CAP}`)
+    if (split.unchecked.length !== 5) p3.push(`${split.unchecked.length} id di luar batas, bukan 5`)
+    const doneTask = { id: 't_beyond', title: 'x', status: 'done', priority: 0 } as Task
+    const neutral = [
+      markOf({ byId: {}, readAt: Date.now(), error: null, busy: false }, doneTask),
+      markOf({ byId: null, readAt: null, error: 'HTTP 502', busy: false }, doneTask),
+      markOf({ byId: null, readAt: null, error: null, busy: true }, doneTask),
+    ]
+    for (const m of neutral) {
+      if (m === 'proven' || m === 'unproven') p3.push(`sumber kosong/tak diperiksa dinilai ${m}`)
+      else if (m && markClass(m) === markClass('proven')) p3.push(`${m} tampil hijau seperti terbukti`)
+    }
+    if (markOf({ byId: { t_beyond: 'proven' }, readAt: 1, error: null, busy: false }, { ...doneTask, status: 'running' }) !== null) {
+      p3.push('kartu yang belum done diberi penanda')
+    }
+    check('unread sources and ids past the batch cap stay neutral — never a false "terbukti"', p3.length === 0, p3.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

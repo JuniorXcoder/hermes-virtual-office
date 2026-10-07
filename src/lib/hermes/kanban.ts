@@ -17,6 +17,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { Agent, NewTaskInput, Task, TaskOrigin, TaskStatus, AgentDivision, AgentRole } from '@/types/hermes'
 import { parseSoulMarker, soulFor } from './soul'
+import { readEvidence, splitEvidenceBatch, type EvidenceInput, type EvidenceMark, type EvidenceReading } from './evidence'
 
 const run = promisify(execFile)
 
@@ -36,7 +37,7 @@ const TIMEOUT_MS = Number(process.env.KANBAN_TIMEOUT_MS || 20_000)
  * ponytail: one global memo, 3 s. Upgrade path: per-key TTLs or an event-driven
  * push if the board ever grows past a few hundred tasks.
  */
-const READ_VERBS = new Set(['list', 'show', 'runs', 'log', 'assignees'])
+const READ_VERBS = new Set(['list', 'show', 'runs', 'log', 'assignees', 'attachments'])
 const READ_TTL_MS = 3000
 const readCache = new Map<string, { at: number; out: string }>()
 
@@ -106,6 +107,7 @@ type RawTask = {
   created_by?: string | null
   created_at?: number | null
   updated_at?: number | null
+  completed_at?: number | null
   model_override?: string | null
   provider_override?: string | null
 }
@@ -145,6 +147,7 @@ function toTask(r: RawTask): Task {
     priority: r.priority ?? 0,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
+    completedAt: iso(r.completed_at),
     origin: parseOrigin(r.created_by),
     model: r.model_override ?? null,
     provider: r.provider_override ?? null,
@@ -875,6 +878,8 @@ export type RunInfo = {
   endedAt?: number | null
   summary?: string | null
   error?: string | null
+  /** Bebas dari worker, mis. `{branch, commit, selftest}`. Diukur pada `runs --json`. */
+  metadata?: Record<string, unknown> | null
 }
 
 type RawRun = {
@@ -886,6 +891,7 @@ type RawRun = {
   ended_at?: number | null
   summary?: string | null
   error?: string | null
+  metadata?: Record<string, unknown> | null
 }
 
 /** Run history for a task — powers the screen-peeker modal. */
@@ -900,12 +906,180 @@ export async function listRuns(taskId: string): Promise<RunInfo[]> {
     endedAt: r.ended_at ?? null,
     summary: r.summary ?? null,
     error: r.error ?? null,
+    metadata: r.metadata && typeof r.metadata === 'object' ? r.metadata : null,
   }))
 }
 
 /** Raw log tail for a task, used as the terminal-peeker body. */
 export async function taskLog(taskId: string, bytes = 16_000): Promise<string> {
   return kanban(['log', taskId, '--tail', String(bytes)]).catch(() => '')
+}
+
+/* --------------------------------------------------------------- evidence -- */
+
+/**
+ * Lampiran sebuah task. Field dari `_ATTACHMENT_FIELDS` CLI (hermes_cli/kanban_output.py):
+ * id, filename, content_type, size, uploaded_by, stored_path, created_at. CLI hanya bisa
+ * MENDAFTAR — tidak ada perintah untuk membaca isinya, jadi office hanya menampilkan nama.
+ */
+export type AttachmentInfo = {
+  id: number
+  filename: string
+  contentType: string | null
+  size: number
+  uploadedBy: string | null
+  createdAt?: string
+}
+
+type RawAttachment = {
+  id: number
+  filename?: string
+  content_type?: string | null
+  size?: number | null
+  uploaded_by?: string | null
+  created_at?: number | null
+}
+
+/** Toleran: gagal membaca = tidak ada lampiran yang bisa ditunjukkan. */
+export async function listAttachments(taskId: string): Promise<AttachmentInfo[]> {
+  const rows = await kanbanJson<RawAttachment[]>(['attachments', taskId]).catch(() => [])
+  if (!Array.isArray(rows)) return []
+  return rows
+    .filter((r) => r && typeof r.filename === 'string')
+    .map((r) => ({
+      id: r.id,
+      filename: r.filename as string,
+      contentType: r.content_type ?? null,
+      size: r.size ?? 0,
+      uploadedBy: r.uploaded_by ?? null,
+      createdAt: iso(r.created_at),
+    }))
+}
+
+type RawShow = {
+  task?: RawTask
+  latest_summary?: string | null
+  runs?: (RawRun & { metadata?: Record<string, unknown> | null })[]
+}
+
+/** Run terakhir = id terbesar; urutan array tidak dijanjikan CLI. */
+function lastRunOf<T extends { id: number }>(runs: T[] | undefined): T | null {
+  if (!Array.isArray(runs) || !runs.length) return null
+  return runs.reduce((a, b) => (b.id > a.id ? b : a))
+}
+
+/**
+ * `show --json` yang TIDAK toleran: gagal membaca harus terlihat sebagai gagal, bukan sebagai
+ * task tanpa bukti. Satu panggilan ini sudah membawa `runs[]` lengkap dengan metadata.
+ */
+async function showStrict(id: string): Promise<RawShow & { task: RawTask }> {
+  const parsed = await kanbanJson<RawShow>(['show', id])
+  if (!parsed?.task?.id) throw new Error(`tugas "${id}" tidak terbaca dari kanban show`)
+  return parsed as RawShow & { task: RawTask }
+}
+
+export type TaskEvidence = EvidenceReading & {
+  taskId: string
+  status: string
+  attachments: AttachmentInfo[]
+  /** Detik sejak `completed_at`, dihitung saat dibaca. */
+  completedAgeSeconds: number | null
+  /** Detik sejak bukti ini dibaca dari CLI (0 saat dikirim). */
+  ageSeconds: number
+  readAt: string
+}
+
+/**
+ * Bukti LENGKAP untuk SATU task (TaskPanel): show + runs + log + lampiran, paralel.
+ * `show` wajib terbaca (melempar bila tidak); runs/log/lampiran boleh kosong.
+ */
+export async function getTaskEvidence(id: string): Promise<TaskEvidence> {
+  const [shown, runs, log, attachments] = await Promise.all([
+    showStrict(id),
+    listRuns(id),
+    taskLog(id, 2000),
+    listAttachments(id),
+  ])
+  const task = toTask(shown.task)
+  // `runs --json` bisa kosong saat gagal (listRuns toleran); `show` membawa run yang sama.
+  type RunEvidence = Pick<RunInfo, 'id' | 'outcome' | 'summary' | 'metadata'>
+  const last = lastRunOf<RunEvidence>(runs.length ? runs : (shown.runs ?? []).map((r) => ({
+    id: r.id,
+    outcome: r.outcome ?? null,
+    summary: r.summary ?? null,
+    metadata: r.metadata ?? null,
+  })))
+  const reading = readEvidence(task, {
+    latestSummary: shown.latest_summary ?? null,
+    lastRunSummary: last?.summary ?? null,
+    lastRunOutcome: last?.outcome ?? null,
+    lastRunMeta: last?.metadata ?? null,
+    hasLog: log.trim().length > 0,
+    attachmentNames: attachments.map((a) => a.filename),
+  })
+  return {
+    ...reading,
+    taskId: id,
+    status: task.status,
+    attachments,
+    completedAgeSeconds: secondsSince(task.completedAt),
+    ageSeconds: 0,
+    readAt: new Date().toISOString(),
+  }
+}
+
+function secondsSince(isoAt?: string): number | null {
+  if (!isoAt) return null
+  const t = Date.parse(isoAt)
+  return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 1000)) : null
+}
+
+export type EvidenceMarkRow = { id: string; mark: EvidenceMark; completedAgeSeconds?: number | null; error?: string }
+
+/**
+ * Penanda RINGKAS untuk banyak task (daftar/papan): hanya `show --json` (yang sudah membawa
+ * `latest_summary` dan `runs[]`) — TANPA log dan lampiran, karena dua sumber itu berarti dua
+ * proses lagi per id. Karena itu task yang buktinya HANYA log/lampiran akan terbaca
+ * `unproven` di sini; panel detail yang membaca keempat sumber adalah penentu akhirnya.
+ *
+ * Id ke-41 dst. -> `unchecked` (netral). Show gagal -> `failed` (netral). Status diambil
+ * dari CLI, bukan dari klien.
+ */
+export async function evidenceMarks(ids: string[]): Promise<EvidenceMarkRow[]> {
+  const { checked, unchecked: rest } = splitEvidenceBatch(ids)
+
+  // Paralel terbatas: 40 proses Python sekaligus akan menelan satu laptop kecil.
+  const LIMIT = 6
+  const out: EvidenceMarkRow[] = new Array(checked.length)
+  let next = 0
+  async function worker() {
+    while (next < checked.length) {
+      const i = next++
+      const id = checked[i]
+      try {
+        const shown = await showStrict(id)
+        const task = toTask(shown.task)
+        const last = lastRunOf(shown.runs)
+        const input: EvidenceInput = {
+          latestSummary: shown.latest_summary ?? null,
+          lastRunSummary: last?.summary ?? null,
+          lastRunOutcome: last?.outcome ?? null,
+          lastRunMeta: last?.metadata ?? null,
+          hasLog: false,
+          attachmentNames: [],
+        }
+        out[i] = {
+          id,
+          mark: readEvidence(task, input).verdict,
+          completedAgeSeconds: secondsSince(task.completedAt),
+        }
+      } catch (err) {
+        out[i] = { id, mark: 'failed', error: (err as Error).message }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(LIMIT, checked.length) }, worker))
+  return [...out, ...rest.map((id) => ({ id, mark: 'unchecked' as const }))]
 }
 
 /* ------------------------------------------------------------------ ESTOP -- */

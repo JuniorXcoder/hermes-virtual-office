@@ -1,6 +1,7 @@
 'use client'
 
 import { useOffice } from '@/lib/store'
+import { EVIDENCE_MARK_LABEL, markClass, markOf, useEvidenceMarks } from './useEvidenceMarks'
 
 const COLUMNS = [
   { label: 'TODO', statuses: ['todo', 'triage', 'ready', 'scheduled'] },
@@ -15,6 +16,8 @@ const KNOWN = COLUMNS.flatMap((column) => column.statuses)
 export default function Kanban2D() {
   const tasks = useOffice((s) => s.tasks)
   const openTask = useOffice((s) => s.openTask)
+  // Kolom SELESAI = klaim worker; penanda bukti (ringkas) dibaca terpisah.
+  const marks = useEvidenceMarks(tasks)
   const columns = [
     ...COLUMNS.map((column) => ({ ...column, items: tasks.filter((task) => column.statuses.includes(task.status)) })),
     { label: 'STATUS LAIN', statuses: [], items: tasks.filter((task) => !KNOWN.includes(task.status)) },
@@ -30,7 +33,9 @@ export default function Kanban2D() {
               <span className="vp-count">{column.items.length}</span>
             </header>
             <div className="flex flex-col gap-2">
-              {column.items.map((task) => (
+              {column.items.map((task) => {
+                const mark = markOf(marks, task)
+                return (
                 <article key={task.id} className="vp-card" onClick={() => openTask(task.id)}>
                   <div className="vp-card-title">{task.title}</div>
                   <div className="vp-card-meta">
@@ -39,9 +44,11 @@ export default function Kanban2D() {
                       <span className={`vp-chip vp-chip-${task.origin.kind}`}>{task.origin.kind}</span>
                     )}
                     <code>{task.id}</code>
+                    {mark && <span className={markClass(mark)}>{EVIDENCE_MARK_LABEL[mark]}</span>}
                   </div>
                 </article>
-              ))}
+                )
+              })}
               {!column.items.length && <div className="vp-empty">kosong</div>}
             </div>
           </section>

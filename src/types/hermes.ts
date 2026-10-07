@@ -49,6 +49,8 @@ export type Task = {
   body?: string
   createdAt?: string
   updatedAt?: string
+  /** Kapan task menjadi `done`, dari `completed_at` CLI. Kosong bila belum/tak diketahui. */
+  completedAt?: string
   /** Where this task came from, when it is known. */
   origin?: TaskOrigin
   /** Model pinned to this task's worker; null/undefined means the profile default. */

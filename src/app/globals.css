@@ -571,7 +571,8 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
   overflow: hidden;
 }
 .vp-board-card:hover { background: #1d6883f2; border-color: #8fe8c6; }
-.vp-board-card[data-status='done'] { border-left-color: #5aa87c; }
+/* done = klaim worker, bukan bukti: netral. Hijau hanya untuk yang terbukti (TaskPanel/Kanban). */
+.vp-board-card[data-status='done'] { border-left-color: #87949e; }
 .vp-board-card[data-status='review'] { border-left-color: #f0b556; }
 .vp-board-card[data-status='blocked'] { border-left-color: #e5726f; }
 .vp-board-card[data-status='running'] { border-left-color: #58d2f0; }

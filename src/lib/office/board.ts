@@ -121,7 +121,7 @@ export function buildBoardCards(board: THREE.Object3D, onClick: (taskId: string)
           ? t.status
           : 'unknown'
         card.textContent = t.title
-        card.title = `${t.id} · ${t.status} · ${t.assignee || 'tanpa penanggung jawab'} — klik untuk detail`
+        card.title = `${t.id} · ${t.status === 'done' ? 'klaim selesai' : t.status} · ${t.assignee || 'tanpa penanggung jawab'} — klik untuk ${t.status === 'done' ? 'memeriksa bukti' : 'detail'}`
         card.addEventListener('click', (e) => {
           e.stopPropagation()
           onClick(t.id)

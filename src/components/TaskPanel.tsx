@@ -6,6 +6,7 @@ import Collapsible from './Collapsible'
 import ModelPicker, { type ModelChoice } from './ModelPicker'
 import type { Task } from '@/types/hermes'
 import { fetchJson } from '@/lib/api'
+import type { EvidenceItem, EvidenceVerdict } from '@/lib/hermes/evidence'
 
 type RunInfo = {
   id: number
@@ -16,6 +17,22 @@ type RunInfo = {
   error?: string | null
 }
 
+/** Bentuk GET /api/hermes/tasks/{id}/evidence (TaskEvidence di lib/hermes/kanban.ts). */
+type Evidence = {
+  verdict: EvidenceVerdict
+  items: EvidenceItem[]
+  completedAt?: string
+  completedAgeSeconds: number | null
+  readAt: string
+}
+
+function age(sec: number | null): string {
+  if (sec == null || sec < 0) return '—'
+  if (sec < 60) return `${sec} dtk`
+  if (sec < 3600) return `${Math.floor(sec / 60)} mnt`
+  if (sec < 86400) return `${Math.floor(sec / 3600)} jam`
+  return `${Math.floor(sec / 86400)} hari`
+}
 
 /**
  * How an origin reads in the panel.
@@ -47,7 +64,7 @@ const STATUS_LABEL: Record<string, string> = {
   running: 'Sedang dikerjakan',
   review: 'Menunggu review',
   blocked: 'Terhambat',
-  done: 'Selesai',
+  done: 'Selesai (klaim worker)',
   archived: 'Diarsipkan',
 }
 
@@ -73,6 +90,10 @@ export default function TaskPanel() {
   const [note, setNote] = useState<string | null>(null)
   const [models, setModels] = useState<ModelChoice[]>([])
   const [pick, setPick] = useState('')
+  const [evidence, setEvidence] = useState<Evidence | null>(null)
+  const [evErr, setEvErr] = useState<string | null>(null)
+  const [evBusy, setEvBusy] = useState(false)
+  const [evNonce, setEvNonce] = useState(0)
 
   // `detail` first: it is the only payload with `parents`.
   const task: Task | undefined = detail?.id === taskId ? detail : tasks.find((t) => t.id === taskId)
@@ -101,6 +122,29 @@ export default function TaskPanel() {
       alive = false
     }
   }, [taskId])
+
+  // Bukti hasil kerja: dibaca terpisah (show + runs + log + lampiran). Gagal = "gagal membaca
+  // bukti", dan bukti task sebelumnya dibuang — tidak pernah dipajang sebagai bukti task ini.
+  useEffect(() => {
+    if (!taskId) return
+    let alive = true
+    setEvidence(null)
+    setEvErr(null)
+    setEvBusy(true)
+    fetchJson<Evidence>(`/api/hermes/tasks/${taskId}/evidence`, { cache: 'no-store' })
+      .then((res) => {
+        if (!alive) return
+        if (!res.ok || !res.data || !Array.isArray(res.data.items)) {
+          setEvErr(res.error || 'gagal membaca bukti')
+          return
+        }
+        setEvidence(res.data)
+      })
+      .finally(() => alive && setEvBusy(false))
+    return () => {
+      alive = false
+    }
+  }, [taskId, evNonce])
 
   // The model list is config, not board state: fetched once per panel, not on the
   // poll, so opening a task does not spawn a CLI read every 4 seconds.
@@ -148,6 +192,7 @@ export default function TaskPanel() {
         setLog(fresh.data?.log || '')
         setDetail(fresh.data?.task || null)
       }
+      setEvNonce((n) => n + 1)
     } catch (e) {
       setNote(`Gagal: ${(e as Error).message}`)
     } finally {
@@ -282,6 +327,64 @@ export default function TaskPanel() {
             {note && <div className="vp-note">{note}</div>}
 
             {task.body && <Collapsible label="Uraian" text={task.body} />}
+
+            {/* "Selesai" hanya klaim worker. Yang bisa diperiksa: ringkasan, run (outcome +
+                metadata), lampiran, log. Done tanpa satu pun = TANPA BUKTI, tidak pernah hijau. */}
+            <div className="vp-sub">BUKTI HASIL</div>
+            {evBusy && <div className="vp-muted">membaca bukti…</div>}
+            {evErr && <div className="vp-err">gagal membaca bukti: {evErr}</div>}
+            {evidence && (
+              <>
+                <div className="vp-kv">
+                  <span>penilaian</span>
+                  {evidence.verdict === 'proven' ? (
+                    <b>
+                      <span className="vp-chip">terbukti</span>
+                      {evidence.completedAgeSeconds != null && (
+                        <span className="vp-muted"> · selesai {age(evidence.completedAgeSeconds)} lalu</span>
+                      )}
+                    </b>
+                  ) : evidence.verdict === 'unproven' ? (
+                    <b>
+                      <span className="vp-chip vp-chip-warn">TANPA BUKTI</span>
+                    </b>
+                  ) : (
+                    <b className="vp-muted">belum selesai — belum dinilai</b>
+                  )}
+                </div>
+                {evidence.verdict === 'unproven' && (
+                  <div className="vp-warn">
+                    Ditandai selesai, tapi tidak ada ringkasan, run bermetadata, log, maupun lampiran
+                    yang bisa diperiksa.
+                  </div>
+                )}
+                <div className="flex flex-col gap-2">
+                  {evidence.items
+                    .filter((it) => it.kind === 'summary' || it.kind === 'run')
+                    .map((it, i) => (
+                      <Collapsible key={`${it.kind}-${i}`} label={it.label} text={it.body || ''} />
+                    ))}
+                  {evidence.items.some((it) => it.kind === 'attachment') && (
+                    <div className="vp-run">
+                      <b>lampiran</b>
+                      {evidence.items
+                        .filter((it) => it.kind === 'attachment')
+                        .map((it, i) => (
+                          <div key={i} className="vp-muted">{it.label}</div>
+                        ))}
+                      <div className="vp-muted">CLI hanya mendaftar lampiran; isinya tidak bisa dibuka dari sini.</div>
+                    </div>
+                  )}
+                  {evidence.items.some((it) => it.kind === 'log') && (
+                    <div className="vp-muted">log worker tersedia — lihat “Log worker” di bawah.</div>
+                  )}
+                  {!evidence.items.length && <div className="vp-muted">tidak ada bukti dari keempat sumber</div>}
+                </div>
+                <div className="vp-muted">
+                  dibaca {age(Math.max(0, Math.round((Date.now() - Date.parse(evidence.readAt)) / 1000)))} lalu
+                </div>
+              </>
+            )}
 
             <div className="vp-sub">RIWAYAT RUN ({runs.length})</div>
             {loading && <div className="vp-muted">memuat…</div>}

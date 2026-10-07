@@ -121,7 +121,19 @@ Aksi mengubah keadaan, jadi paling akhir dan harus ada konfirmasi.
         GET /api/hermes/approvals; listAgents(..., blockedAssignees) -> 'blocked' lewat route
         tasks + agents; assessHealth waitingApprovals/approvalsFailure; seksi Persetujuan di
         SystemPanel; `npm run selftest` (a wait for a human stops the agent, and lights the lamp)
-- [ ] **5.2** Bukti hasil kerja: diff/artifact bisa diperiksa, bukan cuma "selesai ✓".
+- [x] **5.2** Bukti hasil kerja: diff/artifact bisa diperiksa, bukan cuma "selesai ✓".
+      — terbukti: `kanban show --json` tidak punya field artifacts, jadi buktinya empat sumber
+        nyata: latest_summary, run terakhir (summary/outcome/metadata branch-commit-selftest),
+        `kanban log`, `kanban attachments --json` (hanya daftar nama; CLI tak bisa membaca isi).
+        readEvidence() pure di evidence.ts (done+bukti = proven, done tanpa bukti = unproven,
+        bukan done = open; outcome "completed" saja bukan bukti); getTaskEvidence/listAttachments/
+        evidenceMarks di kanban.ts; GET /api/hermes/tasks/[id]/evidence (show gagal = 502),
+        POST /api/hermes/tasks/evidence (ringkas: show+runs saja, maks 40 id, sisanya unchecked
+        netral); seksi BUKTI HASIL di TaskPanel ("TANPA BUKTI" kuning, "terbukti" + umur selesai,
+        gagal = "gagal membaca bukti"); penanda di KanbanModal + Kanban2D (useEvidenceMarks,
+        umur + BASI); papan 3D: border hijau kartu done dicabut. Diukur nyata: t_a07c2103 -> proven.
+        `npm run selftest` (a done task with no evidence reads as unproven…; ids past the batch
+        cap stay neutral — never a false "terbukti")
 - [ ] **5.3** Verifikasi independen: hasil agent dicek tool lain sebelum "selesai".
 - [ ] **5.4** Batas izin per agent.
 
