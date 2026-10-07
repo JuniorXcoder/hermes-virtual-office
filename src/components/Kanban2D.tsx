@@ -2,6 +2,12 @@
 
 import { useOffice } from '@/lib/store'
 import { EVIDENCE_MARK_LABEL, markClass, markOf, useEvidenceMarks } from './useEvidenceMarks'
+import {
+  VERIFICATION_MARK_LABEL,
+  verificationMarkClass,
+  verificationMarkOf,
+  useVerificationMarks,
+} from './useVerificationMarks'
 
 const COLUMNS = [
   { label: 'TODO', statuses: ['todo', 'triage', 'ready', 'scheduled'] },
@@ -18,6 +24,8 @@ export default function Kanban2D() {
   const openTask = useOffice((s) => s.openTask)
   // Kolom SELESAI = klaim worker; penanda bukti (ringkas) dibaca terpisah.
   const marks = useEvidenceMarks(tasks)
+  // Klaim ≠ terverifikasi: penanda review independen, hanya untuk done/review.
+  const vf = useVerificationMarks(tasks)
   const columns = [
     ...COLUMNS.map((column) => ({ ...column, items: tasks.filter((task) => column.statuses.includes(task.status)) })),
     { label: 'STATUS LAIN', statuses: [], items: tasks.filter((task) => !KNOWN.includes(task.status)) },
@@ -35,6 +43,7 @@ export default function Kanban2D() {
             <div className="flex flex-col gap-2">
               {column.items.map((task) => {
                 const mark = markOf(marks, task)
+                const vmark = verificationMarkOf(vf, task)
                 return (
                 <article key={task.id} className="vp-card" onClick={() => openTask(task.id)}>
                   <div className="vp-card-title">{task.title}</div>
@@ -45,6 +54,9 @@ export default function Kanban2D() {
                     )}
                     <code>{task.id}</code>
                     {mark && <span className={markClass(mark)}>{EVIDENCE_MARK_LABEL[mark]}</span>}
+                    {vmark && (
+                      <span className={verificationMarkClass(vmark)}>{VERIFICATION_MARK_LABEL[vmark]}</span>
+                    )}
                   </div>
                 </article>
                 )

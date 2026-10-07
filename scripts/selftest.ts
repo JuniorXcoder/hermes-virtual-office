@@ -27,6 +27,13 @@ import { auditPathFor, beginAudit, readAudit } from '../src/lib/hermes/audit'
 import { readUsage } from '../src/lib/hermes/observability'
 import { EVIDENCE_BATCH_CAP, EVIDENCE_MARK_LABEL, readEvidence, splitEvidenceBatch, type EvidenceInput } from '../src/lib/hermes/evidence'
 import { markClass, markOf } from '../src/components/useEvidenceMarks'
+import {
+  VERIFICATION_BATCH_CAP,
+  VERIFICATION_MARK_LABEL,
+  readVerification,
+  splitVerificationBatch,
+} from '../src/lib/hermes/verification'
+import { verificationMarkClass, verificationMarkOf } from '../src/components/useVerificationMarks'
 import type { Task } from '../src/types/hermes'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
@@ -4150,6 +4157,73 @@ void (async () => {
       p3.push('kartu yang belum done diberi penanda')
     }
     check('unread sources and ids past the batch cap stay neutral — never a false "terbukti"', p3.length === 0, p3.join(' | '))
+  }
+
+  /* --------------------------------------- verifikasi independen (5.3) -- */
+  {
+    const T = 1791402000
+    const review = { kind: 'review_requested', payload: { summary: 'selesai', implementer: 'worker-a', reviewer: 'reviewer-b' }, created_at: T }
+    const doneEv = { kind: 'completed', payload: {}, created_at: T + 60 }
+    const back = { kind: 'changes_requested', payload: { reason: 'kurang', implementer: 'worker-a', reviewer: 'reviewer-b' }, created_at: T + 30 }
+    const isDone = { status: 'done' }
+
+    // Klaim: done tanpa jejak review — bukan terverifikasi.
+    const v1: string[] = []
+    const claim = readVerification(isDone, [{ kind: 'completed', payload: {}, created_at: T }])
+    if (claim.verdict !== 'claim') v1.push(`done tanpa review terbaca ${claim.verdict}`)
+    if (!claim.why) v1.push('alasan klaim kosong')
+    if (VERIFICATION_MARK_LABEL.claim !== 'klaim') v1.push('label claim bukan "klaim"')
+    if (verificationMarkClass('claim') === verificationMarkClass('verified')) v1.push('klaim tampil sama dengan terverifikasi (hijau)')
+    check('a done task with no review trail reads as a claim, never as verified', v1.length === 0, v1.join(' | '))
+
+    // Terverifikasi: review_requested → completed, verifier terbaca.
+    const v2: string[] = []
+    const ok = readVerification(isDone, [review, doneEv])
+    if (ok.verdict !== 'verified') v2.push(`review+completed terbaca ${ok.verdict}`)
+    if (ok.reviewer !== 'reviewer-b') v2.push(`reviewer ${ok.reviewer ?? 'hilang'}, bukan reviewer-b`)
+    if (ok.implementer !== 'worker-a') v2.push('implementer hilang')
+    if (ok.verifiedAt !== T + 60) v2.push('verifiedAt bukan waktu completed')
+    if (ok.requestedAt !== T) v2.push('requestedAt bukan waktu review_requested')
+    check('a reviewed task reads as verified, with the reviewer and timestamps', v2.length === 0, v2.join(' | '))
+
+    // Review digugurkan: changes_requested lalu done tanpa review baru = klaim.
+    const v3: string[] = []
+    const killed = readVerification(isDone, [review, back, doneEv])
+    if (killed.verdict !== 'claim') v3.push(`review digugurkan lalu done terbaca ${killed.verdict}`)
+    const reviewAgain = { kind: 'review_requested', payload: { summary: 'revisi', implementer: 'worker-a', reviewer: 'reviewer-b' }, created_at: T + 90 }
+    const reok = readVerification(isDone, [review, back, doneEv, reviewAgain, { kind: 'completed', payload: {}, created_at: T + 120 }])
+    if (reok.verdict !== 'verified') v3.push(`review ulang lalu done terbaca ${reok.verdict}`)
+    const waiting = readVerification({ status: 'review' }, [review])
+    if (waiting.verdict !== 'open') v3.push(`task review dinilai ${waiting.verdict}`)
+    if (waiting.reviewer !== 'reviewer-b') v3.push('reviewer task menunggu hilang')
+    check('an invalidated review does not verify a later done; a fresh review does', v3.length === 0, v3.join(' | '))
+
+    // Netral: sumber kosong/gagal/batas batch — tidak false-positive.
+    const v4: string[] = []
+    const ids = Array.from({ length: VERIFICATION_BATCH_CAP + 5 }, (_, i) => `t_${i.toString(16).padStart(8, '0')}`)
+    const split = splitVerificationBatch([...ids, ids[0], 'bukan-id', 42])
+    if (split.checked.length !== VERIFICATION_BATCH_CAP) v4.push(`batch memeriksa ${split.checked.length}, bukan ${VERIFICATION_BATCH_CAP}`)
+    if (split.unchecked.length !== 5) v4.push(`${split.unchecked.length} id di luar batas, bukan 5`)
+    const doneTask = { id: 't_beyond', title: 'x', status: 'done', priority: 0 } as Task
+    const reviewTask = { ...doneTask, status: 'review' } as Task
+    const neutral = [
+      verificationMarkOf({ byId: {}, readAt: Date.now(), error: null, busy: false }, doneTask),
+      verificationMarkOf({ byId: null, readAt: null, error: 'HTTP 502', busy: false }, doneTask),
+      verificationMarkOf({ byId: null, readAt: null, error: null, busy: true }, doneTask),
+    ]
+    for (const m of neutral) {
+      if (m === 'verified' || m === 'claim') v4.push(`sumber kosong/tak diperiksa dinilai ${m}`)
+      else if (m && verificationMarkClass(m) === verificationMarkClass('verified')) v4.push(`${m} tampil hijau seperti terverifikasi`)
+    }
+    if (verificationMarkOf({ byId: { t_beyond: 'verified' }, readAt: 1, error: null, busy: false }, { ...doneTask, status: 'running' }) !== null) {
+      v4.push('kartu yang bukan done/review diberi penanda')
+    }
+    if (verificationMarkOf({ byId: { t_beyond: 'verified' }, readAt: 1, error: null, busy: false }, reviewTask) !== 'verified') {
+      v4.push('kartu review yang terverifikasi tidak terbaca')
+    }
+    check('unread verification sources and ids past the batch cap stay neutral — never a false "verified"', v4.length === 0, v4.join(' | '))
+
+    void doneTask
   }
 
   /* ------------------------------------------------------------- result -- */

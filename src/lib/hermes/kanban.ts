@@ -18,6 +18,7 @@ import { promisify } from 'node:util'
 import type { Agent, NewTaskInput, Task, TaskOrigin, TaskStatus, AgentDivision, AgentRole } from '@/types/hermes'
 import { parseSoulMarker, soulFor } from './soul'
 import { readEvidence, splitEvidenceBatch, type EvidenceInput, type EvidenceMark, type EvidenceReading } from './evidence'
+import { readVerification, splitVerificationBatch, type VerificationMark, type VerificationReading, type VerifyEvent } from './verification'
 
 const run = promisify(execFile)
 
@@ -1072,6 +1073,69 @@ export async function evidenceMarks(ids: string[]): Promise<EvidenceMarkRow[]> {
           id,
           mark: readEvidence(task, input).verdict,
           completedAgeSeconds: secondsSince(task.completedAt),
+        }
+      } catch (err) {
+        out[i] = { id, mark: 'failed', error: (err as Error).message }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(LIMIT, checked.length) }, worker))
+  return [...out, ...rest.map((id) => ({ id, mark: 'unchecked' as const }))]
+}
+
+/* ------------------------------------------------------------ verification -- */
+
+/**
+ * Status verifikasi SATU task (TaskPanel): `show --json` membawa task + `events[]` sekaligus,
+ * jadi satu panggilan cukup. Office tidak menjalankan kode task — hanya membaca jejak.
+ * `show` wajib terbaca (melempar bila tidak); gagal = 502, bukan "klaim".
+ */
+export type TaskVerification = VerificationReading & {
+  taskId: string
+  status: string
+  /** Detik sejak dibaca dari CLI (0 saat dikirim). */
+  ageSeconds: number
+  readAt: string
+}
+
+export async function getTaskVerification(id: string): Promise<TaskVerification> {
+  const parsed = await kanbanJson<{ task?: RawTask; events?: VerifyEvent[] }>(['show', id])
+  if (!parsed?.task?.id) throw new Error(`tugas "${id}" tidak terbaca dari kanban show`)
+  const task = toTask(parsed.task)
+  const reading = readVerification(task, Array.isArray(parsed.events) ? parsed.events : [])
+  return {
+    ...reading,
+    taskId: id,
+    status: task.status,
+    ageSeconds: 0,
+    readAt: new Date().toISOString(),
+  }
+}
+
+export type VerificationMarkRow = { id: string; mark: VerificationMark; error?: string }
+
+/**
+ * Penanda RINGKAS untuk banyak task (daftar/papan): hanya `show --json` per id (task + events).
+ * Id ke-41 dst. -> `unchecked` (netral). Show gagal -> `failed` (netral).
+ */
+export async function verificationMarks(ids: string[]): Promise<VerificationMarkRow[]> {
+  const { checked, unchecked: rest } = splitVerificationBatch(ids)
+
+  // Paralel terbatas: 40 proses Python sekaligus akan menelan satu laptop kecil.
+  const LIMIT = 6
+  const out: VerificationMarkRow[] = new Array(checked.length)
+  let next = 0
+  async function worker() {
+    while (next < checked.length) {
+      const i = next++
+      const id = checked[i]
+      try {
+        const shown = await kanbanJson<{ task?: RawTask; events?: VerifyEvent[] }>(['show', id])
+        if (!shown?.task?.id) throw new Error(`tugas "${id}" tidak terbaca dari kanban show`)
+        const task = toTask(shown.task)
+        out[i] = {
+          id,
+          mark: readVerification(task, Array.isArray(shown.events) ? shown.events : []).verdict,
         }
       } catch (err) {
         out[i] = { id, mark: 'failed', error: (err as Error).message }

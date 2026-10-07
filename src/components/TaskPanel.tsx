@@ -7,6 +7,7 @@ import ModelPicker, { type ModelChoice } from './ModelPicker'
 import type { Task } from '@/types/hermes'
 import { fetchJson } from '@/lib/api'
 import type { EvidenceItem, EvidenceVerdict } from '@/lib/hermes/evidence'
+import type { VerificationReading } from '@/lib/hermes/verification'
 
 type RunInfo = {
   id: number
@@ -15,6 +16,11 @@ type RunInfo = {
   outcome?: string | null
   summary?: string | null
   error?: string | null
+}
+
+/** Bentuk GET /api/hermes/tasks/{id}/verification (TaskVerification di lib/hermes/kanban.ts). */
+type Verification = VerificationReading & {
+  readAt: string
 }
 
 /** Bentuk GET /api/hermes/tasks/{id}/evidence (TaskEvidence di lib/hermes/kanban.ts). */
@@ -94,6 +100,9 @@ export default function TaskPanel() {
   const [evErr, setEvErr] = useState<string | null>(null)
   const [evBusy, setEvBusy] = useState(false)
   const [evNonce, setEvNonce] = useState(0)
+  const [verify, setVerify] = useState<Verification | null>(null)
+  const [vfErr, setVfErr] = useState<string | null>(null)
+  const [vfBusy, setVfBusy] = useState(false)
 
   // `detail` first: it is the only payload with `parents`.
   const task: Task | undefined = detail?.id === taskId ? detail : tasks.find((t) => t.id === taskId)
@@ -145,6 +154,30 @@ export default function TaskPanel() {
       alive = false
     }
   }, [taskId, evNonce])
+
+  // Verifikasi independen: klaim worker vs review. Dibaca terpisah dari jejak events.
+  // Hanya untuk done/review — task lain tidak dinilai. Gagal = "gagal membaca verifikasi",
+  // dan hasil task sebelumnya dibuang — tidak pernah dipajang sebagai hasil task ini.
+  useEffect(() => {
+    if (!taskId) return
+    let alive = true
+    setVerify(null)
+    setVfErr(null)
+    setVfBusy(true)
+    fetchJson<Verification>(`/api/hermes/tasks/${taskId}/verification`, { cache: 'no-store' })
+      .then((res) => {
+        if (!alive) return
+        if (!res.ok || !res.data || typeof res.data.verdict !== 'string') {
+          setVfErr(res.error || 'gagal membaca verifikasi')
+          return
+        }
+        setVerify(res.data)
+      })
+      .finally(() => alive && setVfBusy(false))
+    return () => {
+      alive = false
+    }
+  }, [taskId])
 
   // The model list is config, not board state: fetched once per panel, not on the
   // poll, so opening a task does not spawn a CLI read every 4 seconds.
@@ -327,6 +360,51 @@ export default function TaskPanel() {
             {note && <div className="vp-note">{note}</div>}
 
             {task.body && <Collapsible label="Uraian" text={task.body} />}
+
+            {/* Klaim worker ≠ terverifikasi. "Selesai" hanya berarti worker MENYATAKAN
+                selesai; terverifikasi berarti ada jejak review_requested → completed dari
+                tangan kedua yang independen. Basi/gagal dibaca = dikatakan apa adanya. */}
+            <div className="vp-sub">VERIFIKASI</div>
+            {vfBusy && <div className="vp-muted">membaca verifikasi…</div>}
+            {vfErr && <div className="vp-err">gagal membaca verifikasi: {vfErr}</div>}
+            {verify && (
+              <>
+                <div className="vp-kv">
+                  <span>status</span>
+                  {verify.verdict === 'verified' ? (
+                    <b>
+                      <span className="vp-chip">terverifikasi</span>
+                      {verify.reviewer && <span className="vp-muted"> · oleh {verify.reviewer}</span>}
+                    </b>
+                  ) : verify.verdict === 'claim' ? (
+                    <b>
+                      <span className="vp-chip vp-chip-warn">klaim</span>
+                      <span className="vp-muted"> · belum lewat review</span>
+                    </b>
+                  ) : task?.status === 'review' ? (
+                    <b className="vp-muted">menunggu review{verify.reviewer ? ` oleh ${verify.reviewer}` : ''}</b>
+                  ) : (
+                    <b className="vp-muted">belum selesai — belum dinilai</b>
+                  )}
+                </div>
+                {verify.verdict === 'claim' && <div className="vp-warn">{verify.why}</div>}
+                {verify.verdict === 'verified' && verify.verifiedAt != null && (
+                  <div className="vp-muted">
+                    disahkan {new Date(verify.verifiedAt * 1000).toLocaleString('id-ID')}
+                    {verify.implementer ? ` · dikerjakan ${verify.implementer}` : ''}
+                  </div>
+                )}
+                {verify.verdict === 'open' && verify.requestedAt != null && (
+                  <div className="vp-muted">
+                    diserahkan {new Date(verify.requestedAt * 1000).toLocaleString('id-ID')}
+                    {verify.implementer ? ` oleh ${verify.implementer}` : ''}
+                  </div>
+                )}
+                <div className="vp-muted">
+                  dibaca {age(Math.max(0, Math.round((Date.now() - Date.parse(verify.readAt)) / 1000)))} lalu
+                </div>
+              </>
+            )}
 
             {/* "Selesai" hanya klaim worker. Yang bisa diperiksa: ringkasan, run (outcome +
                 metadata), lampiran, log. Done tanpa satu pun = TANPA BUKTI, tidak pernah hijau. */}

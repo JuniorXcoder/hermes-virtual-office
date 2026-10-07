@@ -3,6 +3,13 @@
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import { EVIDENCE_MARK_LABEL, STALE_EVIDENCE, markClass, markOf, useEvidenceMarks } from './useEvidenceMarks'
+import {
+  STALE_VERIFICATION,
+  VERIFICATION_MARK_LABEL,
+  verificationMarkClass,
+  verificationMarkOf,
+  useVerificationMarks,
+} from './useVerificationMarks'
 
 /**
  * Full Kanban modal, opened by clicking the green whiteboard in Rinjani (poin 13).
@@ -18,6 +25,9 @@ export default function KanbanModal({ onClose }: { onClose: () => void }) {
   // "SELESAI" hanya klaim worker. Penanda bukti dibaca terpisah, ringkas (show+runs per id).
   const marks = useEvidenceMarks(tasks)
   const marksAge = marks.readAt ? Math.round((Date.now() - marks.readAt) / 1000) : null
+  // Klaim ≠ terverifikasi: penanda review independen, hanya untuk done/review.
+  const vf = useVerificationMarks(tasks)
+  const vfAge = vf.readAt ? Math.round((Date.now() - vf.readAt) / 1000) : null
 
   // ESC closes, and the page behind must not scroll while the modal is up.
   useEffect(() => {
@@ -65,6 +75,18 @@ export default function KanbanModal({ onClose }: { onClose: () => void }) {
                 </>
               )}
             </p>
+            <p className="vp-sub">
+              {vf.error ? (
+                <span className="vp-err">gagal membaca verifikasi: {vf.error}</span>
+              ) : vfAge == null ? (
+                vf.busy ? 'membaca verifikasi…' : 'verifikasi belum dibaca'
+              ) : (
+                <>
+                  verifikasi (klaim vs review) · dibaca {vfAge} dtk lalu
+                  {vfAge > STALE_VERIFICATION && <span className="vp-warn"> · BASI</span>}
+                </>
+              )}
+            </p>
           </div>
           <input
             className="vp-kanban-search"
@@ -87,6 +109,7 @@ export default function KanbanModal({ onClose }: { onClose: () => void }) {
                 <div className="vp-kanban-col-body">
                   {list.map((t) => {
                     const mark = markOf(marks, t)
+                    const vmark = verificationMarkOf(vf, t)
                     return (
                     <button
                       key={t.id}
@@ -104,6 +127,11 @@ export default function KanbanModal({ onClose }: { onClose: () => void }) {
                       {mark && (
                         <span className="vp-kanban-card-meta">
                           <span className={markClass(mark)}>{EVIDENCE_MARK_LABEL[mark]}</span>
+                        </span>
+                      )}
+                      {vmark && (
+                        <span className="vp-kanban-card-meta">
+                          <span className={verificationMarkClass(vmark)}>{VERIFICATION_MARK_LABEL[vmark]}</span>
                         </span>
                       )}
                     </button>

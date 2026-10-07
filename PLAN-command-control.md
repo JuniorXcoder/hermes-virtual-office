@@ -134,7 +134,20 @@ Aksi mengubah keadaan, jadi paling akhir dan harus ada konfirmasi.
         umur + BASI); papan 3D: border hijau kartu done dicabut. Diukur nyata: t_a07c2103 -> proven.
         `npm run selftest` (a done task with no evidence reads as unproven…; ids past the batch
         cap stay neutral — never a false "terbukti")
-- [ ] **5.3** Verifikasi independen: hasil agent dicek tool lain sebelum "selesai".
+- [x] **5.3** Verifikasi independen: hasil agent dicek tool lain sebelum "selesai".
+      — terbukti: done tanpa jejak review = KLAIM worker, bukan terverifikasi. Bentuk jejak nyata
+        dari `hermes_cli/kanban_db.py`: `review_requested {summary,implementer,reviewer}`,
+        `changes_requested`/`review_reopened` (menggugurkan review), `completed` setelah review
+        terakhir = terverifikasi. readVerification() pure di verification.ts (urutan dari indeks
+        event, bukan created_at); getTaskVerification/verificationMarks di kanban.ts;
+        GET /api/hermes/tasks/[id]/verification (show gagal = 502, bukan "klaim"),
+        POST /api/hermes/tasks/verification (ringkas, maks 40 id, sisanya unchecked netral);
+        seksi VERIFIKASI di TaskPanel ("klaim · belum lewat review" kuning, "terverifikasi ·
+        oleh X" + waktu disahkan, gagal = "gagal membaca verifikasi"); penanda di KanbanModal +
+        Kanban2D (useVerificationMarks, umur + BASI). Diukur live port 3413: t_1b5bc813 -> claim,
+        batch {claim, claim, failed}. Server uji dimatikan (port 3413 bebas).
+        `npm run selftest` (94/94: no review trail reads as claim; reviewed reads verified +
+        reviewer; invalidated review does not verify; batch cap neutral — never false "verified")
 - [ ] **5.4** Batas izin per agent.
 
 ---
