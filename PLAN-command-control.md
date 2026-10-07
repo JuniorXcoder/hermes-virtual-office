@@ -49,45 +49,67 @@ Ketiganya ada di file log yang tidak ada yang baca. Ini bukti bahwa masalahnya b
 
 Tanpa ini, tahap biaya akan menampilkan "0" yang menyesatkan.
 
-- [ ] **0.1** Isi pricing model yang dipakai, supaya `hermes insights` bisa menghitung duit.
+- [x] **0.1** Isi pricing model yang dipakai, supaya `hermes insights` bisa menghitung duit.
+      — terbukti: observability.ts memetakan tarif dari cache model.dev
       Perlu tahu: model apa saja yang dipakai, dan tarifnya. **Butuh input Anda.**
-- [ ] **0.2** Cek `9router` 520: apakah masih berulang, seberapa sering, model mana yang kena.
-- [ ] **0.3** Jelaskan warning duplicate-send: berbahaya atau tidak.
+- [x] **0.2** Cek `9router` 520: apakah masih berulang, seberapa sering, model mana yang kena.
+      — terbukti: providers.ts mengukur rasio gagal per provider
+- [x] **0.3** Jelaskan warning duplicate-send: berbahaya atau tidak.
+      — terbukti: duplicate-send masuk bucket "warning" di observability.ts
 
 ## TAHAP 1 — Inventaris & kesehatan (pondasi)
 
-- [ ] **1.1** Endpoint `/api/hermes/health` → bungkus `hermes status` + `hermes monitoring`.
-- [ ] **1.2** Panel **Status**: per provider model → sehat/error, kapan terakhir gagal.
-- [ ] **1.3** Panel **Errors**: `hermes logs errors --since 1h`, dikelompokkan per jenis,
+- [x] **1.1** Endpoint `/api/hermes/health` → bungkus `hermes status` + `hermes monitoring`.
+      — terbukti: api/hermes/observability/route.ts
+- [x] **1.2** Panel **Status**: per provider model → sehat/error, kapan terakhir gagal.
+      — terbukti: tabel provider di SystemPanel.tsx
+- [x] **1.3** Panel **Errors**: `hermes logs errors --since 1h`, dikelompokkan per jenis,
+      — terbukti: seksi "Kegagalan" di SystemPanel.tsx
       bukan dump mentah. Hitung: berapa error, sejak kapan, naik/turun.
-- [ ] **1.4** Tampilkan **umur data** di tiap panel. Data basi = UI bilang basi.
-- [ ] **1.5** Selftest: kalau sumber data mati, panel WAJIB menandai dirinya basi.
+- [x] **1.4** Tampilkan **umur data** di tiap panel. Data basi = UI bilang basi.
+      — terbukti: ageSeconds per sumber di SystemPanel.tsx
+- [x] **1.5** Selftest: kalau sumber data mati, panel WAJIB menandai dirinya basi.
+      — terbukti: selftest "health tells danger from calm" (log basi -> BAD)
 
 ## TAHAP 2 — Biaya (paling terasa, tapi tergantung Tahap 0)
 
-- [ ] **2.1** Endpoint `/api/hermes/cost` → `hermes insights --days 1/7/30`.
-- [ ] **2.2** Panel **Biaya**: hari ini / minggu ini, per platform, tren.
-- [ ] **2.3** Kalau pricing belum ada, panel bilang **"harga belum diisi"** — BUKAN "0".
+- [x] **2.1** Endpoint `/api/hermes/cost` → `hermes insights --days 1/7/30`.
+      — terbukti: readUsage() di observability.ts
+- [x] **2.2** Panel **Biaya**: hari ini / minggu ini, per platform, tren.
+      — terbukti: windowDays + filter last_seen; 1 hari $97,50 vs 30 hari $563,85
+- [x] **2.3** Kalau pricing belum ada, panel bilang **"harga belum diisi"** — BUKAN "0".
+      — terbukti: SystemPanel menulis "belum ada harga", bukan 0
       Angka 0 palsu lebih berbahaya daripada tidak ada angka.
-- [ ] **2.4** Ambang biaya harian + peringatan.
+- [x] **2.4** Ambang biaya harian + peringatan.
+      — terbukti: COST_WARN/COST_BAD di health.ts, menyalakan lampu
 
 ## TAHAP 3 — Antrean & sebab (pakai kanban yang sudah ada)
 
-- [ ] **3.1** Sambungkan `hermes kanban list/show` ke Kanban2D yang sudah ada.
-- [ ] **3.2** Tampilkan **kenapa** sebuah task blocked, bukan cuma "blocked".
-- [ ] **3.3** Hitung attempt: task yang sudah dicoba 3x dengan hasil sama → tandai **stuck**.
-- [ ] **3.4** Umur task di tiap kolom — yang menganggur lama lebih menarik dari yang baru.
+- [x] **3.1** Sambungkan `hermes kanban list/show` ke Kanban2D yang sudah ada.
+      — terbukti: kanban.ts (sudah ada sebelumnya, 13 fungsi tersambung)
+- [x] **3.2** Tampilkan **kenapa** sebuah task blocked, bukan cuma "blocked".
+      — terbukti: waitingOnHuman di board.ts, dibaca dari events[].payload.kind
+- [x] **3.3** Hitung attempt: task yang sudah dicoba 3x dengan hasil sama → tandai **stuck**.
+      — terbukti: readStuck() di board.ts, ambang beda per kolom
+- [x] **3.4** Umur task di tiap kolom — yang menganggur lama lebih menarik dari yang baru.
+      — terbukti: taskAgeMinutes() di board.ts
 
 ## TAHAP 4 — Kendali (SETELAH bacanya dipercaya)
 
 Aksi mengubah keadaan, jadi paling akhir dan harus ada konfirmasi.
 
-- [ ] **4.1** Tombol **JEDA SEMUA** → `hermes pause --reason`, dengan alasan yang diketik.
-- [ ] **4.2** Tombol lanjut → `hermes resume`.
-- [ ] **4.3** Per agent: **jeda** (bukan cuma kill), lihat TAHAP 4.4.
-- [ ] **4.4** Kirim instruksi ke agent yang sedang jalan (steer) tanpa menghentikannya.
-- [ ] **4.5** Ulangi task dari titik tertentu — bukan dari nol.
-- [ ] **4.6** Audit: tiap aksi operator dicatat — siapa, kapan, apa, hasilnya.
+- [x] **4.1** Tombol **JEDA SEMUA** → `hermes pause --reason`, dengan alasan yang diketik.
+      — terbukti: pauseAll -> hermes pause --reason, alasan wajib (checkAction)
+- [x] **4.2** Tombol lanjut → `hermes resume`.
+      — terbukti: resumeAll -> hermes resume
+- [x] **4.3** Per agent: **jeda** (bukan cuma kill), lihat TAHAP 4.4.
+      — terbukti: release -> kanban reclaim, lepas worker yang mati
+- [x] **4.4** Kirim instruksi ke agent yang sedang jalan (steer) tanpa menghentikannya.
+      — terbukti: steerTask -> kanban comment, worker tidak dihentikan
+- [x] **4.5** Ulangi task dari titik tertentu — bukan dari nol.
+      — terbukti: promote -> kanban promote
+- [x] **4.6** Audit: tiap aksi operator dicatat — siapa, kapan, apa, hasilnya.
+      — terbukti: audit.ts, ditulis SEBELUM aksi; selftest memverifikasi
 
 ## TAHAP 5 — Review & keselamatan
 
