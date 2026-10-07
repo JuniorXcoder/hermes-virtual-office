@@ -3449,6 +3449,86 @@ void (async () => {
     check('the bowling lane has ten pins on the boards and a bowler aiming at them', problems.length === 0, problems.join(' | '))
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // WALL JUNCTIONS: A PARTITION HAS TO REACH THE WALL IT MEETS.
+  //
+  // A partition that stops short of the wall it butts into leaves a slot running the full
+  // height of the wall. It is invisible from directly above — the two walls still look like
+  // they meet — and shows only from inside the room, at eye level. That is how this one
+  // survived: nobody had compared the numbers, and a screenshot from overhead agreed with the
+  // bug.
+  //
+  // These are COVERAGE rasters: sample the junction and require every sample to be inside some
+  // wall. Asserting the wall's own extent instead would only re-state the numbers that were
+  // wrong to begin with.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const walls = FOOTPRINTS.filter((f) => f.kind === 'wall')
+    const inside = (x: number, z: number) =>
+      walls.some((w) => Math.abs(x - w.x) <= w.hw + 1e-6 && Math.abs(z - w.z) <= w.hd + 1e-6)
+
+    // 1. Each neighbouring pair of exec-floor rooms, sampled across the FULL thickness of the
+    //    corridor wall. A partition that ends on that wall's centre line seals its north half
+    //    and leaves a notch in the corridor-side half.
+    const l1 = ROOMS.filter((r) => r.level === 1 && r.id !== 'corridor1').sort((a, b) => a.x1 - b.x1)
+    for (let i = 0; i < l1.length - 1; i++) {
+      const a = l1[i]
+      const b = l1[i + 1]
+      let worst = 0
+      let run = 0
+      for (let x = a.x2; x <= b.x1 + 1e-9; x += 0.01) {
+        let open = false
+        for (let z = a.z2 - WALL_T / 2; z <= a.z2 + WALL_T / 2 + 1e-9; z += 0.05) {
+          if (!inside(Math.min(x, b.x1), z)) open = true
+        }
+        if (open) {
+          run += 0.01
+          worst = Math.max(worst, run)
+        } else {
+          run = 0
+        }
+      }
+      if (worst > 0.01) {
+        problems.push(
+          `the partition between ${a.id} and ${b.id} leaves a ${worst.toFixed(2)} m gap through the corridor wall`,
+        )
+      }
+    }
+
+    // 2. Every level-0 partition end that lands beside a perpendicular wall must actually
+    //    reach that wall's far face. The lounge/pantry partition stopped 0.15 m short of the
+    //    wall at x = 14 — a slot straight through into the pantry.
+    for (const w of walls) {
+      if (w.level !== 0 || w.hw <= w.hd || Math.max(w.hw, w.hd) < 1) continue // horizontal partitions only
+      for (const dir of [-1, 1] as const) {
+        const ex = w.x + dir * w.hw
+        // a perpendicular wall standing at the end of this one — and it has to actually SPAN
+        // this partition's line. Matching on x alone found a level-1 meeting-room partition at
+        // x 1.85 and reported it as a 0.2 m hole in a lobby wall 32 m away.
+        const near = walls.find(
+          (o) =>
+            o !== w &&
+            o.hd > o.hw &&
+            Math.max(o.hw, o.hd) >= 1 &&
+            Math.abs(o.x - ex) <= WALL_T * 1.6 &&
+            Math.abs(w.z - o.z) <= o.hd + 1e-6,
+        )
+        if (!near) continue
+        const farFace = near.x - dir * near.hw
+        let open = 0
+        for (let x = ex; dir > 0 ? x <= farFace + 1e-9 : x >= farFace - 1e-9; x += dir * 0.01) {
+          if (!inside(x, w.z)) open += 0.01
+        }
+        if (open > 0.01) {
+          problems.push(`${w.id} stops ${open.toFixed(2)} m short of the wall at x ${near.x.toFixed(2)}`)
+        }
+      }
+    }
+
+    check('every partition reaches the wall it meets, with no gap at the junction', problems.length === 0, problems.join(' | '))
+  }
+
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {

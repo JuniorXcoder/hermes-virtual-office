@@ -1415,7 +1415,12 @@ export const FOOTPRINTS: Footprint[] = [
   /* -------------------------------------- division partitions, level 0 --- */
   wallSeg('part-dev-mkt', WORK_X1, -6.9, WORK_X2, -6.9),
   wallSeg('part-mkt-content', WORK_X1, 6.9, WORK_X2, 6.9),
-  wallSeg('part-leisure-pantry', 14 + WALL_T, 2, ROOM_W, 2),
+  // WALL_T / 2, not WALL_T: this partition runs from the FACE of the wall at x = 14 (which is
+  // WALL_T thick and centred on 14, so its east face is 14.15) — the same convention
+  // part-dev-mkt uses at the other end of the building. At 14 + WALL_T it stopped 0.15 m short
+  // and left a hole straight through into the pantry, right where the bowling lane now butts
+  // against this wall.
+  wallSeg('part-leisure-pantry', 14 + WALL_T / 2, 2, ROOM_W, 2),
 
   /* ------------------------------------------ exec-floor partitions, L1 --- */
   // The corridor runs along z -11.5..-9.3; these are the walls BETWEEN the rooms
@@ -1438,7 +1443,17 @@ export const FOOTPRINTS: Footprint[] = [
       // the wall between this room and the next one east
       const next = sorted.find((o) => Math.abs(o.x1 - r.x2) < 0.6)
       if (next) {
-        out.push(wallSeg(`l1-${r.id}-e`, r.x2, r.z1, r.x2, r.z2, 1))
+        // THE WALL SPANS THE WHOLE GAP BETWEEN THE ROOMS, r.x2 .. next.x1 — it does not sit on
+        // r.x2. Rooms are declared 0.3 m apart so a WALL_T partition fits exactly between them;
+        // centring on r.x2 put only the WEST half of that partition in the gap and left 0.15 m
+        // of open air at every room's east corner, where the south wall stops at r.x2 and the
+        // partition stops at r.x2 + 0.15.
+        //
+        // It also runs THROUGH the south wall, to that wall's far face (r.z2 + WALL_T / 2)
+        // rather than stopping on its centre line. Ending at r.z2 sealed the north half of the
+        // junction and left a 0.3 m wide notch in the corridor-side half — the hole moved
+        // instead of closing.
+        out.push(wallSeg(`l1-${r.id}-e`, r.x2, r.z1, next.x1, r.z2 + WALL_T / 2, 1))
       }
     }
     // the corridor's own north wall is the room walls above; its west end is the
