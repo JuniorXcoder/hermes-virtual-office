@@ -3346,34 +3346,38 @@ void (async () => {
       if (Math.abs((g.parameters?.height ?? 0) - PIN_H * 0.72) > 0.005) return
       const v = new THREE.Vector3()
       n.getWorldPosition(v)
-      if (Math.abs(v.x - BOWLING.x) > 1.5 || v.z > BOWLING.zFoul || v.z < BOWLING.zEnd - 1) return
+      if (Math.abs(v.z - BOWLING.z) > 1.5 || v.x < BOWLING.xFoul || v.x > BOWLING.xEnd + 1) return
       pins.push(v)
     })
     if (pins.length !== 10) {
       problems.push(`the lane has ${pins.length} pins, expected 10`)
     } else {
       for (const p of pins) {
-        if (Math.abs(p.x - BOWLING.x) > BOWLING.w / 2 + 0.01) {
-          problems.push(`a pin at x ${p.x.toFixed(2)} is off the side of the lane (half-width ${BOWLING.w / 2})`)
+        if (Math.abs(p.z - BOWLING.z) > BOWLING.w / 2 + 0.01) {
+          problems.push(`a pin at z ${p.z.toFixed(2)} is off the side of the lane (half-width ${BOWLING.w / 2})`)
         }
-        if (p.z < BOWLING.zEnd + 0.2 || p.z > BOWLING.zFoul) {
-          problems.push(`a pin at z ${p.z.toFixed(2)} is off the end of the lane (${BOWLING.zEnd}..${BOWLING.zFoul})`)
+        if (p.x > BOWLING.xEnd - 0.2 || p.x < BOWLING.xFoul) {
+          problems.push(`a pin at x ${p.x.toFixed(2)} is off the end of the lane (${BOWLING.xFoul}..${BOWLING.xEnd})`)
         }
       }
-      // the head pin must be exactly where the layout says, or the bowler is aiming at a guess
-      const head = pins.reduce((a, b) => (b.z > a.z ? b : a))
-      if (Math.abs(head.z - BOWLING.headPinZ) > 0.01 || Math.abs(head.x - BOWLING.x) > 0.01) {
-        problems.push(`the head pin sits at (${head.x.toFixed(2)}, ${head.z.toFixed(2)}), not (${BOWLING.x}, ${BOWLING.headPinZ})`)
+      // the head pin is the one NEAREST the bowler, and must sit exactly where the layout says
+      const head = pins.reduce((a, b) => (b.x < a.x ? b : a))
+      if (Math.abs(head.x - BOWLING.headPinX) > 0.01 || Math.abs(head.z - BOWLING.z) > 0.01) {
+        problems.push(`the head pin sits at (${head.x.toFixed(2)}, ${head.z.toFixed(2)}), not (${BOWLING.headPinX}, ${BOWLING.z})`)
       }
-      // and the bowler must face it
+      // and the bowler must stand west of the foul line, aiming east at it
       const spot = IDLE_SPOTS.find((s) => s.act === 'bowling')
       if (!spot) {
         problems.push('no bowling idle spot, so nobody can ever use the lane')
       } else {
-        if (Math.abs(spot.x - BOWLING.x) > BOWLING.w / 2 + BOWLING.gutter || spot.z <= BOWLING.zFoul) {
+        if (Math.abs(spot.z - BOWLING.z) > BOWLING.w / 2 + BOWLING.gutter || spot.x >= BOWLING.xFoul) {
           problems.push(`the bowler stands at (${spot.x}, ${spot.z}), which is on the lane rather than on the approach`)
         }
         const look = { x: Math.sin(spot.face), z: Math.cos(spot.face) }
+        // the lane is aimed EAST: the throw direction must be +x, not merely "at the pins"
+        if (look.x < 0.99) {
+          problems.push(`the bowler aims (${look.x.toFixed(2)}, ${look.z.toFixed(2)}), which is not east (+x)`)
+        }
         const to = { x: head.x - spot.x, z: head.z - spot.z }
         const dot = (look.x * to.x + look.z * to.z) / Math.hypot(to.x, to.z)
         if (dot < 0.99) problems.push(`the bowler faces away from the head pin (dot ${dot.toFixed(2)})`)

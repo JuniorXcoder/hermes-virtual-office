@@ -1006,35 +1006,34 @@ export const RACING_SEAT_H = 0.46
 /* --------------------------------------------------------------- bowling -- */
 
 /**
- * The bowling lane: one shortened arcade lane down the middle of the lounge's south half,
- * behind the racing bay.
+ * The bowling lane: one shortened arcade lane in the lounge's south half, aimed EAST.
  *
  * Measured, not guessed. The lounge is x 14.15..27.85, z -20.85..2, but its free run is only
  * z -11.0 .. 1.5: the sofa group takes the north end and the racing bay occupies z
- * -15.8..-13.2. That gives 12 m from foul line to pin deck rather than the regulation 18.3 m,
- * which is what an arcade lane is anyway.
+ * -15.8..-13.2. That gives 11.2 m from foul line to pin deck rather than the regulation
+ * 18.3 m, which is what an arcade lane is anyway.
  *
- * It runs ALONG z with the bowler at the SOUTH end throwing north. That is forced: the room
- * is 13.7 m wide and 22.85 m deep, so a lane across x would be shorter still, and a lane
- * aimed at a side wall is not a lane.
+ * It runs ALONG X — the bowler stands at the WEST end and throws EAST. The room is 13.7 m
+ * wide and a lane needs 11.2 m plus a 1.4 m approach, so the width is the tight axis and the
+ * lane fits it with 0.85 m to spare at the east end.
  *
  * ONE definition, read by the mesh, the footprints and the idle spot — the same rule as
  * everything else here, for the same reason.
  */
 export const BOWLING = {
-  /** Centre of the lane, across its width. */
-  x: 21.0,
+  /** The lane's centre LINE, across its width. This is the z coordinate of the whole lane. */
+  z: -8.0,
   /** The playing surface, across. A real lane is 1.05 m; the gutters sit outside it. */
   w: 1.06,
   /** Gutter width, each side. */
   gutter: 0.24,
-  /** Foul line (south, where the bowler stands) and the far end of the surface. */
-  zFoul: 0.5,
-  zEnd: -10.6,
+  /** The foul line (west, where the bowler stands) and the far end of the surface (east). */
+  xFoul: 15.9,
+  xEnd: 27.1,
   /** The lane surface rides this far above the floor slab it is laid on. */
   y: 0.05,
-  /** The head pin's centre, and the spacing that builds the other nine around it. */
-  headPinZ: -9.6,
+  /** The head pin's centre, and the spacing that builds the other nine behind it. */
+  headPinX: 26.1,
   pinSpacing: 0.305,
 } as const
 /** A pin: 0.121 m across the belly and 0.38 m tall, regulation. */
@@ -1042,14 +1041,14 @@ export const PIN_R = 0.06
 export const PIN_H = 0.38
 /** 0.218 m across — the regulation ball, and what the fingers wrap. */
 export const BALL_R = 0.109
-/** Where the bowler stands: on the approach, this far behind the foul line. */
-export const BOWLING_STAND_Z = BOWLING.zFoul + 0.75
+/** Where the bowler stands: on the approach, this far BEHIND the foul line (−x is behind). */
+export const BOWLING_STAND_X = BOWLING.xFoul - 0.75
 /**
  * The nine pins behind the head pin, as (across, back) offsets in PIN SPACING units.
  *
- * Rows run back from the head pin at `sin(60°)` of the spacing, which is what makes the
- * triangle equilateral rather than a grid — a square grid is the classic tell that a lane
- * was laid out by eye.
+ * `across` is a z offset, `back` runs east away from the bowler. Rows are spaced by
+ * `sin(60°)` of the pin spacing, which is what makes the triangle equilateral rather than a
+ * grid — a square grid is the classic tell that a lane was laid out by eye.
  */
 export const PIN_OFFSETS: readonly (readonly [number, number])[] = [
   [0, 0],
@@ -1587,18 +1586,18 @@ export const FOOTPRINTS: Footprint[] = [
   // stands on, which is the mistake the dartboard comment above records.
   fp(
     'lounge-bowling',
-    BOWLING.x,
-    (BOWLING.zFoul + BOWLING.zEnd) / 2,
+    (BOWLING.xFoul + BOWLING.xEnd) / 2,
+    BOWLING.z,
+    (BOWLING.xEnd - BOWLING.xFoul) / 2,
     BOWLING.w / 2 + BOWLING.gutter,
-    (BOWLING.zFoul - BOWLING.zEnd) / 2,
     BOWLING.y + PIN_H,
   ),
   fp(
     'lounge-bowling-return',
-    BOWLING.x + BOWLING.w / 2 + BOWLING.gutter + 0.36,
-    BOWLING.zFoul - 0.1,
-    0.22,
-    1.15,
+    BOWLING.xFoul - 0.1,
+    BOWLING.z - (BOWLING.w / 2 + BOWLING.gutter + 0.36),
+    0.95,
+    0.17,
     BOWLING.y + 0.95,
   ),
 
@@ -1819,13 +1818,14 @@ export const IDLE_SPOTS: IdleSpot[] = [
   ...RACING_RIGS.map((r) => ({
     x: r.x, z: r.z, act: 'racing' as const, seated: true, face: r.facing + Math.PI, level: 0 as const,
   })),
-  // One bowler on the approach, aiming at the pins. The face is DERIVED from the lane, so
-  // moving the lane moves the aim with it instead of leaving the bowler throwing at a wall.
+  // One bowler on the approach, aiming east at the pins. The face is DERIVED from the lane,
+  // so moving or turning the lane moves the aim with it instead of leaving the bowler
+  // throwing at a wall.
   {
-    x: BOWLING.x,
-    z: BOWLING_STAND_Z,
+    x: BOWLING_STAND_X,
+    z: BOWLING.z,
     act: 'bowling',
-    face: faceToward(BOWLING.x, BOWLING_STAND_Z, BOWLING.x, BOWLING.headPinZ),
+    face: faceToward(BOWLING_STAND_X, BOWLING.z, BOWLING.headPinX, BOWLING.z),
     level: 0,
   },
 
