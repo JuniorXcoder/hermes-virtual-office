@@ -1143,17 +1143,8 @@ export const TERRACE_PROPS: TerraceProp[] = (() => {
 
   // ---- WEST SIDE: the communal table, clear of the stairs (x -10..-8.6) ------------
   // It runs along z, tucked against the west end of the strip, west of the shaft.
-  out.push({ id: 'terr-longtable', kind: 'longtable', x: -12.6, z: -15.0, hw: 0.7, hd: 2.4, h: 0.75 })
-  out.push({
-    id: 'terr-bench-w',
-    kind: 'tbench',
-    x: -13.5,
-    z: -15.0,
-    hw: 0.22,
-    hd: 2.0,
-    h: TERRACE_SEAT_H,
-    facing: Math.PI / 2,
-  })
+
+
 
   // ---- EAST SIDE: lockers, and a plant to soften it --------------------------------
   out.push({ id: 'terr-locker', kind: 'locker', x: 12.0, z: -15.0, hw: 0.42, hd: 2.2, h: 1.8 })
