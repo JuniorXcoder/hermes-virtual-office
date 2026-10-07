@@ -70,6 +70,7 @@ import {
   PIN_H,
   DARTBOARD,
   TERRACE_PROPS,
+  ROOM_PLAQUES,
   ROOM_PROPS,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, onStairArea, planRoute, route, routeBetween, stairCentre } from '../src/lib/office/nav'
@@ -2140,6 +2141,54 @@ void (async () => {
       if (!ACTIVITIES.includes('recline')) problems.push("the 'recline' pose is not implemented")
     }
     check('the pool is swimmable and the daybeds are for lying on', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // EVERY ROOM PLAQUE IS FIXED FLAT TO A WALL, FACING THE WAY YOU WALK.
+  //
+  // The earlier placards hung in open air on each room's edge, and that is exactly how they
+  // came back: "banyak banget kotak melayang ... hapus aja". So three points are sampled per
+  // plaque:
+  //   0.06 m BEHIND the plate must be inside a wall — catches a plate that drifted off its
+  //     wall and is now airborne, which is the whole failure being guarded;
+  //   0.06 m IN FRONT must NOT be inside a wall — catches one pushed into its own wall;
+  //   and the point in front must be OUTSIDE the room it names — catches a plate mounted on
+  //     the room's inner face, where only somebody standing inside could ever read it.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const walls = FOOTPRINTS.filter((f) => f.kind === 'wall')
+    const inWall = (x: number, z: number, level: number) =>
+      walls.some((w) => w.level === level && Math.abs(x - w.x) <= w.hw + 1e-6 && Math.abs(z - w.z) <= w.hd + 1e-6)
+
+    for (const p of ROOM_PLAQUES) {
+      const nx = Math.sin(p.face)
+      const nz = Math.cos(p.face)
+      if (!inWall(p.x - nx * 0.06, p.z - nz * 0.06, p.level)) {
+        problems.push(`the "${p.text}" plaque is not against a wall — it floats`)
+      }
+      const fx = p.x + nx * 0.06
+      const fz = p.z + nz * 0.06
+      if (inWall(fx, fz, p.level)) problems.push(`the "${p.text}" plaque faces into a wall`)
+      const r = ROOMS.find((x) => x.id === p.id)
+      if (r && fx > r.x1 && fx < r.x2 && fz > r.z1 && fz < r.z2) {
+        problems.push(`the "${p.text}" plaque faces into its own room instead of the walkway`)
+      }
+      if (p.y < p.level * LEVEL_H + 1.0 || p.y > (p.level + 1) * LEVEL_H - 0.2) {
+        problems.push(`the "${p.text}" plaque sits at ${p.y.toFixed(2)} m, outside its floor`)
+      }
+    }
+
+    // only the rooms the operator asked for, and never circulation space
+    const marked = new Set(ROOM_PLAQUES.map((p) => p.id))
+    for (const id of ['lobby', 'courtyard', 'terrace', 'corridor1', 'ceo']) {
+      if (marked.has(id)) problems.push(`${id} is circulation space and must not carry a plaque`)
+    }
+    for (const id of ['dev', 'mkt', 'content', 'leisure', 'pantry', ...MEETING_ROOM_IDS]) {
+      if (!marked.has(id)) problems.push(`${id} has no plaque`)
+    }
+
+    check('every room plaque is fixed flat to a wall and faces the walkway', problems.length === 0, problems.join(' | '))
   }
 
 

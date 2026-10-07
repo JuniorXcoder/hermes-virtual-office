@@ -1936,17 +1936,80 @@ export const OPENINGS: { x: number; z: number; hw: number; hd: number; level: 0 
 
 /* --------------------------------------------------------------- signs ---- */
 
-// THE ROOM PLACARDS ARE GONE. Removed on report: "gw liat banyak banget kotak melayang kek
-// gini itu apa ya? hapus aja!"
-//
-// They were real — a 2.5 x 0.7 m dark backing plate and its label, one per room, hung at
-// 2.55 m on each room's south edge. The placement was the problem, not the idea: the placard
-// hangs on the room's EDGE, in open air, with nothing above it and no wall behind it, so from
-// anywhere in the building it reads as a black box floating at head height. They were the
-// "floating boxes" — one per room, thirteen of them.
-//
-// If room names come back, they have to be MOUNTED: on a wall face, or on a post standing on
-// the floor. Hanging the plate on the room's edge is what made it float.
+/**
+ * The room name plaques, and the SURFACE each one is attached to.
+ *
+ * Reported once as "banyak banget kotak melayang ... hapus aja": the old placards hung at
+ * 2.55 m on each room's EDGE, in open air with nothing above or behind them, so from anywhere
+ * in the building they read as black boxes at head height. The names were never the problem —
+ * hanging them on nothing was. Every entry here therefore names a WALL SEGMENT to be screwed
+ * to and the yaw that turns the plate out of that wall, so a plaque cannot be airborne.
+ *
+ * Which rooms get one, per the operator: the three work rooms, the five meeting rooms, and the
+ * pantry with the lounge beside it. The lobby, courtyard, terrace, CEO room and corridor are
+ * circulation space and stay unmarked.
+ *
+ * Names come from `ROOMS`, so a renamed room renames its plaque. Meeting rooms take the
+ * operator's `R. MEETING <gunung>` form.
+ *
+ * PLACEMENT, measured off the wall list rather than eyeballed:
+ *
+ *   WEST WING (dev, mkt, content) — the corridor side is EAST, so the plate goes on the east
+ *   face of the x = -14 wall (face at -13.85) and faces +x. Each sits on the wall segment
+ *   beside its door: dev's door is z -15.2..-12.4, mkt's z -1.4..1.4, content's z 12.4..15.2.
+ *
+ *   EAST WING (lounge, pantry) — the corridor side is WEST, so the plate goes on the west face
+ *   of the x = 14 wall (face at 13.85) and faces -x. The lounge's door is z -5.4..-2.6 and its
+ *   plate sits on z -2.6..2.0; the pantry's door is z 6.6..9.4 and its plate on z 2.0..6.6.
+ *
+ *   MEETING ROOMS (level 1) — the corridor runs along their SOUTH side, so the plate goes on
+ *   the south face of the z = -11.5 wall (face at -11.35) and faces +z. Each sits on the
+ *   segment WEST of its door.
+ *
+ * `y` is absolute: 1.70 m above its own floor.
+ */
+const PLAQUE_Y = 1.7
+/** Half the plate's depth, so the slab's back sits just inside the wall face it is fixed to. */
+export const PLAQUE_T = 0.03
+const MEETING_SET = new Set<string>(MEETING_ROOM_IDS)
+
+const PLAQUE_AT: Record<string, { x: number; z: number; face: number }> = {
+  // west wing, on the east face of the x = -14 wall
+  dev: { x: -13.85 + PLAQUE_T / 2, z: -9.65, face: Math.PI / 2 },
+  mkt: { x: -13.85 + PLAQUE_T / 2, z: 4.15, face: Math.PI / 2 },
+  content: { x: -13.85 + PLAQUE_T / 2, z: 18.03, face: Math.PI / 2 },
+  // east wing, on the west face of the x = 14 wall
+  leisure: { x: 13.85 - PLAQUE_T / 2, z: -0.3, face: -Math.PI / 2 },
+  pantry: { x: 13.85 - PLAQUE_T / 2, z: 4.3, face: -Math.PI / 2 },
+  // the exec floor, on the south face of the corridor wall
+  rinjani: { x: -16.8, z: -11.35 + PLAQUE_T / 2, face: 0 },
+  merapi: { x: -5.2, z: -11.35 + PLAQUE_T / 2, face: 0 },
+  bromo: { x: 3.5, z: -11.35 + PLAQUE_T / 2, face: 0 },
+  semeru: { x: 12.2, z: -11.35 + PLAQUE_T / 2, face: 0 },
+  cikurai: { x: 20.85, z: -11.35 + PLAQUE_T / 2, face: 0 },
+}
+
+export const ROOM_PLAQUES: {
+  id: string
+  text: string
+  x: number
+  y: number
+  z: number
+  face: number
+  level: 0 | 1
+}[] = Object.keys(PLAQUE_AT).map((id) => {
+  const r = room(id)
+  const at = PLAQUE_AT[id]
+  return {
+    id,
+    text: MEETING_SET.has(id) ? `R. MEETING ${r.label}` : r.label,
+    x: at.x,
+    y: r.level * LEVEL_H + PLAQUE_Y,
+    z: at.z,
+    face: at.face,
+    level: r.level,
+  }
+})
 
 /* -------------------------------------------------------------- validation -- */
 

@@ -75,6 +75,8 @@ import {
   POOL_LOUNGERS,
   RECEPTION,
   ROOMS,
+  ROOM_PLAQUES,
+  PLAQUE_T,
   STAIRS,
   STAIR_FLIGHT_TOP,
   STAIR_RAIL_EXTENSION,
@@ -293,9 +295,16 @@ function signTexture(text: string, sub?: string) {
   c.lineWidth = 6
   c.strokeRect(8, 8, 496, 112)
   c.fillStyle = '#e8cf8a'
-  c.font = 'bold 54px Georgia, serif'
   c.textAlign = 'center'
   c.textBaseline = 'middle'
+  // FIT THE TEXT TO THE PLATE. At a fixed 54 px, "DEVELOPER & INFRASTRUCTURE" ran off both
+  // ends of a 512 px canvas, and the plaque read as a gold smear rather than a room name.
+  let size = 54
+  while (size > 18) {
+    c.font = `bold ${size}px Georgia, serif`
+    if (c.measureText(text).width <= 452) break
+    size -= 2
+  }
   c.fillText(text, 256, sub ? 50 : 64)
   if (sub) {
     c.fillStyle = '#a89a72'
@@ -1426,6 +1435,27 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const l = new THREE.PointLight(0xfff6e6, 0.5, 22)
     l.position.set(p.x, p.y - 0.4, p.z)
     group.add(l)
+  }
+
+  /* ---------------------------------------------------------- room plaques -- */
+  // Flat on a wall face at 1.70 m. Every placement is a wall segment named in ROOM_PLAQUES, so
+  // a plaque cannot end up hanging in the air the way the old edge-mounted placards did.
+  for (const p of ROOM_PLAQUES) {
+    const nx = Math.sin(p.face)
+    const nz = Math.cos(p.face)
+    // the slab: its back sits ON the wall face, so it spans from the face outward by PLAQUE_T
+    const back = box(1.96, 0.53, PLAQUE_T, 0x2a1f16, { rough: 0.7 })
+    back.position.set(p.x, p.y, p.z)
+    back.rotation.y = p.face
+    group.add(back)
+    // the face itself, a hair proud of the slab so the two do not z-fight
+    const plate = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.9, 0.475),
+      new THREE.MeshStandardMaterial({ map: track(signTexture(p.text)), roughness: 0.55 }),
+    )
+    plate.position.set(p.x + nx * (PLAQUE_T / 2 + 0.002), p.y, p.z + nz * (PLAQUE_T / 2 + 0.002))
+    plate.rotation.y = p.face
+    group.add(plate)
   }
 
   /* ------------------------------- under the second floor: the terrace --- */
