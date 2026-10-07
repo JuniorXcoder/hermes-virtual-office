@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createTask, listAgents, listAssignees, listTasks } from '@/lib/hermes/kanban'
 import { visible } from '@/lib/hermes/office-membership'
+import { blockedAssigneesFor } from '@/lib/hermes/approvals'
 import type { TaskOrigin } from '@/types/hermes'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 
@@ -19,7 +20,9 @@ export async function GET() {
     ])
     // Apply the hide list: a hidden profile is absent from the office but its
     // tasks stay on the board, so the work is never hidden, only the avatar.
-    const agents = visible(await listAgents(tasks, assignees))
+    // Ini yang memberi makan avatar: agent yang task aktifnya menunggu manusia harus tampil
+    // 'blocked' DI SINI, bukan hanya di menu spawn.
+    const agents = visible(await listAgents(tasks, assignees, await blockedAssigneesFor(tasks)))
     return NextResponse.json({ tasks, agents })
   } catch (err) {
     return NextResponse.json(

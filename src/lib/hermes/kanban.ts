@@ -780,18 +780,33 @@ async function readSoul(name: string): Promise<string | null> {
   }
 }
 
-export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: string; onDisk: boolean; total: number }[]): Promise<Agent[]> {
+/**
+ * Task AKTIF per assignee (running/review). Diekspor supaya `approvals.ts` memakai peta yang
+ * SAMA dengan `listAgents` — kalau dua tempat menghitung "task aktif" sendiri-sendiri, cepat
+ * atau lambat agent yang dianggap terhambat bukan agent yang duduk di meja.
+ */
+export function activeTaskByAssignee(tasks: Task[]): Map<string, Task> {
+  const active = new Map<string, Task>()
+  for (const t of tasks) {
+    if (!t.assignee) continue
+    if (t.status === 'running' || t.status === 'review') active.set(t.assignee, t)
+  }
+  return active
+}
+
+export async function listAgents(
+  tasks: Task[],
+  prefetchedAssignees?: { name: string; onDisk: boolean; total: number }[],
+  /** Assignee yang task aktifnya menunggu manusia (lihat `approvals.ts`). Tampil 'blocked'. */
+  blockedAssignees?: Set<string>,
+): Promise<Agent[]> {
   const raw = prefetchedAssignees ?? (await listAssignees())
   // Profiles AND assignees. Reading only `assignees` meant a freshly created
   // profile stayed invisible until it was given a task, so "create a profile"
   // looked like it had done nothing.
   const names = [...new Set([...raw.map((r) => r.name), ...(await listProfiles())])].sort()
 
-  const active = new Map<string, Task>()
-  for (const t of tasks) {
-    if (!t.assignee) continue
-    if (t.status === 'running' || t.status === 'review') active.set(t.assignee, t)
-  }
+  const active = activeTaskByAssignee(tasks)
 
   // Soul per agent: baca marker office (role/divisi). Fallback ke keyword nama.
   const souls = await Promise.all(names.map((n) => readSoul(n)))
@@ -827,8 +842,12 @@ export async function listAgents(tasks: Task[], prefetchedAssignees?: { name: st
 
   return meta.map(({ name, soul, role, division }) => {
     const task = active.get(name)
+    // Menunggu manusia MENGALAHKAN working/review: agent yang berhenti menunggu keputusan
+    // tidak boleh tampil sedang bekerja. Kursinya tetap — dia masih memegang task itu.
     const status: Agent['status'] = task
-      ? task.status === 'review'
+      ? blockedAssignees?.has(name)
+        ? 'blocked'
+        : task.status === 'review'
         ? 'review'
         : 'working'
       : 'idle'

@@ -11,7 +11,7 @@
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { facingProblems } from '../src/lib/office/facing'
-import { assessHealth, HEALTH_COLOR, HEALTH_THRESHOLDS } from '../src/lib/office/health'
+import { APPROVAL_WAIT_WARN, assessHealth, HEALTH_COLOR, HEALTH_THRESHOLDS } from '../src/lib/office/health'
 import {
   LOOP_THRESHOLD,
   STUCK_MINUTES,
@@ -100,7 +100,8 @@ import { ACTIVITIES, animate, type Activity } from '../src/lib/office/anim'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
 import { hide, isHidden, show, visible, visibleNames } from '../src/lib/hermes/office-membership'
-import { originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/kanban'
+import { listAgents, originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/kanban'
+import { APPROVAL_STALE_SEC, isApprovalsStale, readApprovalQueue } from '../src/lib/hermes/approvals'
 import { readJson } from '../src/lib/api'
 import { SEATS } from '../src/lib/office/layout'
 import { columnOf } from '../src/lib/office/board'
@@ -3807,6 +3808,68 @@ void (async () => {
     }
 
     check('control knows what needs a human, and what needs a reason', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // PERSETUJUAN: YANG MENUNGGU MANUSIA MENGHENTIKAN AGENT.
+  //
+  // `hermes approvals` tidak punya antrean live; yang nyata menunggu manusia adalah task yang
+  // diblokir needs_input/capability. Yang diuji: agent yang task aktifnya menunggu tampil
+  // 'blocked' (bukan 'working'), lampu kesehatan menyala karenanya, dan TIDAK menyala tanpa
+  // alasan. Semuanya unit — tanpa CLI.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const ev = (kind: string) => [
+      { kind: 'created', payload: {} },
+      { kind: 'blocked', payload: { reason: 'boleh push ke main?', kind, recurrences: 1 } },
+    ]
+    const tasks = [
+      { id: 't_appr0001', title: 'tunggu izin', status: 'running', assignee: 'zz-selftest-tunggu' },
+      { id: 't_appr0002', title: 'jalan biasa', status: 'running', assignee: 'zz-selftest-jalan' },
+      { id: 't_appr0003', title: 'sudah dibuka', status: 'running', assignee: 'zz-selftest-dibuka' },
+    ] as Task[]
+    const detail = new Map([
+      ['t_appr0001', { events: ev('needs_input') }],
+      ['t_appr0002', { events: [] }],
+      // Diblokir lalu DIBUKA: blokirnya sudah tidak berlaku, agent-nya tidak boleh tampil terhambat.
+      ['t_appr0003', { events: [...ev('needs_input'), { kind: 'unblocked', payload: {} }] }],
+    ])
+    const q = readApprovalQueue(tasks, detail)
+    if (q.pending.length !== 1 || q.pending[0].id !== 't_appr0001') {
+      problems.push(`antrean berisi ${q.pending.map((w) => w.id).join(',') || 'kosong'}, seharusnya hanya t_appr0001`)
+    }
+    if (!q.blockedAgentIds.has('zz-selftest-tunggu')) problems.push('agent yang task aktifnya menunggu manusia tidak masuk set terhambat')
+    if (q.blockedAgentIds.has('zz-selftest-dibuka')) problems.push('blokir yang sudah dibuka masih menghentikan agent')
+
+    // (1) listAgents dengan set: menunggu = 'blocked', task-nya tetap dipegang.
+    const roster = ['zz-selftest-tunggu', 'zz-selftest-jalan', 'zz-selftest-dibuka'].map((name) => ({ name, onDisk: false, total: 1 }))
+    const agents = await listAgents(tasks, roster, q.blockedAgentIds)
+    const a = (n: string) => agents.find((x) => x.name === n)
+    if (a('zz-selftest-tunggu')?.status !== 'blocked') {
+      problems.push(`agent yang menunggu persetujuan tampil "${a('zz-selftest-tunggu')?.status}", seharusnya blocked`)
+    }
+    if (a('zz-selftest-tunggu')?.currentTaskId !== 't_appr0001') problems.push('agent terhambat kehilangan task-nya')
+    if (a('zz-selftest-jalan')?.status !== 'working') problems.push('agent yang tidak menunggu ikut ditandai terhambat')
+    const legacy = await listAgents(tasks, roster)
+    if (legacy.some((x) => x.status === 'blocked')) problems.push('listAgents tanpa set mengubah perilaku pemanggil lama')
+
+    // (2)-(4) kesehatan
+    const calm = { logAgeSeconds: 30, errorCount: 0, serverErrorCount: 0, costUsd: 0, unpricedModels: 0 }
+    const cant = assessHealth({ ...calm, approvalsFailure: 'hermes CLI tidak ditemukan' })
+    if (cant.level !== 'bad') problems.push(`gagal membaca persetujuan dinilai "${cant.level}", seharusnya bad`)
+    const two = assessHealth({ ...calm, waitingApprovals: 2 })
+    if (two.level !== 'warn') problems.push(`2 persetujuan menunggu dinilai "${two.level}", seharusnya warn`)
+    if (!two.reasons.some((r) => r.includes('terhambat'))) problems.push('alasan kuning tidak menyebut agent terhambat')
+    if (APPROVAL_WAIT_WARN !== 1) problems.push(`ambang tunggu ${APPROVAL_WAIT_WARN}, seharusnya 1 — satu tunggu = satu agent berhenti`)
+    const none = assessHealth({ ...calm, waitingApprovals: 0 })
+    if (none.level !== 'ok' || none.reasons.length) problems.push(`nol yang menunggu menambah alasan: ${none.reasons.join(', ')}`)
+
+    // (5) basi
+    if (!isApprovalsStale(APPROVAL_STALE_SEC + 1)) problems.push('data persetujuan lewat ambang tidak dianggap basi')
+    if (isApprovalsStale(10)) problems.push('data persetujuan 10 detik dianggap basi')
+
+    check('a wait for a human stops the agent, and lights the lamp', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────

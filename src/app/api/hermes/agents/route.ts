@@ -15,6 +15,7 @@ import { BUILTIN_HIDDEN, hiddenNames, isHidden, hide, show } from '@/lib/hermes/
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
+import { blockedAssigneesFor } from '@/lib/hermes/approvals'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +36,9 @@ export async function GET() {
     ])
     // Pass the assignees already fetched: listAgents() would spawn the same CLI
     // read a second time.
-    const agents = await listAgents(tasks, assignees)
+    // Agent yang task aktifnya menunggu manusia tampil 'blocked', bukan 'working'.
+    const blockedAgentIds = await blockedAssigneesFor(tasks)
+    const agents = await listAgents(tasks, assignees, blockedAgentIds)
     const inOffice = new Set(agents.filter((a) => !isHidden(a.name)).map((a) => a.name))
     // Union of assignees and on-disk profiles: a profile with no tasks is still a
     // profile, and must be listed or creating one looks like it failed.

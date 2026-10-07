@@ -76,9 +76,25 @@ type Observability = {
   }
 }
 
+type Approvals = {
+  policy: { mode: string | null; timeoutSec: number | null; denyCount: number; ageSeconds: number; failure?: string }
+  patterns: {
+    count: number
+    windowDays: number
+    proposals: { pattern: string; kind: string; count: number }[]
+    ageSeconds: number
+    failure?: string
+  }
+  pending: { id: string; title: string; reason: { kind: string; reason: string } }[]
+  blockedAgents: string[]
+  notRead?: number
+}
+
 /** Ambang "basi". Bukan angka ajaib: 10 menit untuk log, 1 jam untuk basis data pemakaian. */
 const STALE_LOG = 600
 const STALE_DB = 3600
+/** 5 menit untuk persetujuan — sama dengan APPROVAL_STALE_SEC di lib/hermes/approvals.ts. */
+const STALE_APPROVAL = 300
 
 const nfmt = (n: number) => n.toLocaleString('id-ID')
 const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`
@@ -98,6 +114,8 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
   const [busy, setBusy] = useState(false)
   const [days, setDays] = useState(30)
   const [notice, setNotice] = useState<string | null>(null)
+  const [appr, setAppr] = useState<Approvals | null>(null)
+  const [apprErr, setApprErr] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -116,12 +134,32 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
     }
   }, [days])
 
+  // Dipisah dari `load`: pembacaan pola (`approvals suggest`) bisa makan 25 detik, dan itu tidak
+  // boleh menahan angka biaya dan error yang sudah siap.
+  const loadApprovals = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hermes/approvals', { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'gagal membaca persetujuan')
+      setAppr(json)
+      setApprErr(null)
+    } catch (e) {
+      // Sama dengan `load`: gagal = bilang tidak tahu, bukan menampilkan daftar tunggu lama.
+      setApprErr((e as Error).message)
+      setAppr(null)
+    }
+  }, [])
+
   useEffect(() => {
     if (!open) return
     load()
-    const t = setInterval(load, 30_000)
+    loadApprovals()
+    const t = setInterval(() => {
+      load()
+      loadApprovals()
+    }, 30_000)
     return () => clearInterval(t)
-  }, [open, load])
+  }, [open, load, loadApprovals])
 
   if (!open) return null
 
@@ -151,7 +189,12 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
               <option value={30}>30 hari</option>
               <option value={365}>semua</option>
             </select>
-            <button onClick={load} disabled={busy} className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800">
+            <button
+              onClick={() => {
+                load()
+                loadApprovals()
+              }}
+              disabled={busy} className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800">
               {busy ? '...' : 'muat ulang'}
             </button>
             <button onClick={onClose} className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800">
@@ -171,6 +214,91 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
         )}
 
         {notice && <div className="mb-4 rounded border border-slate-600 bg-slate-800/60 p-2 text-xs">{notice}</div>}
+
+        {/* ---------- persetujuan ---------- */}
+        <section className="mb-5">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Persetujuan
+            {appr && (
+              <span className={`ml-2 ${appr.pending.length > 0 ? 'text-red-400' : 'text-slate-500'}`}>
+                · {appr.pending.length} menunggu
+              </span>
+            )}
+          </h3>
+          {apprErr ? (
+            <div className="rounded border border-red-800 bg-red-950/50 p-2 text-xs">
+              <b>Tidak bisa membaca keadaan persetujuan.</b>
+              <div className="mt-1 text-red-300">{apprErr}</div>
+            </div>
+          ) : !appr ? (
+            <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-xs text-slate-400">membaca…</div>
+          ) : (
+            <div className="space-y-2 text-xs">
+              <div className="rounded border border-slate-700 bg-slate-800/50 p-2">
+                {appr.policy.failure ? (
+                  <span className="text-red-300">Kebijakan tidak terbaca: {appr.policy.failure}</span>
+                ) : (
+                  <>
+                    kebijakan <span className="font-mono">{appr.policy.mode}</span>
+                    <span className="text-slate-400">
+                      {' '}
+                      · tunggu {appr.policy.timeoutSec ?? '—'} dtk · {appr.policy.denyCount} aturan deny
+                    </span>
+                    {appr.policy.ageSeconds > STALE_APPROVAL && (
+                      <span className="ml-2 text-amber-400">· BASI ({age(appr.policy.ageSeconds)})</span>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {appr.pending.length === 0 ? (
+                <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-slate-400">
+                  Tidak ada yang menunggu keputusan kamu.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {appr.pending.map((w) => (
+                    <div key={w.id} className="rounded border border-red-800 bg-red-950/40 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-semibold text-red-300">{w.title}</span>
+                        <span className="font-mono text-[11px] text-slate-400">{w.id}</span>
+                      </div>
+                      <div className="mt-1 text-red-200/80">{w.reason.reason}</div>
+                    </div>
+                  ))}
+                  {appr.blockedAgents.length > 0 && (
+                    <div className="text-[11px] text-red-400/80">
+                      agent berhenti: {appr.blockedAgents.join(' · ')}
+                    </div>
+                  )}
+                </div>
+              )}
+              {(appr.notRead ?? 0) > 0 && (
+                <div className="text-[11px] text-amber-400">{appr.notRead} task tidak dibaca detailnya — daftar ini mungkin kurang</div>
+              )}
+
+              <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-slate-400">
+                {appr.patterns.failure ? (
+                  <span className="text-amber-300">Pola approval tidak terbaca: {appr.patterns.failure}</span>
+                ) : appr.patterns.ageSeconds > STALE_APPROVAL ? (
+                  <span className="text-amber-400">Pola approval BASI ({age(appr.patterns.ageSeconds)})</span>
+                ) : appr.patterns.count === 0 ? (
+                  `Pola approval ${appr.patterns.windowDays} hari: belum ada data.`
+                ) : (
+                  <>
+                    {appr.patterns.count} pola sering disetujui ({appr.patterns.windowDays} hari):{' '}
+                    <span className="font-mono text-slate-300">
+                      {appr.patterns.proposals
+                        .slice(0, 5)
+                        .map((p) => `${p.pattern} ×${p.count}`)
+                        .join(' · ')}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
 
         {!data && !err && <div className="py-8 text-center text-sm text-slate-400">membaca…</div>}
 

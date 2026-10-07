@@ -113,7 +113,14 @@ Aksi mengubah keadaan, jadi paling akhir dan harus ada konfirmasi.
 
 ## TAHAP 5 — Review & keselamatan
 
-- [ ] **5.1** Approval queue dari `hermes approvals`, dan yang menunggu **menghentikan** agent.
+- [x] **5.1** Approval queue dari `hermes approvals`, dan yang menunggu **menghentikan** agent.
+      — terbukti: `hermes approvals` tidak punya antrean live (hanya suggest/test), jadi antreannya
+        task kanban blocked needs_input/capability -> readApprovalQueue() di approvals.ts;
+        kebijakan dari `hermes config get approvals --json`, pola dari
+        `hermes approvals suggest --json --days 7 --limit 20` (batas 25 dtk, timeout = failure);
+        GET /api/hermes/approvals; listAgents(..., blockedAssignees) -> 'blocked' lewat route
+        tasks + agents; assessHealth waitingApprovals/approvalsFailure; seksi Persetujuan di
+        SystemPanel; `npm run selftest` (a wait for a human stops the agent, and lights the lamp)
 - [ ] **5.2** Bukti hasil kerja: diff/artifact bisa diperiksa, bukan cuma "selesai ✓".
 - [ ] **5.3** Verifikasi independen: hasil agent dicek tool lain sebelum "selesai".
 - [ ] **5.4** Batas izin per agent.

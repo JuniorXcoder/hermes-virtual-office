@@ -52,6 +52,14 @@ export const HEALTH_THRESHOLDS = {
   UNPRICED_WARN: 1,
 } as const
 
+/**
+ * Persetujuan yang menunggu: SATU saja sudah kuning. Bukan ambang yang longgar karena tiap
+ * tunggu bukan statistik — satu tunggu berarti satu agent berhenti dan tidak akan jalan lagi
+ * sampai ada manusia yang bergerak. Tidak merah, karena tidak ada kerja yang HILANG: kerjanya
+ * diam, menunggu, dan utuh.
+ */
+export const APPROVAL_WAIT_WARN = 1
+
 export type HealthInput = {
   /** Umur errors.log dalam detik. -1 kalau tidak ketemu. */
   logAgeSeconds: number
@@ -65,6 +73,13 @@ export type HealthInput = {
   unpricedModels: number
   /** Apakah pembacaan datanya sendiri gagal. Kalau ya, ini MERAH apa pun isinya. */
   failure?: string
+  /**
+   * Berapa task yang menunggu persetujuan manusia. OPSIONAL: pemanggil lama (observability)
+   * tidak mengirimnya, dan perilakunya tidak boleh berubah karena itu.
+   */
+  waitingApprovals?: number
+  /** Pembacaan keadaan persetujuan gagal. Tidak tahu siapa yang menunggu = MERAH. */
+  approvalsFailure?: string
 }
 
 /**
@@ -123,6 +138,13 @@ export function assessHealth(i: HealthInput): Health {
   // 5. Angka biaya yang tidak lengkap. Bukan kegagalan, tapi totalnya menyesatkan.
   if (i.unpricedModels >= T.UNPRICED_WARN) {
     raise('warn', `${i.unpricedModels} model belum ada tarifnya — total biaya adalah batas bawah`)
+  }
+
+  // 6. Persetujuan. Tidak bisa membaca = tidak tahu agent mana yang berhenti = merah.
+  if (i.approvalsFailure) {
+    raise('bad', `tidak bisa membaca keadaan persetujuan: ${i.approvalsFailure}`)
+  } else if ((i.waitingApprovals ?? 0) >= APPROVAL_WAIT_WARN) {
+    raise('warn', `${i.waitingApprovals} persetujuan menunggu — agent terhambat`)
   }
 
   return { level, reasons }
