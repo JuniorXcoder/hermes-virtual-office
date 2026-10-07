@@ -32,7 +32,6 @@ import {
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
   meetingRoomFor,
-  ROOM_SIGNS,
   visitorSpot,
   IDLE_SPOTS as OFFICE_IDLE_SPOTS,
   LEVEL_H,
@@ -1295,7 +1294,6 @@ export function createScene(
       return hour
     },
     /** Exposed so the self-check can assert the room signs exist. */
-    roomSigns: ROOM_SIGNS,
     stairCentre,
     meetingRoomIds: MEETING_ROOM_IDS,
     conferenceChairs: CONFERENCE_CHAIRS,

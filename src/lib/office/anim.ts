@@ -507,6 +507,29 @@ function benchpress(a: AnimAgent, t: number) {
 }
 
 /**
+ * Put the avatar in swimwear, or back into its clothes.
+ *
+ * Reported: "saat berenang pakaiannya itu berubah jadi kolor doang dong" — a swimmer should be
+ * in trunks, not in a shirt and trousers.
+ *
+ * `animate()` calls this with `false` every frame and the swim pose calls it with `true`, the
+ * same contract the held equipment uses: a pose that forgets cannot leave a body walking to
+ * its desk in its swimming trunks, and a body that leaves the pool is dressed again on the
+ * very next frame.
+ *
+ * The shirt and both leg segments are RECOLOURED to skin rather than swapped for bare meshes.
+ * Recolouring cannot move a joint, so every pose written against the rig keeps working
+ * unchanged — the hands, the knees and the feet all stay exactly where they were measured.
+ */
+function dressForSwim(a: AnimAgent, on: boolean) {
+  const sw = a.avatar.swimwear
+  sw.trunks.visible = on
+  for (const s of sw.skinnable) {
+    ;(s.mesh.material as THREE.MeshStandardMaterial).color.setHex(on ? a.avatar.skin : s.color)
+  }
+}
+
+/**
  * Swimming a lane.
  *
  * THE BODY LIES FLAT, and that needs the WAIST. `chest` pivots at the shoulders, so leaning
@@ -520,6 +543,7 @@ function benchpress(a: AnimAgent, t: number) {
  */
 function swim(a: AnimAgent, t: number) {
   const av = a.avatar
+  dressForSwim(a, true)
   const k = Math.min(1, a.ease)
   const m = (v: number) => v * k
   const stroke = (off: number) => Math.sin(t * 2.85 + a.phase + off)
@@ -1105,6 +1129,9 @@ export function animate(a: AnimAgent, t: number, dt: number) {
   held.pizza.visible = false
   held.tongs.visible = false
   held.bowlingBall.visible = false
+  // Same contract for the swimwear: the swim pose re-dresses the body, and every other pose
+  // leaves it in its clothes.
+  dressForSwim(a, false)
   // THE WAIST IS RESET EVERY FRAME, for the same reason the equipment is.
   //
   // Only three poses set it (swim, benchpress, recline), so without this a body that had

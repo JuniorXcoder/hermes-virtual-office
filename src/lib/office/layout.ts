@@ -1936,35 +1936,17 @@ export const OPENINGS: { x: number; z: number; hw: number; hd: number; level: 0 
 
 /* --------------------------------------------------------------- signs ---- */
 
-export const ROOM_SIGNS: { text: string; x: number; z: number; level: 0 | 1 }[] = ROOMS.map((r) => {
-  // EVERY ROOM GETS A NAME, including the two that used to be skipped.
-  //
-  // `terrace` and `corridor1` were filtered out with "it is a corridor, not a room" — a
-  // reasonable call when both were bare circulation space. That is no longer true: the
-  // terrace (the covered floor directly beneath the second floor) now holds a work bar, two
-  // lounge pairs and a communal table, so it is a place with a name and needs one.
-  //
-  // The placard hangs at 2.55 m on the room's south edge, which is clear of the slab above
-  // (LEVEL_H = 3.4) and of any furniture.
-  const interiorMiddleX = (r.x1 + r.x2) / 2
-  // The terrace spans the whole building width, so its centre would hang the sign over the
-  // stair shaft. Put it over the work bar instead, which is where people actually sit.
-  const x = r.id === 'terrace' ? -4.0 : interiorMiddleX
-  // The corridor runs the full width and has no south wall to hang on; put its placard at
-  // the stair head, where someone arriving on the floor will read it.
-  // `z` puts the placard on the room's own edge. The COURTYARD is the exception: its south
-  // edge (z2 = 16) is the lobby's north edge, so hanging it there stacked it 0.8 m from the
-  // LOBI placard. The courtyard reads best from the terrace side, so its sign goes north.
-  const z =
-    r.id === 'lobby'
-      ? r.z1 + 0.4
-      : r.id === 'courtyard'
-        ? r.z1 + 0.6
-        : r.id === 'corridor1'
-          ? r.z1 + 0.5
-          : r.z2 - 0.4
-  return { text: r.label, x, z, level: r.level }
-})
+// THE ROOM PLACARDS ARE GONE. Removed on report: "gw liat banyak banget kotak melayang kek
+// gini itu apa ya? hapus aja!"
+//
+// They were real — a 2.5 x 0.7 m dark backing plate and its label, one per room, hung at
+// 2.55 m on each room's south edge. The placement was the problem, not the idea: the placard
+// hangs on the room's EDGE, in open air, with nothing above it and no wall behind it, so from
+// anywhere in the building it reads as a black box floating at head height. They were the
+// "floating boxes" — one per room, thirteen of them.
+//
+// If room names come back, they have to be MOUNTED: on a wall face, or on a post standing on
+// the floor. Hanging the plate on the room's edge is what made it float.
 
 /* -------------------------------------------------------------- validation -- */
 

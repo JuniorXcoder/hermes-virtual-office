@@ -75,7 +75,6 @@ import {
   POOL_LOUNGERS,
   RECEPTION,
   ROOMS,
-  ROOM_SIGNS,
   STAIRS,
   STAIR_FLIGHT_TOP,
   STAIR_RAIL_EXTENSION,
@@ -1429,21 +1428,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     group.add(l)
   }
 
-  /* --------------------------------------------------------------- signs -- */
-  for (const s of ROOM_SIGNS) {
-    const tex = track(signTexture(s.text))
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 })
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.6), mat)
-    plate.position.set(s.x, s.level * LEVEL_H + 2.55, s.z)
-    // face into the room: south-facing signs look +Z, others look -Z
-    plate.rotation.y = 0
-    group.add(plate)
-    const backing = box(2.5, 0.7, 0.06, 0x2a1f16, { rough: 0.7 })
-    backing.position.set(s.x, s.level * LEVEL_H + 2.55, s.z + 0.04)
-    group.add(backing)
-  }
-
-  /* --------------------------------- under the second floor: the terrace --- */
+  /* ------------------------------- under the second floor: the terrace --- */
   // The covered floor beneath the executive slab. Placed from TERRACE_PROPS so the mesh and
   // the footprint cannot drift.
   for (const tp of TERRACE_PROPS) {

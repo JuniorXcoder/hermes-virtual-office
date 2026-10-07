@@ -72,6 +72,27 @@ export type Avatar = {
      */
     bowlingBall: THREE.Group
   }
+  /**
+   * Swimwear: the trunks, plus every mesh a swim pose turns to BARE SKIN.
+   *
+   * The swap is done by material COLOUR, not by hiding meshes and showing bare ones. Each
+   * mesh already owns its own material (`mat()` builds one per call), so recolouring the
+   * shirt and both legs costs nothing and leaves the rig's geometry — and therefore every
+   * joint offset the poses are written against — exactly as it was.
+   *
+   * `color` is the dry colour to put back. It is READ off the material at build time rather
+   * than typed again here, so changing a role's shirt colour cannot leave the restore value
+   * pointing at the old one.
+   */
+  /**
+   * The avatar's bare-skin tone, as passed to `buildAvatar`. Kept so the swim pose can strip a
+   * body back to skin without knowing which complexion it was given.
+   */
+  skin: number
+  swimwear: {
+    trunks: THREE.Group
+    skinnable: { mesh: THREE.Mesh; color: number }[]
+  }
 }
 
 /* ------------------------------------------------------------ proportions -- */
@@ -336,6 +357,7 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   hips.position.y = HIP_STAND
   group.add(hips)
 
+  const legMeshes: THREE.Mesh[] = []
   const makeLeg = (side: number): Limb => {
     const hipJoint = new THREE.Group()
     hipJoint.position.set(side * HIP_X, 0, 0)
@@ -352,6 +374,7 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     const foot = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.08, 0.26), mat(0x2f3438))
     foot.position.set(0, -SHIN + 0.02, 0.05)
     knee.add(foot)
+    legMeshes.push(thigh, shin)
     return { shoulder: hipJoint, elbow: knee }
   }
   const legs: [Limb, Limb] = [makeLeg(-1), makeLeg(1)]
@@ -438,6 +461,26 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
   const bowlingBall = buildBowlingBall()
   group.add(bowlingBall)
 
+  // ---- swimwear, hidden until a pose strips the avatar down ----
+  //
+  // Parented to the HIPS, so the trunks stay on the body when the waist lays a swimmer flat.
+  const trunks = new THREE.Group()
+  const trunkBody = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.3, 0.31), mat(0x1f3a5f))
+  trunkBody.position.y = -0.11
+  trunks.add(trunkBody)
+  // a lighter waistband, which is what makes a navy box read as trunks and not as shorts
+  const waistband = new THREE.Mesh(new THREE.BoxGeometry(0.47, 0.06, 0.32), mat(0x33639e))
+  waistband.position.y = 0.03
+  trunks.add(waistband)
+  trunks.visible = false
+  hips.add(trunks)
+
+  const colorOf = (m: THREE.Mesh) => ((m.material as THREE.MeshStandardMaterial).color.getHex())
+  const skinnable: { mesh: THREE.Mesh; color: number }[] = [torso, ...legMeshes].map((m) => ({
+    mesh: m,
+    color: colorOf(m),
+  }))
+
   group.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
       o.castShadow = true
@@ -445,5 +488,10 @@ export function buildAvatar(role: AgentRole, skin = 0xe9c19a): Avatar {
     }
   })
 
-  return { group, chest, neck, head, hips, waist, arms, legs, badge, held: { barbell, barbellGrips, dumbbells, burger, pizza, tongs, bowlingBall } }
+  return {
+    group, chest, neck, head, hips, waist, arms, legs, badge,
+    held: { barbell, barbellGrips, dumbbells, burger, pizza, tongs, bowlingBall },
+    skin,
+    swimwear: { trunks, skinnable },
+  }
 }

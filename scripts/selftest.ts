@@ -64,7 +64,6 @@ import {
   roomCentre,
   WALL_H,
   WALL_T,
-  ROOM_SIGNS,
   RACING_RIGS,
   RACING_SEAT_H,
   BOWLING,
@@ -2143,44 +2142,6 @@ void (async () => {
     check('the pool is swimmable and the daybeds are for lying on', problems.length === 0, problems.join(' | '))
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // EVERY ROOM HAS A NAME PLACARD.
-  //
-  // Reported: "could you add the name of the room to each space?" Every room already had a
-  // `label`, and thirteen of them had a sign, but `terrace` and `corridor1` were filtered
-  // OUT of the sign list with "it is a corridor, not a room". That stopped being true once
-  // the terrace under the executive slab was furnished, so the filter is gone — and this
-  // stops it coming back.
-  // ───────────────────────────────────────────────────────────────────────────
-  {
-    const problems: string[] = []
-    const signed = new Set(ROOM_SIGNS.map((s) => s.text))
-    for (const r of ROOMS) {
-      if (!signed.has(r.label)) problems.push(`${r.id} (${r.label}) has no name placard`)
-    }
-    // and every sign must hang at a sane height, clear of the slab above it
-    for (const s of ROOM_SIGNS) {
-      const y = s.level * LEVEL_H + 2.55
-      if (y < 1.6 || y > (s.level + 1) * LEVEL_H - 0.2) {
-        problems.push(`the ${s.text} placard hangs at ${y.toFixed(2)} m, which is not inside its floor`)
-      }
-    }
-    // no two placards on the same level may share a spot
-    for (let i = 0; i < ROOM_SIGNS.length; i++) {
-      for (let j = i + 1; j < ROOM_SIGNS.length; j++) {
-        const a = ROOM_SIGNS[i]
-        const b = ROOM_SIGNS[j]
-        // Two signs may sit close together on the SAME wall run (the lobby and the courtyard
-        // stack face each other at the building's south end, and the corridor's placard
-        // hangs near MERAPI's). What must never happen is two DIFFERENT rooms' signs at the
-        // SAME spot, so the test is for near-coincidence, not for distance.
-        if (a.level === b.level && Math.hypot(a.x - b.x, a.z - b.z) < 1.2) {
-          problems.push(`the ${a.text} and ${b.text} placards are ${Math.hypot(a.x - b.x, a.z - b.z).toFixed(1)} m apart — they overlap`)
-        }
-      }
-    }
-    check('every room has a name placard, hung inside its own floor', problems.length === 0, problems.join(' | '))
-  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // WALL FURNITURE SITS AGAINST ITS WALL.
@@ -3447,6 +3408,46 @@ void (async () => {
     }
 
     check('the bowling lane has ten pins on the boards and a bowler aiming at them', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SWIMWEAR: TRUNKS IN THE POOL, CLOTHES EVERYWHERE ELSE.
+  //
+  // Reported: "saat berenang pakaiannya itu berubah jadi kolor doang dong".
+  //
+  // The swap is per-frame and its reset lives in `animate()`, so the failure this guards is
+  // NOT "the trunks never appear" — it is a body that swims once and then walks to its desk
+  // still wearing them. A single-frame check of the pool would pass while that happened.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const av = buildAvatar('backend')
+    const sk = av.swimwear.skinnable
+    const dry = sk.map((s) => s.color)
+    const colorOf = (m: THREE.Mesh) => (m.material as THREE.MeshStandardMaterial).color.getHex()
+    const pose = { avatar: av, activity: 'swim' as Activity, ease: 1, phase: 0, meetingTalking: false }
+
+    animate(pose, 0.5, 1 / 60)
+    if (!av.swimwear.trunks.visible) problems.push('the swimmer is not wearing trunks')
+    for (const s of sk) {
+      if (colorOf(s.mesh) !== av.skin) {
+        problems.push('the swimmer is still in clothes — a mesh kept its dry colour')
+        break
+      }
+    }
+
+    // and one frame of any other activity must dress the body again
+    pose.activity = 'idle' as Activity
+    animate(pose, 0.5, 1 / 60)
+    if (av.swimwear.trunks.visible) problems.push('still wearing the trunks after leaving the pool')
+    for (let i = 0; i < sk.length; i++) {
+      if (colorOf(sk[i].mesh) !== dry[i]) {
+        problems.push(`a mesh stayed bare-skinned after leaving the pool (wanted ${dry[i].toString(16)})`)
+        break
+      }
+    }
+
+    check('the swimmer wears trunks, and is dressed again the moment it leaves the pool', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
