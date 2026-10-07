@@ -41,6 +41,8 @@ export type ActionKind =
   | 'promote'
   /** Lepaskan worker yang memegang task — untuk worker yang sudah mati. */
   | 'release'
+  /** Pasang chain cadangan provider. Mengubah perilaku SELURUH instalasi. */
+  | 'setFallback'
 
 export type ActionRequest = {
   action: ActionKind
@@ -115,6 +117,12 @@ export const ACTION_EFFECT: Record<ActionKind, ActionEffect> = {
     label: 'Dorong ke siap',
     effect: 'Task kembali ke ready, dispatcher bisa mengambilnya.',
     danger: false,
+  },
+  setFallback: {
+    label: 'Pasang cadangan provider',
+    effect:
+      'Chain cadangan ditulis ke config.yaml, dengan cadangan berkas dulu. Ini mengubah provider yang dipakai SELURUH instalasi, termasuk agent yang sedang bekerja.',
+    danger: true,
   },
   release: {
     label: 'Lepas worker',

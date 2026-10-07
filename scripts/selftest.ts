@@ -9,7 +9,7 @@
  *
  * Run: npm run selftest
  */
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { facingProblems } from '../src/lib/office/facing'
 import { assessHealth, HEALTH_COLOR, HEALTH_THRESHOLDS } from '../src/lib/office/health'
 import {
@@ -21,6 +21,8 @@ import {
   readStuck,
 } from '../src/lib/hermes/board'
 import { ACTION_EFFECT, ESTOP_PATH, checkAction, readPause, type ActionKind } from '../src/lib/hermes/control'
+import { MIN_SAMPLES, readProviders, type ProviderStat } from '../src/lib/hermes/providers'
+import { planFallback, readFallback } from '../src/lib/hermes/fallback'
 import type { Task } from '../src/types/hermes'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
@@ -3809,6 +3811,106 @@ void (async () => {
     }
 
     check('control knows what needs a human, and what needs a reason', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // PROVIDER: SIAPA YANG LAYAK DIPERCAYA, DAN KAPAN TIDAK BOLEH MENYARANKAN APA PUN.
+  //
+  // Ini bagian yang paling mudah jadi berbahaya, karena ujungnya adalah MENGUBAH provider
+  // yang dipakai seluruh instalasi. Dua cara ia bisa salah:
+  //
+  //   1. Sampel kecil diperlakukan seperti sampel besar. "0 gagal dari 3 panggilan" BUKAN
+  //      bukti kestabilan — provider yang belum pernah dipakai selalu tampak sempurna, dan
+  //      kegagalannya baru ketahuan saat sedang dibutuhkan.
+  //   2. Provider yang sedang gagal diusulkan jadi cadangan untuk dirinya sendiri.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    // `confident` DIBACA dari readProviders, tidak dihitung ulang di sini.
+    //
+    // Versi pertama tes ini membangun `confident` sendiri dari MIN_SAMPLES — dan itu membuat
+    // tesnya buta: mengubah MIN_SAMPLES ke 0 mengubah TESNYA juga, jadi bug-nya tersembunyi
+    // oleh tes yang memakai konstanta yang sama. Tes yang menghitung ulang logika produksi
+    // tidak menguji logika produksi.
+    // Ambangnya diuji dengan LOG BUATAN, bukan dengan log yang kebetulan ada.
+    //
+    // Percobaan pertama memakai log nyata, dan itu lolos padahal bug-nya nyata — karena
+    // kebetulan tidak ada provider dengan sampel kecil di log itu. Tes yang hanya lulus
+    // karena datanya kebetulan cocok bukan tes.
+    const tmpLog = mkdtempSync(join(tmpdir(), 'hermes-log-'))
+    const fakeAgent = join(tmpLog, 'agent.log')
+    const fakeErr = join(tmpLog, 'errors.log')
+    const nowIso = new Date().toISOString().replace('T', ' ').slice(0, 19)
+    // 3 panggilan untuk "kecil", 20 untuk "besar" — dua-duanya NOL gagal, jadi satu-satunya
+    // pembeda adalah JUMLAHNYA.
+    const line = (p: string, m: string) => `${nowIso},000 INFO provider=${p} model=${m}`
+    writeFileSync(fakeAgent, [...Array(3).fill(line('kecil', 'm1')), ...Array(20).fill(line('besar', 'm2'))].join('\n'))
+    writeFileSync(fakeErr, '')
+    const real = readProviders(1, Date.now(), { agentLog: fakeAgent, errorLog: fakeErr })
+    rmSync(tmpLog, { recursive: true, force: true })
+    const kecil = real.providers.find((p) => p.provider === 'kecil')
+    const besar = real.providers.find((p) => p.provider === 'besar')
+    if (!kecil || !besar) {
+      problems.push(`readProviders tidak membaca log buatan (kecil=${!!kecil}, besar=${!!besar})`)
+    } else {
+      if (kecil.confident !== false) {
+        problems.push(`provider dengan 3 panggilan ditandai confident (ambangnya ${MIN_SAMPLES}) — "belum pernah gagal" bukan bukti kestabilan`)
+      }
+      if (besar.confident !== true) problems.push('provider dengan 20 panggilan TIDAK ditandai confident')
+      if (kecil.calls !== 3) problems.push(`panggilan dihitung salah: 3 jadi ${kecil.calls}`)
+    }
+
+    const stat = (provider: string, calls: number, failures: number, models: string[] = ['m']): ProviderStat => ({
+      provider,
+      calls,
+      failures,
+      failureRate: calls ? failures / calls : 0,
+      models,
+      // Sengaja dari konstanta yang diimpor: FILTER-nya ada di planFallback, dan itu yang
+      // diuji di sini. Apakah `readProviders` menandai dengan benar diuji di atas.
+      confident: calls >= MIN_SAMPLES,
+    })
+
+    // Sampel kecil TIDAK boleh jadi kandidat, walaupun nol gagal.
+    const tiny = [stat('kecil', MIN_SAMPLES - 1, 0)]
+    const p1 = planFallback(tiny)
+    if (p1.kind === 'propose') {
+      problems.push('provider dengan sampel di bawah ambang diusulkan jadi cadangan — belum pernah dipakai bukan berarti bagus')
+    }
+    if (p1.kind === 'none' && !p1.why) problems.push('tidak ada usulan TANPA alasan — operator tidak akan tahu kenapa')
+
+    // Provider yang sedang gagal tidak boleh jadi cadangan untuk dirinya sendiri.
+    const self = [stat('custom:9router', 100, 20)]
+    if (planFallback(self).kind === 'propose') {
+      problems.push('provider yang sedang gagal diusulkan jadi cadangan untuk dirinya sendiri')
+    }
+
+    // Yang sehat DAN cukup sampel: diusulkan, dengan alasannya.
+    const good = [stat('opencode-free', 40, 0, ['muse-spark-1.3-contributor-free']), stat('custom:9router', 100, 20)]
+    const p2 = planFallback(good)
+    if (p2.kind !== 'propose') {
+      problems.push(`provider sehat dengan 40 panggilan dan 0 gagal tidak diusulkan ("${p2.kind}")`)
+    } else {
+      if (p2.proposed[0].provider !== 'opencode-free') problems.push('yang diusulkan bukan provider yang sehat')
+      // `custom:` HARUS dibuang: resolver Hermes menulis nama pendek, dan `custom:9router` di
+      // chain cadangan tidak akan ketemu.
+      if (p2.proposed[0].provider.includes(':')) problems.push('nama provider cadangan masih membawa awalan "custom:" — resolver tidak akan menemukannya')
+      if (!p2.why) problems.push('usulan tanpa alasan — tidak bisa diperiksa manusia')
+      // Model diambil dari yang BENAR-BENAR dipakai lewat provider itu, bukan dikarang.
+      if (p2.proposed[0].model !== 'muse-spark-1.3-contributor-free') {
+        problems.push('model cadangan bukan model yang benar-benar dipakai lewat provider itu')
+      }
+    }
+
+    // Provider tanpa model tercatat: usulan tanpa model akan gagal saat dibutuhkan.
+    if (planFallback([stat('kosong', 50, 0, [])]).kind === 'propose') {
+      problems.push('diusulkan cadangan tanpa model — hanya akan gagal saat dipakai')
+    }
+
+    // Membaca config.yaml tidak boleh meledak pada berkas yang belum punya kuncinya.
+    if (!Array.isArray(readFallback())) problems.push('readFallback tidak mengembalikan daftar')
+
+    check('providers are ranked from measured data, and never recommended on thin evidence', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

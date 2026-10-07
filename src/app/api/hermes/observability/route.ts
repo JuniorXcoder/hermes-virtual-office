@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readErrors, readStatus, readUsage } from '@/lib/hermes/observability'
 import { assessHealth } from '@/lib/office/health'
+import { readProviders } from '@/lib/hermes/providers'
+import { planFallback } from '@/lib/hermes/fallback'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,8 +40,13 @@ export async function GET(req: NextRequest) {
       unpricedModels: usage.unpricedModels.length,
       failure: usage.failure,
     })
+    // Provider: diukur dari log yang sudah ada, bukan dari menebak.
+    const providers = readProviders(6)
+    const fallback = planFallback(providers.providers)
     return NextResponse.json({
       health,
+      providers,
+      fallback,
       status,
       usage,
       errors: readErrors(hours),

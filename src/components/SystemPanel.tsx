@@ -32,7 +32,23 @@ type UsageRow = {
   costUsd: number | null
 }
 
+type ProviderStat = {
+  provider: string
+  calls: number
+  failures: number
+  failureRate: number
+  models: string[]
+  confident: boolean
+}
+
+type FallbackPlan =
+  | { kind: 'empty'; current: { provider: string; model: string }[] }
+  | { kind: 'propose'; current: unknown[]; proposed: { provider: string; model: string }[]; why: string }
+  | { kind: 'none'; current: unknown[]; why: string }
+
 type Observability = {
+  providers?: { providers: ProviderStat[]; candidates: ProviderStat[]; windowHours: number; failure?: string }
+  fallback?: FallbackPlan
   status: {
     pricingModels: number
     sources: { name: string; found: boolean; ageSeconds: number | null }[]
@@ -79,6 +95,7 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [days, setDays] = useState(30)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -150,6 +167,8 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
             </div>
           </div>
         )}
+
+        {notice && <div className="mb-4 rounded border border-slate-600 bg-slate-800/60 p-2 text-xs">{notice}</div>}
 
         {!data && !err && <div className="py-8 text-center text-sm text-slate-400">membaca…</div>}
 
@@ -235,6 +254,98 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
                 </table>
               )}
             </section>
+
+            {/* ---------- provider ---------- */}
+            <section>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Provider {data.providers?.windowHours ? `(${data.providers.windowHours} jam)` : ''}
+              </h3>
+              {!data.providers || data.providers.providers.length === 0 ? (
+                <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-xs text-slate-400">
+                  {data.providers?.failure
+                    ? `Tidak bisa membaca statistik provider: ${data.providers.failure}`
+                    : 'Belum ada panggilan API tercatat di jendela ini.'}
+                </div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="text-slate-400">
+                    <tr>
+                      <th className="text-left font-normal">provider</th>
+                      <th className="text-right font-normal">panggilan</th>
+                      <th className="text-right font-normal">gagal</th>
+                      <th className="text-right font-normal">rasio</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.providers.providers.map((p) => (
+                      <tr key={p.provider} className="border-t border-slate-800">
+                        <td className="py-1 pr-2">
+                          <span className={p.failures > 0 ? 'text-red-300' : 'text-emerald-300'}>{p.provider}</span>
+                          {!p.confident && (
+                            <span className="ml-2 text-[10px] text-slate-500" title={`kurang dari 10 panggilan — rasionya belum bisa dipercaya`}>
+                              sampel kecil
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1 text-right text-slate-400">{nfmt(p.calls)}</td>
+                        <td className={`py-1 text-right ${p.failures > 0 ? 'text-red-400' : 'text-slate-500'}`}>
+                          {nfmt(p.failures)}
+                        </td>
+                        <td className="py-1 text-right font-mono">
+                          {p.failures === 0 ? '—' : `${(p.failureRate * 100).toFixed(0)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+
+            {/* ---------- cadangan provider ---------- */}
+            {data.fallback && (
+              <section>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Cadangan provider</h3>
+                {data.fallback.kind === 'empty' && (
+                  <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-xs text-slate-400">
+                    Sudah terisi.
+                  </div>
+                )}
+                {data.fallback.kind === 'none' && (
+                  <div className="rounded border border-slate-700 bg-slate-800/50 p-2 text-xs text-slate-400">
+                    Belum ada usulan: {data.fallback.why}
+                  </div>
+                )}
+                {data.fallback.kind === 'propose' && (
+                  <div className="rounded border border-slate-600 bg-slate-800/50 p-2 text-xs">
+                    <div className="text-slate-300">
+                      Usulan: <span className="font-mono">{data.fallback.proposed[0]?.model}</span> lewat{' '}
+                      <span className="font-mono">{data.fallback.proposed[0]?.provider}</span>
+                    </div>
+                    <div className="mt-1 text-slate-400">{data.fallback.why}</div>
+                    <button
+                      onClick={async () => {
+                        setNotice(null)
+                        const res = await fetch('/api/hermes/control', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'setFallback' }),
+                        })
+                        const j = await res.json()
+                        setNotice(res.ok ? j.did : `GAGAL: ${j?.error?.message}`)
+                        load()
+                      }}
+                      className="mt-2 rounded border border-red-700 px-3 py-1 text-red-300 hover:bg-red-950/40"
+                      title="Mengubah provider yang dipakai SELURUH instalasi. Cadangan berkas dibuat dulu."
+                    >
+                      pasang cadangan ini
+                    </button>
+                    <div className="mt-1 text-[10px] text-amber-400/80">
+                      Ini mengubah provider yang dipakai SELURUH instalasi, termasuk agent yang sedang bekerja.
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* ---------- error ---------- */}
             <section>

@@ -9,6 +9,8 @@ import {
   type ActionRequest,
 } from '@/lib/hermes/control'
 import { advanceTask, pauseAll, resumeAll, steerTask } from '@/lib/hermes/kanban'
+import { applyFallback, planFallback } from '@/lib/hermes/fallback'
+import { readProviders } from '@/lib/hermes/providers'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,7 +40,7 @@ export async function GET() {
   })
 }
 
-const KINDS: ActionKind[] = ['pauseAll', 'resumeAll', 'unblock', 'promote', 'release']
+const KINDS: ActionKind[] = ['pauseAll', 'resumeAll', 'unblock', 'promote', 'release', 'setFallback']
 
 export async function POST(req: NextRequest) {
   // Sama seperti semua tulis lain di proyek ini: hanya dari host ini. Tombol yang menghentikan
@@ -107,6 +109,35 @@ export async function POST(req: NextRequest) {
         await advanceTask('release', body.taskId!)
         did = `worker untuk ${body.taskId} dilepas`
         break
+      case 'setFallback': {
+        // Cadangan chain dihitung ULANG di sini dari data yang diukur, bukan diterima dari
+        // klien. Body request tidak boleh menentukan provider mana yang dipasang — kalau bisa,
+        // halaman yang salah render bisa mengarahkan seluruh kerja ke provider sembarangan.
+        const plan = planFallback(readProviders(6).providers)
+        if (plan.kind !== 'propose') {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'no_candidate',
+                message:
+                  plan.kind === 'empty'
+                    ? 'chain cadangan sudah terisi'
+                    : `tidak ada kandidat yang layak: ${plan.why}`,
+                status: 400,
+              },
+            },
+            { status: 400 },
+          )
+        }
+        const { backup } = applyFallback(plan.proposed)
+        did = `cadangan dipasang: ${plan.proposed.map((e) => `${e.model} (${e.provider})`).join(', ')} — cadangan berkas di ${backup}`
+        break
+      }
+      default:
+        return NextResponse.json(
+          { error: { code: 'invalid_request', message: `aksi "${body.action}" belum ditangani`, status: 400 } },
+          { status: 400 },
+        )
     }
     // Keadaan pause dibaca ULANG dari sentinel setelah aksi, jadi UI tidak perlu menebak
     // apakah aksinya berhasil — yang dilaporkan adalah kenyataannya.
