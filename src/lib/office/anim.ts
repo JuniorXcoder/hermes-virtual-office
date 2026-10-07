@@ -9,7 +9,7 @@ import * as THREE from 'three'
 import type { Avatar } from './avatar'
 
 import { CHEST_Y, FIST_FROM_ELBOW, HIP_STAND, SHOULDER_X, SHOULDER_Y, UPPER_ARM } from './avatar'
-import { GYM, SEATS, WATER_Y } from './layout'
+import { GYM, RACING_SEAT_H, SEATS, WATER_Y } from './layout'
 
 const D = Math.PI / 180
 /** The bench pad's surface, read from the same data the mesh is built from. */
@@ -193,6 +193,10 @@ export type Activity =
   | 'dumbbell'
   /** Cooking at the grill. */
   | 'bbq'
+  /** Standing at the table, playing table tennis. */
+  | 'pingpong'
+  /** Sitting in the racing simulator, hands on the wheel, feet on the pedals. */
+  | 'racing'
 
 export type AnimAgent = {
   avatar: Avatar
@@ -939,6 +943,79 @@ function pool(a: AnimAgent, t: number) {
   }
 }
 
+/**
+ * Table tennis: the ready stance, with a paddle arm that swings on the ball.
+ *
+ * Standing, knees slightly bent, the body turned a little to the table, and the RIGHT
+ * arm making a short forehand swing every ~1.1 s. The left arm is held out for balance.
+ * Deliberately small motions: a stance that waves its arms about reads as confusion, not
+ * as play.
+ */
+function pingpong(a: AnimAgent, t: number) {
+  const av = a.avatar
+  standLegs(a, t)
+  // a shallow crouch, both knees a little bent — the ready position
+  const [L, R] = av.legs
+  L.elbow.rotation.x = 14 * D
+  R.elbow.rotation.x = 14 * D
+  av.hips.position.y = (HIP_STAND - 0.06) * Math.min(1, a.ease)
+  // the body is angled slightly to the table, head up watching the ball
+  av.chest.rotation.x = -8 * D
+  av.chest.rotation.y = 14 * D
+  av.head.rotation.x = -4 * D
+  av.head.rotation.y = (-10 + Math.sin(t * 2.0 + a.phase) * 6) * D
+  // the swing: a fast forehand every 1.1 s, mostly quiet in between
+  const c = (t * 0.9 + a.phase) % 1
+  const swing = Math.sin(Math.PI * Math.min(1, Math.max(0, c / 0.4)))
+  const [LA, RA] = av.arms
+  // paddle arm: from back-swing to follow-through, across the body
+  RA.shoulder.rotation.x = (-40 - swing * 30) * D
+  RA.shoulder.rotation.z = (18 - swing * 40) * D
+  RA.elbow.rotation.x = (-52 + swing * 26) * D
+  // free arm: out for balance, a slow counter-sway
+  LA.shoulder.rotation.x = (-18 + Math.sin(t * 2.0 + a.phase) * 6) * D
+  LA.shoulder.rotation.z = -26 * D
+  LA.elbow.rotation.x = -34 * D
+}
+
+/**
+ * The racing simulator: seated, leaning back, hands on the wheel, working it.
+ *
+ * The wheel gets a real correction cycle — a slow turn each way, as if catching a slide —
+ * rather than a constant shake, and the head stays level because a driver watches the road.
+ */
+function racing(a: AnimAgent, t: number) {
+  const av = a.avatar
+  const k = Math.min(1, a.ease)
+  // seated bolt-upright on the bucket seat
+  av.hips.position.y = RACING_SEAT_H * k + HIP_STAND * (1 - k)
+  const [L, R] = av.legs
+  for (const [leg, sign] of [
+    [L, -1],
+    [R, 1],
+  ] as const) {
+    // thighs forward, knees bent ~75 deg: feet reach the pedal box
+    leg.shoulder.rotation.x = -78 * D
+    leg.shoulder.rotation.z = sign * 6 * D
+    leg.elbow.rotation.x = 74 * D
+  }
+  // lean back into the seat, head level
+  av.chest.rotation.x = 8 * D
+  av.chest.rotation.y = 0
+  av.head.rotation.x = -8 * D
+  av.head.rotation.y = 0
+  // both arms up and forward to the wheel, which is what makes it read as driving
+  const [LA, RA] = av.arms
+  // the steering: a slow correction each way every ~3 s
+  const turn = Math.sin(t * 2.1 + a.phase) * 22 * D
+  LA.shoulder.rotation.x = -74 * D
+  LA.shoulder.rotation.z = (-30 + turn) * D
+  LA.elbow.rotation.x = -44 * D
+  RA.shoulder.rotation.x = -74 * D
+  RA.shoulder.rotation.z = (30 + turn) * D
+  RA.elbow.rotation.x = -44 * D
+}
+
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   idle: (a, t) => {
     standLegs(a, t)
@@ -973,6 +1050,8 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   muscleup,
   dumbbell,
   bbq,
+  pingpong,
+  racing,
 }
 
 /** Apply the pose for this frame. `dt` ramps `ease` so transitions are not snaps. */

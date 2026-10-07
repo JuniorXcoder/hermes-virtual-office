@@ -48,6 +48,8 @@ import {
   BBQ,
   PLANTING,
   PANTRY,
+  ROOM_PROPS,
+  PANTRY_COUNTER,
   GYM,
   DESKS,
   deskSeatWorld,
@@ -210,15 +212,41 @@ export function facingProblems(): FacingProblem[] {
     }
   }
 
-  // ---- 5. the sofa looks at the TV
-  for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa')) {
+  // ---- 5. the LOUNGE sofa looks at the TV; the TERRACE sofas look at the pool
+  //
+  // Scoped by position, not just by activity. `act: 'sofa'` is now used in two places — the
+  // leisure room (which must face the TV on its north wall) and the covered terrace under
+  // the executive slab (which must face SOUTH over the courtyard, because the point of
+  // sitting there is the view). Testing every 'sofa' spot against the TV failed the terrace
+  // pair by construction, which is what this scoping fixes.
+  for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa' && x.x > LOUNGE.x - 4 && x.z < -15)) {
     const d = dotTo(s, LOUNGE_TV.x, LOUNGE_TV.z)
-    if (d < 0.9) out.push(`the sofa does not look at the TV (dot ${d.toFixed(2)})`)
+    if (d < 0.9) out.push(`the lounge sofa does not look at the TV (dot ${d.toFixed(2)})`)
+  }
+  // ...and the TERRACE pair. Scoped to the covered strip (z > -13 AND z < -9 AND |x| < 14),
+  // because `act: 'sofa'` is also used by the marketing nook's two chairs, which face their
+  // own low table deep in the west bar (x ~ -25) — they are nowhere near the courtyard and
+  // must not be asked to look at the pool.
+  for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa' && x.z > -13 && x.z < -9 && Math.abs(x.x) < 14)) {
+    const d = dotTo(s, POOL.x, POOL.z)
+    if (d < 0.6) out.push(`a terrace sofa does not look at the pool (dot ${d.toFixed(2)})`)
+  }
+  // the nook chairs look at their own table
+  for (const n of ROOM_PROPS.filter((p) => p.kind === 'nook')) {
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa' && Math.hypot(x.x - n.x, x.z - n.z) < 1.6)) {
+      const d = dotTo(s, n.x, n.z)
+      if (d < 0.85) out.push(`a nook chair does not look at its table (dot ${d.toFixed(2)})`)
+    }
   }
 
-  // ---- 6. the pantry stools look at the counter — at its NEAREST point, since it is 6.4 m long
-  for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'coffee').entries()) {
-    const nearZ = Math.max(PANTRY.z - 3.2, Math.min(PANTRY.z + 3.2, s.z))
+  // ---- 6. the PANTRY stools look at the counter — at its NEAREST point, since it is long.
+  //
+  // Scoped to the pantry by position: the terrace work bar's stools also use `act: 'coffee'`
+  // (the pose is "sitting at a counter with a drink"), but they face the bar under the slab,
+  // NOT the pantry counter 40 m away.
+  const pantryStools = IDLE_SPOTS.filter((x) => x.act === 'coffee' && x.x > 24)
+  for (const [i, s] of pantryStools.entries()) {
+    const nearZ = Math.max(PANTRY_COUNTER.z1, Math.min(PANTRY_COUNTER.z2, s.z))
     const d = dotTo(s, PANTRY.x, nearZ)
     if (d < 0.9) out.push(`pantry stool ${i} does not look at the counter (dot ${d.toFixed(2)})`)
   }
@@ -262,7 +290,7 @@ export function facingProblems(): FacingProblem[] {
   }
 
   // ---- 11. the pantry stools: the counter is EAST of them, so the look must have +x
-  for (const [i, s] of IDLE_SPOTS.filter((x) => x.act === 'coffee').entries()) {
+  for (const [i, s] of pantryStools.entries()) {
     // Compare against the COUNTER, not against the stool's own expected position: an earlier
     // version of this line tested `s.x > PANTRY.x + GAP - 0.05`, which the correct stool
     // position (PANTRY.x + GAP exactly) fails by 5 cm — an assertion that rejects the very

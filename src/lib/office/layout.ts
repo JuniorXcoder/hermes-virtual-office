@@ -571,36 +571,256 @@ export type Desk = {
   seat: 'manager' | 'staff'
 }
 
+/* ------------------------------------------------- three division rooms -- */
+
 /**
- * Nine workstations: three per division, in that division's own room on the
- * ground floor of the west bar. Each row is (manager, staff, staff) — the manager
- * sits nearest the door so the room reads as a team with a lead.
+ * THE THREE DIVISION ROOMS ARE DELIBERATELY DIFFERENT.
+ *
+ * They were identical: three desks in a single column against the west wall, the same
+ * furniture stamped three times. The user asked for the layout to be "distinct for each
+ * division", and for the rooms not to look empty.
+ *
+ * Each division now has its own arrangement, chosen to match how that kind of work is
+ * actually done, and its own extra furniture. All three rooms are ~13.7 x 13.9 m.
+ *
+ *   DEV / INFRASTRUCTURE   "the lab"      an inward-facing CLUSTER of four desks (a pod),
+ *                                         with a server rack, a whiteboard and a bench.
+ *   MARKETING / SEO        "the war room" one LONG SHARED BENCH down the middle, a wall of
+ *                                         screens, and a soft discussion nook.
+ *   CONTENT CREATOR        "the studio"   two PAIRED PODS facing each other, plus a shoot
+ *                                         corner (backdrop, tripod, lighting).
  */
-function divisionDesks(division: AgentDivision, roomId: string, indexes: [number, number, number]): Desk[] {
-  const r = room(roomId)
-  const x = r.x1 + 2.4 // against the west wall, facing east into the room
-  const zs = [
-    (r.z1 + r.z2) / 2 - 3.6,
-    (r.z1 + r.z2) / 2,
-    (r.z1 + r.z2) / 2 + 3.6,
-  ]
-  return zs.map((z, i) => ({
-    index: indexes[i],
-    x,
-    z,
-    facing: Math.PI / 2,
-    column: i,
-    side: 'near' as const,
-    division,
-    seat: i === 0 ? ('manager' as const) : ('staff' as const),
-  }))
+
+/** A desk built from an explicit position and facing. */
+function mkDesk(
+  index: number,
+  division: AgentDivision,
+  seat: 'manager' | 'staff',
+  column: number,
+  x: number,
+  z: number,
+  facing: number,
+  side: 'near' | 'far' = 'near',
+): Desk {
+  return { index, x, z, facing, column, side, division, seat }
 }
 
-export const DESKS: Desk[] = [
-  ...divisionDesks('tech', 'dev', [0, 1, 2]),
-  ...divisionDesks('growth', 'mkt', [3, 4, 5]),
-  ...divisionDesks('content', 'content', [6, 7, 8]),
-]
+/**
+ * DEV / INFRASTRUCTURE — "the lab".
+ *
+ * A four-desk CLUSTER: two desks face east, two face west, so four programmers sit in a pod
+ * looking at each other across a gap. That is how a dev team actually sits, and it reads
+ * completely differently from a row. The manager takes the first west-facing desk.
+ *
+ * Facing is +pi/2 for east, -pi/2 for west; the chair sits at +facing, so a west-facing
+ * desk has its chair to its west and its monitor to its east.
+ */
+function devDesks(): Desk[] {
+  const r = room('dev')
+  const cx = (r.x1 + r.x2) / 2
+  const cz = (r.z1 + r.z2) / 2
+  // THREE desks in a wide TRIANGLE pointing at the room's centre, all facing INWARD: the
+  // manager sits at the back (west), the two staff ahead of them angled toward each other.
+  // A pod, not a row — and unlike the old single column this leaves the middle of the room
+  // open, which is where the shared bench and the whiteboard go.
+  //
+  // CHAIR CLEARANCE: each chair sits 1.0 m along its desk's own facing, so what matters is
+  // the distance between the CHAIRS. The manager chair and each staff chair are ~3.4 m
+  // apart here; measured, the closest pair in this room is 3.4 m. (The earlier pod put two
+  // inward-facing desks 1.9 m apart, which left the two chairs 0.2 m apart — two bodies in
+  // one seat.)
+  return [
+    mkDesk(0, 'tech', 'manager', 0, cx - 3.4, cz, Math.PI / 2),
+    mkDesk(1, 'tech', 'staff', 1, cx + 2.0, cz - 2.6, -Math.PI / 2),
+    mkDesk(2, 'tech', 'staff', 2, cx + 2.0, cz + 2.6, -Math.PI / 2),
+  ]
+}
+
+/**
+ * MARKETING / SEO — "the war room".
+ *
+ * ONE long bench down the middle, all three working along the SAME side, so it reads as a
+ * single campaign desk. The manager sits at the north end.
+ */
+function mktDesks(): Desk[] {
+  const r = room('mkt')
+  const cx = (r.x1 + r.x2) / 2
+  const cz = (r.z1 + r.z2) / 2
+  return [
+    mkDesk(3, 'growth', 'manager', 0, cx, cz - 3.4, Math.PI / 2),
+    mkDesk(4, 'growth', 'staff', 1, cx, cz, Math.PI / 2),
+    mkDesk(5, 'growth', 'staff', 2, cx, cz + 3.4, Math.PI / 2),
+  ]
+}
+
+/**
+ * CONTENT CREATOR — "the studio".
+ *
+ * TWO PAIRED PODS. Each pod is two desks facing each other (a shooter and an editor), and
+ * the pods sit one behind the other. Content work is collaborative and edit-heavy, so pairs
+ * rather than a row.
+ */
+function contentDesks(): Desk[] {
+  const r = room('content')
+  const cx = (r.x1 + r.x2) / 2
+  // THREE desks in a SHALLOW ARC, all facing SOUTH at the shooting set (the backdrop now
+  // stands FLAT on the south wall), so the room reads as a studio looking at its own set.
+  //
+  // The arc sits at z ~14, which puts it between the door (east wall, z 13.8) and the set,
+  // and leaves the whole north half of the room for the shelves and the edit bench. Chairs
+  // are ~4.0 m apart.
+  const arcZ = r.z1 + 7.6
+  return [
+    mkDesk(6, 'content', 'manager', 0, cx - 4.0, arcZ + 1.4, Math.PI),
+    mkDesk(7, 'content', 'staff', 1, cx, arcZ + 2.2, Math.PI),
+    mkDesk(8, 'content', 'staff', 2, cx + 4.0, arcZ + 1.4, Math.PI),
+  ]
+}
+
+export const DESKS: Desk[] = [...devDesks(), ...mktDesks(), ...contentDesks()]
+
+/**
+ * THE EXTRA FURNITURE THAT MAKES EACH ROOM ITS OWN.
+ *
+ * Declared here so the mesh, the footprints and the self-test all read one definition.
+ * Each is an axis-aligned box in x/z with a height, exactly like a footprint.
+ */
+export type RoomProp = {
+  id: string
+  /** Which division room it stands in. */
+  room: 'dev' | 'mkt' | 'content'
+  kind:
+    | 'rack'
+    | 'whiteboard'
+    | 'bench'
+    | 'shelf'
+    | 'screenwall'
+    | 'nook'
+    | 'backdrop'
+    | 'tripod'
+    | 'lightstand'
+    | 'plant'
+  x: number
+  z: number
+  /** Half-extents in x and z, and the height. Same convention as Footprint. */
+  hw: number
+  hd: number
+  h: number
+  /**
+   * Which way the piece POINTS, for the props that aim at something (the studio camera and
+   * light). A look direction in the body convention: 0 rad points +z.
+   */
+  facing?: number
+}
+
+/**
+ * Where the room props stand.
+ *
+ * Positions are chosen against each room's desk layout so nothing overlaps AND nothing
+ * blocks the door. All three rooms have their door on the EAST wall (x = -14) at the room's
+ * centre z, so the east edge is left clear; the props line the WEST wall and the far ends.
+ */
+export const ROOM_PROPS: RoomProp[] = (() => {
+  const out: RoomProp[] = []
+  const dev = room('dev')
+  const mkt = room('mkt')
+  const content = room('content')
+
+  // ---- DEV: a server rack, a whiteboard, and a parts bench, all along the WEST wall ----
+  // The pod sits in the middle (cx +- 0.95). The west wall (x -27.85) is free.
+  // Against the wall means against the INNER FACE, which is WALL_T/2 in from the room's
+  // nominal edge — not `x1 + 0.6`. Measured before the fix: the whiteboard floated 0.48 m
+  // off the west wall, and the bench was 0.05 m INSIDE it.
+  const devInnerW = dev.x1 + 0.15
+  out.push({ id: 'dev-rack', room: 'dev', kind: 'rack', x: devInnerW + 0.45, z: dev.z1 + 2.2, hw: 0.45, hd: 0.6, h: 2.1 })
+  out.push({ id: 'dev-whiteboard', room: 'dev', kind: 'whiteboard', x: devInnerW + 0.12, z: (dev.z1 + dev.z2) / 2, hw: 0.12, hd: 1.6, h: 2.2 })
+  out.push({ id: 'dev-bench', room: 'dev', kind: 'bench', x: devInnerW + 0.5, z: dev.z2 - 2.4, hw: 0.5, hd: 1.1, h: 0.92 })
+  // a shelf unit on the far (north) wall
+  out.push({ id: 'dev-shelf', room: 'dev', kind: 'shelf', x: (dev.x1 + dev.x2) / 2 + 3.6, z: dev.z1 + 0.4, hw: 1.2, hd: 0.22, h: 1.9 })
+  // a plant in the south-west corner, so the room is not all metal
+  out.push({ id: 'dev-plant', room: 'dev', kind: 'plant', x: dev.x2 - 1.2, z: dev.z2 - 1.2, hw: 0.32, hd: 0.32, h: 1.1 })
+
+  // ---- MKT: a wall of screens at the NORTH end + a soft nook in the SOUTH-WEST ----
+  // The bench runs down the middle facing east. Keep the east approach clear.
+  out.push({ id: 'mkt-screenwall', room: 'mkt', kind: 'screenwall', x: (mkt.x1 + mkt.x2) / 2, z: mkt.z1 + 0.45, hw: 2.4, hd: 0.22, h: 2.0 })
+  out.push({ id: 'mkt-shelf', room: 'mkt', kind: 'shelf', x: mkt.x1 + 0.55, z: mkt.z2 - 3.0, hw: 0.3, hd: 1.6, h: 1.7 })
+  // the nook: a low table with two soft chairs, in the south-west, clear of the bench
+  out.push({ id: 'mkt-nook', room: 'mkt', kind: 'nook', x: mkt.x1 + 2.2, z: mkt.z2 - 2.0, hw: 0.55, hd: 0.55, h: 0.42 })
+  out.push({ id: 'mkt-plant', room: 'mkt', kind: 'plant', x: mkt.x2 - 1.2, z: mkt.z1 + 1.2, hw: 0.32, hd: 0.32, h: 1.1 })
+
+  // ---- CONTENT: a real SHOOTING STUDIO ------------------------------------------
+  // The set is at the SOUTH end and the desks look at it. Every prop is placed against a
+  // WALL FACE, not near one: the wall is WALL_T (0.30) thick, so a prop "at the edge" in
+  // room coordinates can easily be half-inside the plaster or floating in the middle of the
+  // floor. Measured before and after:
+  //
+  //   backdrop   was z 19.63..19.87, i.e. 0.83 m off the south wall — a photo backdrop
+  //              standing in mid-air. Now flat against it.
+  //   plant      was 0.73 m off the east wall. Now in the corner.
+  //   shelves    only ONE existed; a studio needs storage on both sides.
+  const innerS = content.z2 - 0.15 // inner face of the south wall
+  const innerN = content.z1 + 0.15
+  const innerW = content.x1 + 0.15
+  const innerE = content.x2 - 0.15
+  const cx = (content.x1 + content.x2) / 2
+  // the backdrop: hd is its HALF depth, so its face lands exactly on the wall
+  out.push({ id: 'content-backdrop', room: 'content', kind: 'backdrop', x: cx, z: innerS - 0.12, hw: 2.4, hd: 0.12, h: 2.4 })
+  // THE CAMERA, CENTRED ON THE BACKDROP AND POINTING AT IT.
+  //
+  // It was at `cx + 2.0` — 2 m off the backdrop's centre line — and it faced the same way
+  // the mesh is modelled, which is -z: NORTH, away from the backdrop, because the backdrop
+  // is SOUTH of the camera. Reported as "kamera masih membelakangi background" and "kamera
+  // tidak di tengah background".
+  //
+  // `facing` is the direction the CAMERA POINTS, in the body convention (a look direction,
+  // +z at 0 rad). The backdrop is south, so the camera faces +z, i.e. facing = 0.
+  out.push({
+    id: 'content-tripod',
+    room: 'content',
+    kind: 'tripod',
+    x: cx,
+    z: innerS - 2.4,
+    hw: 0.25,
+    hd: 0.25,
+    h: 1.55,
+    facing: 0,
+  })
+  // THE LIGHT, at the side of the set, TURNED TO THROW AT THE BACKDROP.
+  //
+  // Reported: "lightning tidak menghadap background". Same cause as the camera — it faced
+  // north, away from the panel it is meant to light. A key light sits off to one side and
+  // is angled across the set, so this one is placed west of centre and turned south-east.
+  out.push({
+    id: 'content-light',
+    room: 'content',
+    kind: 'lightstand',
+    x: cx - 2.6,
+    z: innerS - 2.0,
+    hw: 0.25,
+    hd: 0.25,
+    h: 1.9,
+    // AIMED AT THE BACKDROP'S CENTRE, computed from the two positions rather than typed in.
+    //
+    // Reported: "lightning masih salah menghadapnya masih keluar". It was -0.7 rad, which
+    // threw the beam SOUTH-WEST, off the set. Simply adding 45 degrees was not enough either:
+    // the light stands 2.60 m WEST of the backdrop centre, so an extra 45 degrees left the
+    // beam landing 2.44 m off centre against a panel only 2.40 m half-wide — it missed by
+    // 4 cm. The beam has to come back east as well as south, which is 54.1 degrees, not 5.
+    //
+    // Computing it means this cannot drift: move the light or the backdrop and the aim follows.
+    facing: Math.atan2(cx - (cx - 2.6), innerS - 0.12 - (innerS - 2.0)),
+  })
+  // storage on BOTH side walls, clear of the door (east wall, z 13.8)
+  out.push({ id: 'content-shelf-w', room: 'content', kind: 'shelf', x: innerW + 0.3, z: innerN + 1.7, hw: 0.3, hd: 1.5, h: 1.9 })
+  out.push({ id: 'content-shelf-e', room: 'content', kind: 'shelf', x: innerE - 0.3, z: innerN + 1.7, hw: 0.3, hd: 1.5, h: 1.9 })
+  // an edit bench along the north wall, between the shelves
+  out.push({ id: 'content-bench', room: 'content', kind: 'bench', x: cx, z: innerN + 0.7, hw: 1.7, hd: 0.5, h: 0.92 })
+  // plants in the two free corners
+  out.push({ id: 'content-plant-w', room: 'content', kind: 'plant', x: innerW + 0.55, z: innerS - 0.8, hw: 0.3, hd: 0.3, h: 1.1 })
+  out.push({ id: 'content-plant-e', room: 'content', kind: 'plant', x: innerE - 0.55, z: innerS - 0.8, hw: 0.3, hd: 0.3, h: 1.1 })
+
+  return out
+})()
 
 /** Meja-meja milik satu divisi (label urut). */
 export function desksForDivision(div: AgentDivision): Desk[] {
@@ -685,6 +905,32 @@ export const RECEPTION = { x: -7.0, z: 18.6 }
 export const PANTRY = { x: 25.6, z: 8 }
 export const PANTRY_STOOLS = [6.4, 8.0, 9.6] as const
 export const PANTRY_STOOL_GAP = -1.05
+
+/**
+ * The pantry's fixed appliances, placed once and read by the mesh, the footprints and
+ * the self-test.
+ *
+ * The counter used to be 6.4 m of slab centred on `PANTRY.z`, i.e. z 4.8..11.2 — and the
+ * FRIDGE stood at z 4.6..5.4, 1.9 m tall against a 0.9 m counter. The two overlapped by
+ * 0.6 m and the fridge was buried in the counter run. Reported as "the fridge seems to be
+ * clashing with the counter".
+ *
+ * These four boxes are disjoint BY CONSTRUCTION and `layoutConflicts()` proves it:
+ *
+ *   fridge          z 4.60 .. 5.40     (north end, 1.9 m tall, stands alone)
+ *   gap             z 5.40 .. 6.00     (0.6 m — a body can walk past, and it reads as a gap)
+ *   counter         z 6.00 .. 11.20    (sink and coffee live ON this)
+ *   water cooler    z 11.60 .. 12.04   (south of the counter's end, clear of the wall)
+ */
+export const FRIDGE = { x: PANTRY.x, z: 5.0, w: 0.85, d: 0.8, h: 1.9 }
+/** The counter run. `z1..z2` is its length along the wall; it is `d` deep in x. */
+export const PANTRY_COUNTER = { z1: 6.0, z2: 11.2, d: 0.9, h: 0.9 }
+/** Centre of the coffee machine, ON the counter top. */
+export const PANTRY_COFFEE_Z = 10.2
+/** Centre of the sink, ON the counter top. */
+export const PANTRY_SINK_Z = 7.0
+/** The water dispenser, south of the counter. */
+export const WATER_COOLER = { x: PANTRY.x - 0.1, z: 11.8, w: 0.42, d: 0.42, h: 1.6 }
 /**
  * The leisure room's seating group.
  *
@@ -703,6 +949,65 @@ export const LOUNGE = { x: 22.5, z: -18.2 }
 export const LOUNGE_TV = { x: 22.5, z: -20.78, y: 1.5 }
 /** Coffee table, between the sofa and the TV. */
 export const LOUNGE_TABLE = { x: 22.5, z: -19.6 }
+
+/* ---------------------------------------------------- the lounge rec gear -- */
+
+/**
+ * The three rec stations in the leisure room, so the lounge is a place to BE, not just a
+ * sofa facing a television.
+ *
+ * Placed once, read by the mesh, the footprints AND the idle spots — the same rule as
+ * everything else here, and for the same reason: when the model and the spots disagree an
+ * avatar plays ping-pong against empty air.
+ *
+ * The room is x 14.15..27.85, z -20.85..2. The sofa group takes the north end (z -20.8..
+ * -17.2), so all three stations live in the SOUTH half, clear of each other and of the
+ * door on the west wall at z -5.4..-2.6:
+ *
+ *   ping-pong   x 18.0, z -14.0    a 2.74 x 1.525 table, the long axis EAST-WEST (x),
+ *                                  so a player stands at each end along x
+ *   dartboard   x 25.6, z -13.0    board on the EAST wall (inner face x 27.85), the
+ *                                  thrower stands ~2.4 m west of it
+ *   racing rig  x 21.5, z -5.5     a seat + wheel + pedals, facing NORTH into the room
+ */
+export const PINGPONG = {
+  /** Table centre. */
+  x: 18.0,
+  z: -14.0,
+  /** Table top: 2.74 x 1.525 is the real size, rounded to the centimetre. */
+  w: 2.74,
+  d: 1.525,
+  /** Top surface height. */
+  h: 0.76,
+}
+/** A player stands this far out from the table's end, along x. */
+export const PINGPONG_STAND = 1.35
+
+export const DARTBOARD = {
+  /** Board centre, flat on the east wall (inner face x = 27.85). */
+  x: 27.7,
+  z: -13.0,
+  /** Bullseye height — regulation is 1.73 m. */
+  y: 1.73,
+  r: 0.225,
+}
+/** Where the thrower stands, and how far back from the board. */
+export const DART_THROW = { x: 25.3, z: -13.0 }
+
+/**
+ * The racing simulator: a bucket seat, a wheel on a column, and a pedal box.
+ *
+ * The seat faces NORTH (into the room, away from the south wall), so the rig reads as a
+ * car pointed into the space rather than at a wall.
+ */
+export const RACING = {
+  x: 21.5,
+  z: -5.5,
+  /** 0 = faces -z (north), which is what the seat mesh does at rotation 0. */
+  facing: 0,
+}
+/** Seat surface height — from SEATS.chair, so the seated pose is unchanged. */
+export const RACING_SEAT_H = 0.46
 
 /* -------------------------------------------------------- dining tables -- */
 
@@ -748,6 +1053,115 @@ export const DINING_SETS: DiningSet[] = [
   { x: 21.6, z: 10.6, facing: Math.PI / 2, w: 1.8, d: 0.9 },
   { x: 21.6, z: 15.2, facing: Math.PI / 2, w: 1.8, d: 0.9 },
 ]
+
+/* ------------------------------------------- under the second floor (terrace) -- */
+
+/**
+ * THE GROUND FLOOR DIRECTLY BENEATH THE SECOND FLOOR.
+ *
+ * Level 1 exists only over the NORTH BAR (`LEVEL_BOUNDS[1].z2 = -9`), so the ground floor
+ * under that slab is the strip z -21..-9, x -28..28 — the covered TERRACE. It is open to the
+ * courtyard on its south side (columns, not a wall) and roofed by the executive slab.
+ *
+ * WHICH PART OF THAT STRIP IS ACTUALLY FREE, at ground level, was the first thing to check —
+ * and the answer is not the whole strip:
+ *
+ *     x -27.85 .. -14.15   the DEV room          (already furnished)
+ *     x -14.15 ..  14.15   the covered terrace   <-- the free, roofed floor
+ *     x  14.15 ..  27.85   the LOUNGE            (already furnished)
+ *
+ * So the moonlit strip the user means — "directly beneath the second floor, not elsewhere" —
+ * is the MIDDLE: x -14..14, z -20.4..-9.6. The stair shaft (x -10..-8.6) cuts through it, so
+ * the zone is split either side of the stairs.
+ *
+ * Because it is a thoroughfare as well as a place to sit, everything is pushed to the EDGES:
+ *
+ *   NORTH EDGE  (z -19.6)  a long work bar with stools, and a coffee point
+ *   SOUTH EDGE  (z -10.4)  two lounge pairs facing the pool, and a low table
+ *   WEST SIDE   (x -13)    the communal table, clear of the stairs at x -10
+ *   EAST SIDE   (x 12)     lockers
+ *
+ * Every box is axis-aligned in x/z with a height, exactly like a footprint.
+ */
+export type TerraceProp = {
+  id: string
+  kind: 'sofa' | 'lowtable' | 'longtable' | 'tbench' | 'workbar' | 'stool' | 'locker' | 'coffee' | 'plant' | 'shelf'
+  x: number
+  z: number
+  /** Half-extents in x and z, and the height. */
+  hw: number
+  hd: number
+  h: number
+  /** Which way the piece faces (used by the seats, ignored by the rest). */
+  facing?: number
+}
+
+/** Seat surface of the terrace stools and benches. */
+export const TERRACE_SEAT_H = 0.5
+
+/** The strip of covered floor under the slab that is not already a room. */
+export const TERRACE_BOUNDS = { x1: -14.0, x2: 14.0, z1: -20.4, z2: -9.6 }
+
+export const TERRACE_PROPS: TerraceProp[] = (() => {
+  const out: TerraceProp[] = []
+  const zN = -19.3 // along the north wall of the strip
+  const zS = -10.7 // along the courtyard edge
+
+  // ---- NORTH EDGE: a work bar with stools, and a coffee point ----------------------
+  // x from -13.6 to +2.2 sits west of the stairs' east side, so it does not cross the shaft
+  // (the shaft is x -10..-8.6, but the bar is against the north wall at z -19.3, and the
+  // shaft's own z span is -10.4..-3.2 — it does not reach the north wall at all).
+  out.push({ id: 'terr-workbar', kind: 'workbar', x: -4.0, z: zN, hw: 5.6, hd: 0.42, h: 0.95 })
+  for (let i = 0; i < 5; i++) {
+    const bx = -4.0 - 5.6 + 1.0 + i * 2.3
+    out.push({
+      id: `terr-stool-${i}`,
+      kind: 'stool',
+      x: bx,
+      z: zN + 0.95,
+      hw: 0.22,
+      hd: 0.22,
+      h: TERRACE_SEAT_H + 0.14,
+      facing: Math.PI,
+    })
+  }
+  out.push({ id: 'terr-coffee', kind: 'coffee', x: 3.6, z: zN + 0.4, hw: 0.3, hd: 0.3, h: 1.6 })
+  out.push({ id: 'terr-shelf', kind: 'shelf', x: -13.2, z: zN + 0.6, hw: 0.3, hd: 1.2, h: 1.7 })
+
+  // ---- SOUTH EDGE: two lounge pairs facing the pool, and a low table ---------------
+  // Facing NORTH means facing the courtyard (-z is toward the north wall, so to look at the
+  // pool to the south the sofa faces +z: facing = 0 puts its back at +z, so we use PI to
+  // turn it around and look south over the water).
+  // FACING = PI, so the BACKREST is on the NORTH side (against the wall) and the sitter
+  // looks SOUTH over the pool. The sofa mesh puts its backrest at local +z, so a mesh built
+  // at rotation 0 has its back to the south — with `facing: 0` the backrest landed BETWEEN
+  // the sitter and the water, i.e. the sofa faced its own backrest (measured backrest dot
+  // +1.00). This is the same convention the lounge sofa uses: back at +z, so it faces -z.
+  out.push({ id: 'terr-sofa-a', kind: 'sofa', x: -11.0, z: zS, hw: 1.3, hd: 0.5, h: 0.8, facing: Math.PI })
+  out.push({ id: 'terr-sofa-b', kind: 'sofa', x: -4.0, z: zS, hw: 1.3, hd: 0.5, h: 0.8, facing: Math.PI })
+  out.push({ id: 'terr-lowtable', kind: 'lowtable', x: -7.5, z: zS - 0.2, hw: 0.9, hd: 0.45, h: 0.4 })
+
+  // ---- WEST SIDE: the communal table, clear of the stairs (x -10..-8.6) ------------
+  // It runs along z, tucked against the west end of the strip, west of the shaft.
+  out.push({ id: 'terr-longtable', kind: 'longtable', x: -12.6, z: -15.0, hw: 0.7, hd: 2.4, h: 0.75 })
+  out.push({
+    id: 'terr-bench-w',
+    kind: 'tbench',
+    x: -13.5,
+    z: -15.0,
+    hw: 0.22,
+    hd: 2.0,
+    h: TERRACE_SEAT_H,
+    facing: Math.PI / 2,
+  })
+
+  // ---- EAST SIDE: lockers, and a plant to soften it --------------------------------
+  out.push({ id: 'terr-locker', kind: 'locker', x: 12.0, z: -15.0, hw: 0.42, hd: 2.2, h: 1.8 })
+  out.push({ id: 'terr-plant-e', kind: 'plant', x: 12.6, z: zN + 1.0, hw: 0.3, hd: 0.3, h: 1.1 })
+  out.push({ id: 'terr-plant-w', kind: 'plant', x: -13.4, z: zS - 0.4, hw: 0.3, hd: 0.3, h: 1.1 })
+
+  return out
+})()
 
 /** Seat height of a dining chair — matches SEATS.chair, so the pose is unchanged. */
 export const DINING_CHAIR_OFFSET = 0.78
@@ -990,11 +1404,54 @@ export const FOOTPRINTS: Footprint[] = [
     const s = Math.sin(d.facing)
     const c = Math.cos(d.facing)
     const chair = { x: d.x + DESK_CHAIR.z * s, z: d.z + DESK_CHAIR.z * c }
+    // THE DESK FOOTPRINT TURNS WITH THE DESK. A desk top is 1.7 long and 1.0 deep; as an
+    // axis-aligned box that is 0.85 x 0.5 only while the desk faces along z. A desk facing
+    // east/west (which is most of them) lies the other way — its 1.7 m runs along Z and its
+    // 1.0 m along X — so a fixed 0.85 x 0.5 box was half a metre wrong in each direction.
+    // That is what made the self-test report "sits at a chair with no desk" for a desk that
+    // was in fact 1.0 m away: the chair is 1.0 along the desk's own facing, and the box has
+    // to cover it whichever way the desk points.
+    // THE DESK BOX MUST COVER THE CHAIR, whichever way the desk points.
+    //
+    // The box has to include the chair's tucked position, because "sitting at your desk" is
+    // legitimately inside both the chair and the desk. The chair sits 1.0 m along the desk's
+    // own FACING, so the box needs a half-extent of 0.85 along the facing axis and 0.5
+    // across it — not a fixed 0.85 x 0.5, which was only right while every desk faced east.
+    //
+    // `s = sin(facing)` is the facing direction's x component, `c` its z component, so this
+    // picks the axis the desk actually points down.
+    const facesAlongX = Math.abs(s) > 0.5
+    const hw = facesAlongX ? 0.85 : 0.5
+    const hd = facesAlongX ? 0.5 : 0.85
     return [
-      fp(`desk-${d.index}`, d.x, d.z, 0.85, 0.5, 0.72, 'desk'),
+      fp(`desk-${d.index}`, d.x, d.z, hw, hd, 0.72, 'desk'),
       fp(`chair-${d.index}`, chair.x, chair.z, 0.32, 0.32, 0.5, 'seat'),
     ]
   }),
+
+  /* --------------------------------------------- the division rooms' props -- */
+  // Each room's extra furniture. The bench and the nook are 'desk'/'seat' so the mover
+  // treats them as usable; the rest are plain solids.
+  ...ROOM_PROPS.map((p) => fp(p.id, p.x, p.z, p.hw, p.hd, p.h, p.kind === 'nook' ? 'desk' : undefined)),
+
+  /* --------------------------------- ground floor under the second floor --- */
+  // The covered terrace, z -20.4..-9.6. Seats and the low table are 'seat'/'desk' so the
+  // mover treats them as usable; the rest are plain solids.
+  ...TERRACE_PROPS.map((p) =>
+    fp(
+      p.id,
+      p.x,
+      p.z,
+      p.hw,
+      p.hd,
+      p.h,
+      p.kind === 'sofa' || p.kind === 'tbench' || p.kind === 'stool'
+        ? 'seat'
+        : p.kind === 'lowtable' || p.kind === 'longtable' || p.kind === 'workbar'
+          ? 'desk'
+          : undefined,
+    ),
+  ),
 
   /* ---------------------------------------------------------- meeting rooms */
   // tables, as one footprint each, on level 1
@@ -1052,11 +1509,21 @@ export const FOOTPRINTS: Footprint[] = [
   fp('reception-chair', RECEPTION.x, RECEPTION.z - 1.15, 0.32, 0.32, 0.5, 'seat'),
 
   /* -------------------------------------------------------------- pantry -- */
-  fp('pantry-counter', PANTRY.x, PANTRY.z, 0.45, 3.2, 0.95),
+  // The counter is the run PANTRY_COUNTER.z1..z2, NOT a slab centred on PANTRY.z — that
+  // is what let the fridge stand inside it.
+  fp(
+    'pantry-counter',
+    PANTRY.x,
+    (PANTRY_COUNTER.z1 + PANTRY_COUNTER.z2) / 2,
+    PANTRY_COUNTER.d / 2,
+    (PANTRY_COUNTER.z2 - PANTRY_COUNTER.z1) / 2,
+    PANTRY_COUNTER.h,
+  ),
+  fp('pantry-fridge', FRIDGE.x, FRIDGE.z, FRIDGE.w / 2, FRIDGE.d / 2, FRIDGE.h),
   ...PANTRY_STOOLS.map((z, i) => fp(`stool-${i}`, PANTRY.x + PANTRY_STOOL_GAP, z, 0.24, 0.24, 0.62, 'seat')),
   // The water cooler stands clear of the counter's south end; the coffee machine sits ON
   // the counter, so it needs no footprint of its own (the counter already blocks there).
-  fp('pantry-water-cooler', PANTRY.x - 0.1, PANTRY.z + 3.6, 0.24, 0.24, 1.6),
+  fp('pantry-water-cooler', WATER_COOLER.x, WATER_COOLER.z, WATER_COOLER.w / 2, WATER_COOLER.d / 2, WATER_COOLER.h),
 
   /* --------------------------------------------------------- dining sets -- */
   // Each set contributes a table (solid, `desk` so a body cannot stand in it) and four
@@ -1070,6 +1537,12 @@ export const FOOTPRINTS: Footprint[] = [
   /* -------------------------------------------------------------- leisure -- */
   fp('lounge-sofa', LOUNGE.x, LOUNGE.z, 1.5, 0.55, 0.85, 'seat'),
   fp('lounge-table', LOUNGE_TABLE.x, LOUNGE_TABLE.z, 0.6, 0.3, 0.44, 'desk'),
+  // The rec gear. The table and the rig block; the dartboard is ON the wall, so its
+  // footprint is the small area its surround occupies, not the throw position — a
+  // footprint at the thrower's feet would fence off the very spot they stand on.
+  fp('lounge-pingpong', PINGPONG.x, PINGPONG.z, PINGPONG.w / 2, PINGPONG.d / 2, PINGPONG.h),
+  fp('lounge-racing', RACING.x, RACING.z - 0.5, 0.7, 1.3, 0.9),
+  fp('lounge-dartboard', DARTBOARD.x, DARTBOARD.z, 0.08, DARTBOARD.r * 1.2, DARTBOARD.y + DARTBOARD.r),
 
   /* ------------------------------------------------------------ ceo suite -- */
   fp('ceo-desk', roomCentre('ceo').x, roomCentre('ceo').z - 1.5, 1.1, 0.6, 0.75, 'desk', 1),
@@ -1088,7 +1561,15 @@ export const FOOTPRINTS: Footprint[] = [
  * WORK rather than to a place — a body is 'typing' because it has a desk and 'walking'
  * because it is en route, and neither is somewhere you can send an idle agent.
  */
-export type IdleActivity = Exclude<Activity, 'walking' | 'typing' | 'gaming' | 'dart'>
+/**
+ * Activities an idle body may be assigned.
+ *
+ * `walking` is not a pose you can be left in, and `typing` / `gaming` are only ever
+ * triggered by an agent's real work state (a desk, a live session) rather than by standing
+ * somewhere. `dart` USED to be excluded too, back when there was no dartboard; the board
+ * now exists in the lounge, so darts is an idle spot like any other.
+ */
+export type IdleActivity = Exclude<Activity, 'walking' | 'typing' | 'gaming'>
 
 export type IdleSpot = {
   x: number
@@ -1259,6 +1740,66 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // LOOK AT THE TV. `face: 0` faces north, and the TV is SOUTH of the sofa, so the sitter
   // had its back to the screen: dot -1.00. This is the "ngebelakangin sofa" bug.
   { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: faceToward(LOUNGE.x, LOUNGE.z, LOUNGE_TV.x, LOUNGE_TV.z), level: 0 },
+  /* ---- the lounge rec gear: ping-pong, darts and the racing sim ----------- */
+  // Ping-pong needs TWO players, one at each end of the table. They face each other across
+  // the table's WIDTH line, so a rally reads as a rally rather than two people swinging at
+  // nothing. `face` points in, toward the table.
+  {
+    x: PINGPONG.x - PINGPONG.w / 2 - PINGPONG_STAND, z: PINGPONG.z,
+    act: 'pingpong', face: Math.PI / 2, level: 0,
+  },
+  {
+    x: PINGPONG.x + PINGPONG.w / 2 + PINGPONG_STAND, z: PINGPONG.z,
+    act: 'pingpong', face: -Math.PI / 2, level: 0,
+  },
+  // The marketing nook: its two soft chairs were built as furniture but had NO idle spot, so
+  // nobody could ever sit in them. Each chair faces the low table between them, computed from
+  // its own position rather than a fixed angle (the two chairs are on opposite sides).
+  ...ROOM_PROPS.filter((p) => p.kind === 'nook').flatMap((n) => [
+    { x: n.x - 0.95, z: n.z, act: 'sofa' as const, seated: true, face: faceToward(n.x - 0.95, n.z, n.x, n.z), level: 0 as const },
+    { x: n.x + 0.95, z: n.z, act: 'sofa' as const, seated: true, face: faceToward(n.x + 0.95, n.z, n.x, n.z), level: 0 as const },
+  ]),
+  // One thrower at the oche, facing the board on the east wall.
+  { x: DART_THROW.x, z: DART_THROW.z, act: 'dart', face: faceToward(DART_THROW.x, DART_THROW.z, DARTBOARD.x, DARTBOARD.z), level: 0 },
+  // One driver in the rig's seat. `seated` arms the settling exemption, so the body may
+  // tuck into a chair the footprint would otherwise block.
+  // The DRIVER faces the screen, which the rig puts on its local -z (the rig mesh is built
+  // with the wheel and screen ahead of the seat at negative local z, so `RACING.facing` is
+  // also its mesh rotation). Copying `RACING.facing` into the body's `face` was wrong: a
+  // BODY looks along its own local +z, the opposite of the mesh convention, so the driver
+  // sat facing due south with its back to its own screen — measured head-dot -1.00.
+  { x: RACING.x, z: RACING.z, act: 'racing', seated: true, face: RACING.facing + Math.PI, level: 0 },
+
+  /* ---- under the second floor: the covered terrace ------------------------ */
+  // The work bar: a body perched on each stool, facing the bar (north, toward the counter).
+  // The bar is at the north edge of the strip, so a sitter looks NORTH (-z) at it.
+  ...TERRACE_PROPS.filter((p) => p.kind === 'stool').map((p) => ({
+    x: p.x,
+    z: p.z,
+    act: 'coffee' as const,
+    seated: true,
+    face: Math.PI,
+    level: 0 as const,
+  })),
+  // The two sofas face SOUTH over the courtyard — they look at the pool, which is the point
+  // of sitting there. `face` is computed from the body's own position toward the pool.
+  ...TERRACE_PROPS.filter((p) => p.kind === 'sofa').map((p) => ({
+    x: p.x,
+    z: p.z,
+    act: 'sofa' as const,
+    seated: true,
+    face: faceToward(p.x, p.z, POOL.x, POOL.z),
+    level: 0 as const,
+  })),
+  // The communal bench along the long table, looking east at the table.
+  ...TERRACE_PROPS.filter((p) => p.kind === 'tbench').map((p) => ({
+    x: p.x,
+    z: p.z,
+    act: 'eat' as const,
+    seated: true,
+    face: faceToward(p.x, p.z, p.x + 1.6, p.z),
+    level: 0 as const,
+  })),
 
   /* ---- open standing room in the courtyard and the lobby ---------------- */
   { x: 0, z: 12.5, act: 'idle', face: Math.PI, level: 0 },
@@ -1313,14 +1854,35 @@ export const OPENINGS: { x: number; z: number; hw: number; hd: number; level: 0 
 
 /* --------------------------------------------------------------- signs ---- */
 
-export const ROOM_SIGNS: { text: string; x: number; z: number; level: 0 | 1 }[] = ROOMS.filter(
-  (r) => r.id !== 'corridor1' && r.id !== 'terrace',
-).map((r) => ({
-  text: r.label,
-  x: (r.x1 + r.x2) / 2,
-  z: r.id === 'lobby' ? r.z1 + 0.4 : r.z2 - 0.4,
-  level: r.level,
-}))
+export const ROOM_SIGNS: { text: string; x: number; z: number; level: 0 | 1 }[] = ROOMS.map((r) => {
+  // EVERY ROOM GETS A NAME, including the two that used to be skipped.
+  //
+  // `terrace` and `corridor1` were filtered out with "it is a corridor, not a room" — a
+  // reasonable call when both were bare circulation space. That is no longer true: the
+  // terrace (the covered floor directly beneath the second floor) now holds a work bar, two
+  // lounge pairs and a communal table, so it is a place with a name and needs one.
+  //
+  // The placard hangs at 2.55 m on the room's south edge, which is clear of the slab above
+  // (LEVEL_H = 3.4) and of any furniture.
+  const interiorMiddleX = (r.x1 + r.x2) / 2
+  // The terrace spans the whole building width, so its centre would hang the sign over the
+  // stair shaft. Put it over the work bar instead, which is where people actually sit.
+  const x = r.id === 'terrace' ? -4.0 : interiorMiddleX
+  // The corridor runs the full width and has no south wall to hang on; put its placard at
+  // the stair head, where someone arriving on the floor will read it.
+  // `z` puts the placard on the room's own edge. The COURTYARD is the exception: its south
+  // edge (z2 = 16) is the lobby's north edge, so hanging it there stacked it 0.8 m from the
+  // LOBI placard. The courtyard reads best from the terrace side, so its sign goes north.
+  const z =
+    r.id === 'lobby'
+      ? r.z1 + 0.4
+      : r.id === 'courtyard'
+        ? r.z1 + 0.6
+        : r.id === 'corridor1'
+          ? r.z1 + 0.5
+          : r.z2 - 0.4
+  return { text: r.label, x, z, level: r.level }
+})
 
 /* -------------------------------------------------------------- validation -- */
 

@@ -64,6 +64,12 @@ import {
   roomCentre,
   WALL_H,
   WALL_T,
+  ROOM_SIGNS,
+  RACING,
+  PINGPONG,
+  DARTBOARD,
+  TERRACE_PROPS,
+  ROOM_PROPS,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, onStairArea, planRoute, route, routeBetween, stairCentre } from '../src/lib/office/nav'
 import { dummyRoster } from '../src/lib/office/dummy-roster'
@@ -2121,6 +2127,494 @@ void (async () => {
       if (!ACTIVITIES.includes('recline')) problems.push("the 'recline' pose is not implemented")
     }
     check('the pool is swimmable and the daybeds are for lying on', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // EVERY ROOM HAS A NAME PLACARD.
+  //
+  // Reported: "could you add the name of the room to each space?" Every room already had a
+  // `label`, and thirteen of them had a sign, but `terrace` and `corridor1` were filtered
+  // OUT of the sign list with "it is a corridor, not a room". That stopped being true once
+  // the terrace under the executive slab was furnished, so the filter is gone — and this
+  // stops it coming back.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const signed = new Set(ROOM_SIGNS.map((s) => s.text))
+    for (const r of ROOMS) {
+      if (!signed.has(r.label)) problems.push(`${r.id} (${r.label}) has no name placard`)
+    }
+    // and every sign must hang at a sane height, clear of the slab above it
+    for (const s of ROOM_SIGNS) {
+      const y = s.level * LEVEL_H + 2.55
+      if (y < 1.6 || y > (s.level + 1) * LEVEL_H - 0.2) {
+        problems.push(`the ${s.text} placard hangs at ${y.toFixed(2)} m, which is not inside its floor`)
+      }
+    }
+    // no two placards on the same level may share a spot
+    for (let i = 0; i < ROOM_SIGNS.length; i++) {
+      for (let j = i + 1; j < ROOM_SIGNS.length; j++) {
+        const a = ROOM_SIGNS[i]
+        const b = ROOM_SIGNS[j]
+        // Two signs may sit close together on the SAME wall run (the lobby and the courtyard
+        // stack face each other at the building's south end, and the corridor's placard
+        // hangs near MERAPI's). What must never happen is two DIFFERENT rooms' signs at the
+        // SAME spot, so the test is for near-coincidence, not for distance.
+        if (a.level === b.level && Math.hypot(a.x - b.x, a.z - b.z) < 1.2) {
+          problems.push(`the ${a.text} and ${b.text} placards are ${Math.hypot(a.x - b.x, a.z - b.z).toFixed(1)} m apart — they overlap`)
+        }
+      }
+    }
+    check('every room has a name placard, hung inside its own floor', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // WALL FURNITURE SITS AGAINST ITS WALL.
+  //
+  // Reported: "ini studio fotonya minta tolong dibenerin lagi" — the content studio's photo
+  // backdrop was standing 0.83 m off the south wall, floating in the middle of the floor,
+  // and its plant was 0.73 m off the east wall. Both read as broken because a backdrop and
+  // a corner plant are defined by being AGAINST something.
+  //
+  // The trap: the wall is WALL_T thick, so a prop placed "at the room edge" in layout
+  // coordinates has its centre INSIDE the plaster. The test must measure against the inner
+  // FACE (edge +- WALL_T/2), which is what this does.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    // props that are defined by being against a wall, and how close they must be
+    const WALL_KINDS: Record<string, number> = {
+      shelf: 0.35,
+      whiteboard: 0.35,
+      backdrop: 0.2,
+      rack: 0.35,
+      locker: 0.35,
+      screenwall: 0.35,
+      bench: 0.35,
+    }
+    for (const roomId of ['dev', 'mkt', 'content'] as const) {
+      const r = roomById(roomId)
+      if (!r) continue
+      const inner = {
+        west: r.x1 + WALL_T / 2,
+        east: r.x2 - WALL_T / 2,
+        north: r.z1 + WALL_T / 2,
+        south: r.z2 - WALL_T / 2,
+      }
+      for (const p of ROOM_PROPS.filter((x) => x.room === roomId)) {
+        const tol = WALL_KINDS[p.kind]
+        if (tol === undefined) continue
+        const dW = p.x - p.hw - inner.west
+        const dE = inner.east - (p.x + p.hw)
+        const dN = p.z - p.hd - inner.north
+        const dS = inner.south - (p.z + p.hd)
+        const gaps = [dW, dE, dN, dS]
+        const nearest = Math.min(...gaps)
+        if (nearest < -0.02) {
+          problems.push(`${p.id} is ${(-nearest).toFixed(2)} m INSIDE a wall`)
+        } else if (nearest > tol) {
+          problems.push(`${p.id} floats ${nearest.toFixed(2)} m off the nearest wall (a ${p.kind} must be against one)`)
+        }
+      }
+    }
+    check('wall furniture (shelves, backdrops, racks) sits against its wall', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE STUDIO HAS EXACTLY ONE CAMERA.
+  //
+  // The `tripod` prop drew a camera body AND a softbox as a single unit. The studio needed a
+  // light as a separate object, and reusing the same kind for it produced TWO identical
+  // camera rigs — reported as "now there are even 2 cameras". The light is its own kind now
+  // (`lightstand`, which draws no camera body at all), and this stops the two from merging
+  // back into one kind.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const r = roomById('content')
+    if (r) {
+      const scene = new THREE.Scene()
+      buildOffice(scene, 12)
+      // a camera BODY is the specific dark box the tripod case builds
+      let cams = 0
+      scene.traverse((n: any) => {
+        if (!n.isMesh || !n.geometry) return
+        if (n.geometry.type !== 'BoxGeometry') return
+        const p = n.geometry.parameters || {}
+        if (p.width === undefined) return
+        if (
+          Math.abs(p.width - 0.24) < 0.005 &&
+          Math.abs(p.height - 0.16) < 0.005 &&
+          Math.abs(p.depth - 0.18) < 0.005
+        ) {
+          const v = new THREE.Vector3()
+          n.getWorldPosition(v)
+          if (v.x > r.x1 && v.x < r.x2 && v.z > r.z1 && v.z < r.z2) cams++
+        }
+      })
+      if (cams !== 1) problems.push(`the studio has ${cams} cameras, want exactly 1`)
+    }
+    // and the light must not be a tripod
+    for (const p of ROOM_PROPS.filter((x) => x.id.includes('light'))) {
+      if (p.kind === 'tripod') problems.push(`${p.id} uses the tripod kind, which also builds a camera`)
+    }
+    check('the studio has exactly one camera, and its light is not a tripod', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE STUDIO SET IS AIMED AT ITSELF.
+  //
+  // Four reports, all correct, all fixed here and all measured on the BUILT scene:
+  //
+  //   1. "tripod untuk lightning kakinya masih terbalik" — the LIGHT stand's legs were
+  //      upside down, a separate fault from the camera tripod's.
+  //   2. "kamera masih membelakangi background" — the camera's lens pointed north, while the
+  //      backdrop is SOUTH of it.
+  //   3. "kamera tidak di tengah background" — the camera was 2.00 m off the backdrop's
+  //      centre line.
+  //   4. "lightning tidak menghadap background" — the softbox threw north, away from the panel.
+  //
+  // Orientation is checked with `facing`, the prop's aim in the body convention (0 rad = +z),
+  // and with the actual ENDS of each leg rather than a bounding box.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const bd = ROOM_PROPS.find((p) => p.id === 'content-backdrop')
+    const cam = ROOM_PROPS.find((p) => p.id === 'content-tripod')
+    const lit = ROOM_PROPS.find((p) => p.id === 'content-light')
+    if (!bd || !cam || !lit) {
+      problems.push('the studio set is incomplete (backdrop / camera / light)')
+    } else {
+      // 3. the camera is centred on the backdrop's own x
+      if (Math.abs(cam.x - bd.x) > 0.05) {
+        problems.push(`the camera is ${Math.abs(cam.x - bd.x).toFixed(2)} m off the backdrop's centre line`)
+      }
+      // 2 and 4: both must AIM at the backdrop. The backdrop is at z BD; "toward it" is the
+      // sign of (bd.z - prop.z), and `facing`'s +z component is cos(facing).
+      const toward = Math.sign(bd.z - cam.z)
+      for (const [name, prop] of [
+        ['camera', cam],
+        ['light', lit],
+      ] as const) {
+        if (prop.facing === undefined) {
+          problems.push(`the studio ${name} has no facing, so it cannot be aimed`)
+          continue
+        }
+        const aimZ = Math.cos(prop.facing) // a look direction's +z component
+        if (Math.sign(aimZ) !== toward || Math.abs(aimZ) < 0.2) {
+          problems.push(`the studio ${name} does not face the backdrop (aim z ${aimZ.toFixed(2)}, backdrop is at ${toward < 0 ? '-z' : '+z'})`)
+        }
+      }
+      // 1. both stands' legs: low end FAR out and on the floor, high end near the axis.
+      const scene = new THREE.Scene()
+      buildOffice(scene, 12)
+      scene.updateMatrixWorld(true)
+      const acc = { checked: 0, bad: 0, camOff: null as number | null }
+      scene.traverse((n: any) => {
+        if (!n.isMesh || !n.geometry) return
+        const p = n.geometry.parameters || {}
+        const v = new THREE.Vector3()
+        n.getWorldPosition(v)
+        const nearCam = Math.hypot(v.x - cam.x, v.z - cam.z) < 1.3
+        const nearLit = Math.hypot(v.x - lit.x, v.z - lit.z) < 1.3
+        if (nearCam && n.geometry.type === 'BoxGeometry' && Math.abs((p.width ?? 0) - 0.24) < 0.005) {
+          acc.camOff = Math.hypot(v.x - cam.x, v.z - cam.z)
+        }
+        if (!nearCam && !nearLit) return
+        // a LEG: a thin cylinder that clearly leans (its ends differ in radius AND height)
+        if (n.geometry.type !== 'CylinderGeometry') return
+        if (!(p.height > 0.6 && p.height < 1.2)) return
+        const hi = new THREE.Vector3(0, p.height / 2, 0).applyMatrix4(n.matrixWorld)
+        const lo = new THREE.Vector3(0, -p.height / 2, 0).applyMatrix4(n.matrixWorld)
+        const origin = nearCam ? cam : lit
+        const up = hi.y > lo.y ? hi : lo
+        const dn = hi.y > lo.y ? lo : hi
+        const rUp = Math.hypot(up.x - origin.x, up.z - origin.z)
+        const rLo = Math.hypot(dn.x - origin.x, dn.z - origin.z)
+        // the riser/column is vertical, so both its ends share a radius. Only JUDGE the
+        // legs, where the low end is markedly farther out than the high end.
+        if (Math.abs(rUp - rLo) >= 0.05) {
+          acc.checked++
+          if (!(rLo > rUp) || Math.abs(dn.y) > 0.06) acc.bad++
+        }
+      })
+      if (acc.checked < 5) problems.push(`only ${acc.checked} stand legs measured — the check is not seeing them`)
+      if (acc.bad > 0) problems.push(`${acc.bad} of ${acc.checked} stand legs are upside down or off the floor`)
+      if (acc.camOff === null) problems.push('no camera body found on the tripod')
+      else if (acc.camOff > 0.06) problems.push(`the camera is ${acc.camOff.toFixed(2)} m off the tripod axis`)
+    }
+    check('the studio set is centred and aimed at the backdrop, legs on the floor', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE STUDIO LIGHT'S BEAM ACTUALLY LANDS ON THE BACKDROP.
+  //
+  // Reported: "lightning masih salah menghadapnya masih keluar tinggal geser 45 derajat ke
+  // arah timur". Two things were wrong, and the second one is the reason this test exists.
+  //
+  //   - The light threw SOUTH-WEST, off the set entirely.
+  //   - Adding the 45 degrees asked for was STILL not enough. The light stands 2.60 m west of
+  //     the backdrop centre, so a beam merely swung 45 degrees south landed 2.44 m off centre
+  //     — against a panel only 2.40 m half-wide, it missed by 4 cm.
+  //
+  // Facing "roughly at the backdrop" is therefore not a property anyone can eyeball. The test
+  // PROJECTS the beam from the softbox onto the backdrop's plane and requires it to land ON
+  // the panel. The aim itself is computed from the two positions, so it cannot drift.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const lit = ROOM_PROPS.find((p) => p.id === 'content-light')
+    const bd = ROOM_PROPS.find((p) => p.id === 'content-backdrop')
+    if (!lit || !bd) {
+      problems.push('the studio light or backdrop is missing')
+    } else if (lit.facing === undefined) {
+      problems.push('the studio light has no facing')
+    } else {
+      // MEASURED FROM THE MESH, not from the `facing` number.
+      //
+      // The number and the geometry disagreed once and cancelled out: the light was "aimed"
+      // correctly on paper while its softbox was physically mounted on the BACK of the stand,
+      // so it glowed at the wall behind it. Reported as "lightning sekarang malah
+      // membelakangi". So this reads the built softbox: where it actually sits relative to its
+      // stand, and which way its lit face points.
+      const scene = new THREE.Scene()
+      buildOffice(scene, 12)
+      scene.updateMatrixWorld(true)
+      const box2 = { panel: null as THREE.Vector3 | null }
+      scene.traverse((n: any) => {
+        if (!n.isMesh || !n.geometry) return
+        const p = n.geometry.parameters || {}
+        if (n.geometry.type !== 'BoxGeometry') return
+        // the softbox: a big square plate
+        if (!((p.width ?? 0) > 0.5 && Math.abs((p.width ?? 0) - (p.height ?? 0)) < 0.02)) return
+        const v = new THREE.Vector3()
+        n.getWorldPosition(v)
+        if (Math.hypot(v.x - lit.x, v.z - lit.z) < 1.3) box2.panel = v
+      })
+      if (!box2.panel) {
+        problems.push('no softbox panel found on the studio light')
+      } else {
+        // THE WHITE FACE MUST BE THE ONE THAT SHOWS TO THE SET.
+        //
+        // Reported: "lightningnya masih sama aja kebalik". The plate was in the right PLACE
+        // (offset toward the aim) but the DARK rim sat in front of the white emissive face, so
+        // what pointed at the backdrop was the frame, not the light. Measured on the built
+        // mesh: the white panel is 0.30 m from the stand and the rim 0.26 m — i.e. the rim was
+        // nearer the aim side, in front of the glow.
+        const whitePanel = { v: null as THREE.Vector3 | null }
+        const darkRim = { v: null as THREE.Vector3 | null }
+        scene.traverse((n: any) => {
+          if (!n.isMesh || !n.geometry) return
+          const p2 = n.geometry.parameters || {}
+          if (n.geometry.type !== 'BoxGeometry') return
+          const w = p2.width ?? 0
+          const v = new THREE.Vector3()
+          n.getWorldPosition(v)
+          if (Math.hypot(v.x - lit.x, v.z - lit.z) > 1.5) return
+          if (Math.abs(w - 0.72) < 0.01) whitePanel.v = v
+          if (Math.abs(w - 0.78) < 0.01) darkRim.v = v
+        })
+        if (!whitePanel.v) {
+          problems.push('no white softbox panel found on the studio light')
+        } else if (darkRim.v) {
+          const toBd = { x: bd.x - whitePanel.v.x, z: bd.z - whitePanel.v.z }
+          const sepx = darkRim.v.x - whitePanel.v.x
+          const sepz = darkRim.v.z - whitePanel.v.z
+          const sepl = Math.hypot(sepx, sepz)
+          const toBl = Math.hypot(toBd.x, toBd.z)
+          if (sepl < 1e-4) {
+            problems.push('the softbox rim and pane are in the same place')
+          } else {
+            const dot = (sepx * toBd.x + sepz * toBd.z) / (sepl * toBl)
+            if (dot > 0) {
+              problems.push('the DARK rim is in front of the white softbox face, so the light shows its frame to the set instead of its glow (looks back-to-front)')
+            }
+          }
+        }
+
+        // the lit face must be on the AIM side of the stand, i.e. the panel's horizontal
+        // offset from the stand must point the same way as the beam.
+        const dir = { x: Math.sin(lit.facing!), z: Math.cos(lit.facing!) }
+        const off = { x: box2.panel.x - lit.x, z: box2.panel.z - lit.z }
+        const len = Math.hypot(off.x, off.z)
+        if (len < 0.05) {
+          problems.push('the softbox sits on the stand\'s axis, which cannot be right')
+        } else {
+          const alignment = (off.x * dir.x + off.z * dir.z) / len
+          if (alignment < 0.5) {
+            problems.push(`the softbox is mounted BEHIND its stand (offset aligns only ${alignment.toFixed(2)} with the aim) — the light faces backwards`)
+          }
+        }
+        const dz = bd.z - box2.panel.z
+        if (Math.abs(dir.z) < 1e-3) {
+          problems.push('the studio light runs parallel to the backdrop — it never hits it')
+        } else {
+          const t = dz / dir.z
+          if (t < 0) {
+            problems.push('the studio light throws AWAY from the backdrop')
+          } else {
+            const hitX = box2.panel.x + dir.x * t
+            const miss = Math.abs(hitX - bd.x)
+            if (miss > bd.hw) {
+              problems.push(`the studio light beam lands ${miss.toFixed(2)} m from the backdrop's centre, past its ${bd.hw.toFixed(2)} m half-width — it misses the panel`)
+            }
+          }
+        }
+      }
+    }
+    check("the studio light's beam lands on the backdrop", problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE LOUNGE AND TERRACE SEATS FACE THEIR FURNITURE.
+  //
+  // Reported: "make sure the chairs of the furniture we just built face the table, rather
+  // than having their backs to it". The RACING seat was the real offender: the rig mesh is
+  // built with the wheel and screen at its local -z, and `RACING.facing` is also the mesh's
+  // rotation, so copying it into the body's `face` sat the driver looking due south with its
+  // back to its own screen — measured head-dot -1.00 against the screen.
+  //
+  // Measured BEHAVIOURALLY: pose a real body at each seat with the real pose, then require
+  // the body's forward (its own local +z) to point at the furniture. Scoped to `seatdir.ts`
+  // during development; this locks the two fixed cases in.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const cases: { label: string; x: number; z: number; face: number; act: Activity; tx: number; tz: number }[] = []
+    // The RACING seat is read from the IDLE SPOT data (the thing under test), and its target
+    // is the rig's SCREEN, whose position is INDEPENDENT of the spot: the rig mesh is built
+    // with the screen at local z = -1.5 and rotated by RACING.facing, so the screen's world
+    // position is derived from the MESH, not from the seat's `face`. An earlier version
+    // computed the expected `face` with the same `+ Math.PI` the code uses, so reintroducing
+    // the bug changed the expectation too and the test could never fail.
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'racing')) {
+      const scr = new THREE.Vector3(0, 0, -1.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), RACING.facing)
+      cases.push({
+        label: 'racing driver',
+        x: s.x,
+        z: s.z,
+        face: s.face,
+        act: 'racing',
+        tx: RACING.x + scr.x,
+        tz: RACING.z + scr.z,
+      })
+    }
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'pingpong')) {
+      cases.push({ label: 'ping-pong player', x: s.x, z: s.z, face: s.face, act: 'pingpong', tx: PINGPONG.x, tz: PINGPONG.z })
+    }
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'dart')) {
+      cases.push({ label: 'dart thrower', x: s.x, z: s.z, face: s.face, act: 'dart', tx: DARTBOARD.x, tz: DARTBOARD.z })
+    }
+    const bar = TERRACE_PROPS.find((p) => p.kind === 'workbar')!
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'coffee' && x.x < 24)) {
+      // the bar is a LINE: aim at its nearest point, not its centre
+      const nx = Math.max(bar.x - bar.hw, Math.min(bar.x + bar.hw, s.x))
+      cases.push({ label: 'terrace stool', x: s.x, z: s.z, face: s.face, act: 'coffee', tx: nx, tz: bar.z })
+    }
+    for (const c of cases) {
+      const av = buildAvatar('backend')
+      av.group.position.set(c.x, 0, c.z)
+      av.group.rotation.y = c.face
+      const a = { avatar: av, activity: c.act, ease: 1, phase: 0.2, meetingTalking: false }
+      for (let i = 0; i < 14; i++) animate(a, i * 0.1, 1 / 60)
+      av.group.updateMatrixWorld(true)
+      // a body looks along its OWN local +z
+      const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(av.group.getWorldQuaternion(new THREE.Quaternion()))
+      const dx = c.tx - c.x
+      const dz = c.tz - c.z
+      const len = Math.hypot(dx, dz)
+      const d = (fwd.x * dx + fwd.z * dz) / len
+      if (d < 0.7) problems.push(`${c.label} faces away from its furniture (dot ${d.toFixed(2)})`)
+    }
+    check('the lounge and terrace seats face their furniture', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // AND THE CHAIR MESH ITSELF IS THE RIGHT WAY ROUND.
+  //
+  // Reported: "in that central area with the table, there is a chair positioned with its
+  // back to the table". Checking only the BODY was not enough — the body faced the table
+  // correctly, but the chair MESH was rotated so its backrest was between the sitter and the
+  // table. Two new cases were wrong this way:
+  //
+  //   the marketing nook's two tub chairs   rotations were swapped, so BOTH backrests
+  //                                          pointed at the nook table
+  //   the two terrace sofas                 `facing: 0` put the backrest SOUTH, between the
+  //                                          sitter and the pool they were meant to look at
+  //
+  // The mesh convention, learned from these: a backrest is modelled at local +z, so the
+  // sitter faces local -z and `facing` must turn the back AWAY from the furniture.
+  //
+  // Measured from the BUILT SCENE: find the backrest box, and require it to lie on the
+  // opposite side of the seat from the furniture (dot < 0).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const scene = new THREE.Scene()
+    buildOffice(scene, 12)
+    const wp = (o: THREE.Object3D) => {
+      const v = new THREE.Vector3()
+      o.getWorldPosition(v)
+      return v
+    }
+    // candidate backrests: upright boxes at sitting-back height, thin in one horizontal axis
+    const backs: { x: number; z: number }[] = []
+    scene.traverse((n: any) => {
+      if (!n.isMesh || !n.geometry) return
+      if (n.geometry.type !== 'BoxGeometry') return
+      if (!n.geometry.boundingBox) n.geometry.computeBoundingBox()
+      const bb = n.geometry.boundingBox
+      const sz = new THREE.Vector3().subVectors(bb.max, bb.min).multiply(n.scale)
+      const v = wp(n)
+      if (v.y < 0.45 || v.y > 1.05) return
+      const thin = Math.min(sz.x, sz.z)
+      const broad = Math.max(sz.x, sz.z)
+      if (thin > 0.36 || broad < 0.4) return
+      if (sz.y < 0.35 || sz.y > 0.85) return
+      backs.push({ x: v.x, z: v.z })
+    })
+
+    // the seat/furniture pairs that HAVE a backrest
+    const pairs: { label: string; x: number; z: number; tx: number; tz: number }[] = []
+    const nook = ROOM_PROPS.find((p) => p.kind === 'nook')
+    if (nook) {
+      for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa' && Math.hypot(x.x - nook.x, x.z - nook.z) < 1.6)) {
+        pairs.push({ label: `nook chair @${s.x.toFixed(1)},${s.z.toFixed(1)}`, x: s.x, z: s.z, tx: nook.x, tz: nook.z })
+      }
+    }
+    for (const s of IDLE_SPOTS.filter((x) => x.act === 'sofa' && x.z > -13 && x.z < -9 && Math.abs(x.x) < 14)) {
+      pairs.push({ label: `terrace sofa @${s.x.toFixed(1)},${s.z.toFixed(1)}`, x: s.x, z: s.z, tx: s.x, tz: POOL.z })
+    }
+    for (const [si, set] of DINING_SETS.entries()) {
+      for (const s of IDLE_SPOTS.filter((x) => x.act === 'eat' && Math.hypot(x.x - set.x, x.z - set.z) < 2.2)) {
+        pairs.push({ label: `dining set ${si} chair @${s.x.toFixed(1)},${s.z.toFixed(1)}`, x: s.x, z: s.z, tx: set.x, tz: set.z })
+      }
+    }
+
+    let checked = 0
+    for (const c of pairs) {
+      let best: { x: number; z: number } | null = null
+      let bd = 1.4
+      for (const b of backs) {
+        const d = Math.hypot(b.x - c.x, b.z - c.z)
+        if (d < bd) {
+          bd = d
+          best = b
+        }
+      }
+      if (!best) continue
+      checked++
+      const fx = c.tx - c.x
+      const fz = c.tz - c.z
+      const fl = Math.hypot(fx, fz)
+      const bx = best.x - c.x
+      const bz = best.z - c.z
+      const bl = Math.hypot(bx, bz)
+      const d = (fx * bx + fz * bz) / (fl * bl)
+      if (d >= 0) problems.push(`${c.label}: the BACKREST is on the furniture side (dot ${d.toFixed(2)}) — the seat faces backwards`)
+    }
+    if (checked < 12) problems.push(`only ${checked} backrests measured — the check is not seeing the furniture`)
+    check('every chair and sofa mesh has its backrest BEHIND the sitter', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────

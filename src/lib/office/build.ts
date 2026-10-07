@@ -46,13 +46,25 @@ import {
   LOUNGE,
   LOUNGE_TABLE,
   LOUNGE_TV,
+  ROOM_PROPS,
+  TERRACE_PROPS,
+  PINGPONG,
+  DARTBOARD,
+  DART_THROW,
+  RACING,
+  RACING_SEAT_H,
   courtyardWallSegments,
   MEETING_ROOMS,
   MEETING_ROOM_IDS,
   MEETING_TABLES,
   PANTRY,
+  PANTRY_COUNTER,
+  PANTRY_COFFEE_Z,
+  PANTRY_SINK_Z,
   PANTRY_STOOLS,
   PANTRY_STOOL_GAP,
+  FRIDGE,
+  WATER_COOLER,
   POOL,
   WATER_Y,
   POOL_BENCHES,
@@ -1301,6 +1313,587 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     group.add(backing)
   }
 
+  /* --------------------------------- under the second floor: the terrace --- */
+  // The covered floor beneath the executive slab. Placed from TERRACE_PROPS so the mesh and
+  // the footprint cannot drift.
+  for (const tp of TERRACE_PROPS) {
+    const tg = new THREE.Group()
+    tg.position.set(tp.x, 0, tp.z)
+    if (tp.facing !== undefined) tg.rotation.y = tp.facing
+    const W = tp.hw * 2 // width in the piece's own LOCAL x
+    const D = tp.hd * 2 // depth in its own LOCAL z
+    switch (tp.kind) {
+      case 'sofa': {
+        const seat = new THREE.Mesh(rbox(W, 0.34, D - 0.12, 0.06), stdMat(0x7d8f6a, { rough: 0.95 }))
+        seat.position.y = 0.28
+        tg.add(seat)
+        const back = new THREE.Mesh(rbox(W, 0.5, 0.22, 0.06), stdMat(0x7d8f6a, { rough: 0.95 }))
+        back.position.set(0, 0.6, tp.hd - 0.11)
+        tg.add(back)
+        for (const ax of [-tp.hw + 0.13, tp.hw - 0.13]) {
+          const arm = new THREE.Mesh(rbox(0.24, 0.4, D - 0.12, 0.06), stdMat(0x6f8060, { rough: 0.95 }))
+          arm.position.set(ax, 0.48, 0)
+          tg.add(arm)
+        }
+        for (const [lx, lz] of [
+          [-tp.hw + 0.14, -tp.hd + 0.14],
+          [tp.hw - 0.14, -tp.hd + 0.14],
+          [-tp.hw + 0.14, tp.hd - 0.14],
+          [tp.hw - 0.14, tp.hd - 0.14],
+        ] as const) {
+          const foot = cyl(0.03, 0.03, 0.14, 0x5a4a34, 8)
+          foot.position.set(lx, 0.07, lz)
+          tg.add(foot)
+        }
+        break
+      }
+      case 'lowtable': {
+        const top = new THREE.Mesh(rbox(W, 0.05, D, 0.03), woodMat)
+        top.position.y = tp.h
+        tg.add(top)
+        for (const [lx, lz] of [
+          [-tp.hw + 0.12, -tp.hd + 0.12],
+          [tp.hw - 0.12, -tp.hd + 0.12],
+          [-tp.hw + 0.12, tp.hd - 0.12],
+          [tp.hw - 0.12, tp.hd - 0.12],
+        ] as const) {
+          const leg = cyl(0.025, 0.025, tp.h, 0x6b4423, 8)
+          leg.position.set(lx, tp.h / 2, lz)
+          tg.add(leg)
+        }
+        break
+      }
+      case 'longtable': {
+        const top = new THREE.Mesh(rbox(W, 0.07, D, 0.03), woodMat)
+        top.position.y = tp.h
+        tg.add(top)
+        for (const tz of [-tp.hd + 0.5, tp.hd - 0.5]) {
+          for (const tx of [-tp.hw + 0.16, tp.hw - 0.16]) {
+            const leg = box(0.1, tp.h - 0.06, 0.1, 0x8a9096, { metal: 0.4, rough: 0.5 })
+            leg.position.set(tx, (tp.h - 0.06) / 2, tz)
+            tg.add(leg)
+          }
+        }
+        break
+      }
+      case 'tbench': {
+        const top = new THREE.Mesh(rbox(W, 0.06, D, 0.03), stdMat(0x9c7a52, { rough: 0.8 }))
+        top.position.y = tp.h
+        tg.add(top)
+        for (const tz of [-tp.hd + 0.3, 0, tp.hd - 0.3]) {
+          for (const tx of [-tp.hw + 0.1, tp.hw - 0.1]) {
+            const leg = cyl(0.022, 0.022, tp.h, 0x6b4423, 8)
+            leg.position.set(tx, tp.h / 2, tz)
+            tg.add(leg)
+          }
+        }
+        break
+      }
+      case 'workbar': {
+        const body = box(W, tp.h - 0.06, D, 0x6f5a44, { rough: 0.85 })
+        body.position.y = (tp.h - 0.06) / 2
+        tg.add(body)
+        const top = new THREE.Mesh(rbox(W + 0.08, 0.06, D + 0.1, 0.03), marbleMat)
+        top.position.y = tp.h - 0.03
+        tg.add(top)
+        // a few power sockets along the bar's front face
+        for (let i = 0; i < 4; i++) {
+          const sx = -W / 2 + (i + 0.5) * (W / 4)
+          const sock = box(0.11, 0.09, 0.02, 0xe8e4d8, { rough: 0.5 })
+          sock.position.set(sx, tp.h - 0.28, tp.hd + 0.005)
+          tg.add(sock)
+        }
+        break
+      }
+      case 'stool': {
+        const seat = new THREE.Mesh(
+          new THREE.CylinderGeometry(tp.hw, tp.hw, 0.06, 16),
+          stdMat(0x8f6f4a, { rough: 0.75 }),
+        )
+        seat.position.y = tp.h
+        tg.add(seat)
+        const stem = cyl(0.032, 0.045, tp.h, 0x8a8f95, 10, 0.6)
+        stem.position.y = tp.h / 2
+        tg.add(stem)
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(tp.hw * 0.72, 0.018, 6, 16), stdMat(0x8a8f95, { metal: 0.6 }))
+        ring.rotation.x = Math.PI / 2
+        ring.position.y = 0.22
+        tg.add(ring)
+        const base = cyl(0.16, 0.18, 0.03, 0x8a8f95, 16, 0.6)
+        base.position.y = 0.015
+        tg.add(base)
+        break
+      }
+      case 'locker': {
+        // A bank of lockers: the cabinet, then door lines and handles.
+        const body = box(W, tp.h, D, 0x4f6b7a, { rough: 0.6 })
+        body.position.y = tp.h / 2
+        tg.add(body)
+        const doors = Math.max(2, Math.round(D / 0.45))
+        for (let i = 0; i < doors; i++) {
+          const dz = -tp.hd + (i + 0.5) * (D / doors)
+          const line = box(0.012, tp.h - 0.12, 0.012, 0x2f3f48, { rough: 0.7 })
+          line.position.set(-tp.hw + 0.005, tp.h / 2, dz - D / (2 * doors))
+          tg.add(line)
+          const handle = box(0.02, 0.1, 0.02, 0xd8d8d2, { metal: 0.7 })
+          handle.position.set(-tp.hw - 0.01, tp.h / 2, dz + 0.12)
+          tg.add(handle)
+          // a vent at the top of each door
+          for (let k = 0; k < 3; k++) {
+            const vent = box(0.01, 0.02, 0.14, 0x2f3f48, { rough: 0.7 })
+            vent.position.set(-tp.hw - 0.005, tp.h - 0.16 - k * 0.05, dz)
+            tg.add(vent)
+          }
+        }
+        break
+      }
+      case 'coffee': {
+        // A coffee point: a machine on a small cabinet.
+        const cab = box(W, 0.9, D, 0x6f5a44, { rough: 0.8 })
+        cab.position.y = 0.45
+        tg.add(cab)
+        const cabTop = new THREE.Mesh(rbox(W + 0.05, 0.05, D + 0.05, 0.02), marbleMat)
+        cabTop.position.y = 0.925
+        tg.add(cabTop)
+        const mg = box(0.34, 0.42, 0.32, 0x2f3438, { metal: 0.4, rough: 0.4 })
+        mg.position.y = 1.16
+        tg.add(mg)
+        const head = box(0.28, 0.09, 0.24, 0x3d4449, { metal: 0.5 })
+        head.position.set(0, 1.06, -0.13)
+        tg.add(head)
+        const tray = box(0.28, 0.03, 0.18, 0x9aa2a8, { metal: 0.7 })
+        tray.position.set(0, 0.97, 0.12)
+        tg.add(tray)
+        const plate = box(0.28, 0.02, 0.24, 0x6f767c, { metal: 0.6 })
+        plate.position.y = 1.38
+        tg.add(plate)
+        for (const cx of [-0.075, 0.075]) {
+          const cup = cyl(0.033, 0.026, 0.07, 0xf2efe8, 12, 0.1)
+          cup.position.set(cx, 1.42, 0)
+          tg.add(cup)
+        }
+        break
+      }
+      case 'shelf': {
+        const H = tp.h
+        for (const sx of [-tp.hw + 0.03, tp.hw - 0.03]) {
+          const side = box(0.06, H, D, 0x8f6f4a, { rough: 0.75 })
+          side.position.set(sx, H / 2, 0)
+          tg.add(side)
+        }
+        const back = box(W, H, 0.04, 0x7a5f3f, { rough: 0.8 })
+        back.position.set(0, H / 2, -tp.hd + 0.02)
+        tg.add(back)
+        const levels = 4
+        for (let i = 0; i < levels; i++) {
+          const y = 0.14 + i * ((H - 0.28) / (levels - 1))
+          const shelf = box(W, 0.04, D, 0x9c7a52, { rough: 0.7 })
+          shelf.position.set(0, y, 0)
+          tg.add(shelf)
+          for (let k = 0; k < 2; k++) {
+            const oz = -tp.hd + 0.3 + k * (D - 0.6)
+            const oh = 0.16 + ((i + k) % 3) * 0.06
+            const col = [0x4a6d8c, 0x8c6d4a, 0x6d8c4a][(i + k) % 3]
+            const thing = box(0.18, oh, 0.12, col, { rough: 0.7 })
+            thing.position.set(0, y + 0.02 + oh / 2, oz)
+            tg.add(thing)
+          }
+        }
+        break
+      }
+      case 'plant': {
+        const pot = cyl(tp.hw * 0.72, tp.hw * 0.56, 0.4, 0x8c5a3f, 14, 0.1)
+        pot.position.y = 0.2
+        tg.add(pot)
+        const soil = cyl(tp.hw * 0.66, tp.hw * 0.66, 0.03, 0x3a2a1e, 14)
+        soil.position.y = 0.4
+        tg.add(soil)
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2
+          const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.62, 6), stdMat(0x3f6b3a, { rough: 0.9 }))
+          leaf.position.set(Math.sin(a) * 0.12, 0.7, Math.cos(a) * 0.12)
+          leaf.rotation.set(Math.cos(a) * 0.4, 0, -Math.sin(a) * 0.4)
+          tg.add(leaf)
+        }
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), stdMat(0x4a7a42, { rough: 0.95 }))
+        crown.position.y = 0.86
+        tg.add(crown)
+        break
+      }
+    }
+    group.add(tg)
+  }
+
+  /* ------------------------------------------- division rooms' extra gear -- */
+  // The furniture that makes each division room its own arrangement. Every piece is
+  // placed from its ROOM_PROPS entry, so the mesh and the footprint cannot drift.
+  for (const rp of ROOM_PROPS) {
+    const rg = new THREE.Group()
+    rg.position.set(rp.x, 0, rp.z)
+    // `facing` is a LOOK direction (0 rad = +z), and these meshes put their "business end"
+    // down their LOCAL -z: the camera's lens and the light's softbox are both built at
+    // negative local z. Rotating by `facing + PI` is what turns that local -z into the world
+    // aim, and it is MEASURED, not assumed: with `facing + PI` the softbox sits on the aim
+    // side of its stand; with `facing` alone it sits on the far side, i.e. behind the stand,
+    // which is what "lightning sekarang malah membelakangi" was.
+    if (rp.facing !== undefined) rg.rotation.y = rp.facing + Math.PI
+    switch (rp.kind) {
+      case 'rack': {
+        // A server rack: a dark cabinet with a glass front and blinking status lights.
+        const body = box(rp.hw * 2, rp.h, rp.hd * 2, 0x20262b, { metal: 0.5, rough: 0.45 })
+        body.position.y = rp.h / 2
+        rg.add(body)
+        const glass = box(rp.hw * 2 - 0.06, rp.h - 0.3, 0.04, 0x18242a, { emissive: 0x1d3b4a, ei: 0.5 })
+        glass.position.set(0, rp.h / 2, rp.hd - 0.01)
+        rg.add(glass)
+        // server blades, each with two LEDs
+        const units = Math.max(3, Math.floor((rp.h - 0.4) / 0.22))
+        for (let i = 0; i < units; i++) {
+          const y = 0.24 + i * 0.22
+          const blade = box(rp.hw * 2 - 0.1, 0.16, 0.02, 0x2f373d, { rough: 0.6 })
+          blade.position.set(0, y, rp.hd + 0.005)
+          rg.add(blade)
+          for (const [lx, col] of [
+            [-rp.hw + 0.16, 0x4ad07a],
+            [-rp.hw + 0.26, 0x4ad07a],
+            [-rp.hw + 0.36, Math.random() > 0.5 ? 0x4ad07a : 0xd0a04a],
+          ] as const) {
+            const led = box(0.035, 0.035, 0.01, col, { emissive: col, ei: 1.0 })
+            led.position.set(lx, y, rp.hd + 0.018)
+            rg.add(led)
+          }
+        }
+        break
+      }
+      case 'whiteboard': {
+        // A whiteboard on the wall, with a tray and a couple of marker pens.
+        const frame = box(0.06, rp.h, rp.hd * 2, 0xb9c4cb, { metal: 0.5, rough: 0.4 })
+        frame.position.y = rp.h / 2 + 0.5
+        rg.add(frame)
+        const board = box(0.03, rp.h - 0.16, rp.hd * 2 - 0.16, 0xf4f4ee, { rough: 0.35 })
+        board.position.set(0.03, rp.h / 2 + 0.5, 0)
+        rg.add(board)
+        const tray = box(0.14, 0.04, rp.hd * 2 - 0.2, 0x9aa2a8, { metal: 0.6 })
+        tray.position.set(0.06, 0.52, 0)
+        rg.add(tray)
+        for (const [tz, col] of [
+          [-0.5, 0xc23b2f],
+          [-0.42, 0x2f5d3a],
+        ] as const) {
+          const pen = cyl(0.012, 0.012, 0.12, col, 8, 0.2)
+          pen.rotation.z = Math.PI / 2
+          pen.position.set(0.06, 0.56, tz)
+          rg.add(pen)
+        }
+        break
+      }
+      case 'bench': {
+        // A parts bench: a worktop on two trestles, with a tool board behind it and a
+        // few boxes on the surface.
+        const top = new THREE.Mesh(rbox(rp.hw * 2, 0.06, rp.hd * 2, 0.03), woodMat)
+        top.position.y = rp.h
+        rg.add(top)
+        for (const tx of [-rp.hw + 0.18, rp.hw - 0.18]) {
+          const trestle = box(0.12, rp.h, rp.hd * 1.5, 0x8a9096, { metal: 0.4, rough: 0.5 })
+          trestle.position.set(tx, rp.h / 2, 0)
+          rg.add(trestle)
+        }
+        // a pegboard behind, with a few tools hanging
+        const peg = box(0.05, 0.9, rp.hd * 1.8, 0x9aa2a8, { rough: 0.7 })
+        peg.position.set(-rp.hw + 0.1, rp.h + 0.55, 0)
+        rg.add(peg)
+        for (const [pz, ph] of [
+          [-0.5, 0.26],
+          [-0.1, 0.34],
+          [0.3, 0.22],
+          [0.6, 0.3],
+        ] as const) {
+          const tool = box(0.03, ph, 0.05, 0x3a4147, { metal: 0.5 })
+          tool.position.set(-rp.hw + 0.16, rp.h + 0.55 - ph / 2 + 0.2, pz)
+          rg.add(tool)
+        }
+        // a couple of parts boxes on top
+        for (const [bx, bz, bw] of [
+          [-0.1, -0.4, 0.3],
+          [0.25, 0.35, 0.24],
+        ] as const) {
+          const b = box(bw, 0.18, bw * 0.8, 0x6f767c, { rough: 0.8 })
+          b.position.set(bx, rp.h + 0.12, bz)
+          rg.add(b)
+        }
+        break
+      }
+      case 'shelf': {
+        // A tall shelf unit with five shelves and things on them.
+        const H = rp.h
+        const W = rp.hw * 2
+        const D = rp.hd * 2
+        for (const sx of [-rp.hw + 0.03, rp.hw - 0.03]) {
+          const side = box(0.06, H, D, 0x8f6f4a, { rough: 0.75 })
+          side.position.set(sx, H / 2, 0)
+          rg.add(side)
+        }
+        const back = box(W, H, 0.04, 0x7a5f3f, { rough: 0.8 })
+        back.position.set(0, H / 2, -rp.hd + 0.02)
+        rg.add(back)
+        const levels = 5
+        for (let i = 0; i < levels; i++) {
+          const y = 0.12 + i * ((H - 0.24) / (levels - 1))
+          const shelf = box(W, 0.04, D, 0x9c7a52, { rough: 0.7 })
+          shelf.position.set(0, y, 0)
+          rg.add(shelf)
+          // a few objects per shelf, deterministic per (i)
+          const count = 2 + (i % 2)
+          for (let k = 0; k < count; k++) {
+            const oz = -rp.hd + 0.25 + k * ((D - 0.5) / Math.max(1, count - 1))
+            const oh = 0.16 + ((i + k) % 3) * 0.06
+            const col = [0x4a6d8c, 0x8c6d4a, 0x6d8c4a, 0x8c4a6d][(i + k) % 4]
+            const thing = box(0.2, oh, 0.14, col, { rough: 0.7 })
+            thing.position.set(0, y + 0.02 + oh / 2, oz)
+            rg.add(thing)
+          }
+        }
+        break
+      }
+      case 'screenwall': {
+        // A video wall: a dark frame holding a 2x2 grid of screens, each lit.
+        const W = rp.hw * 2
+        const H = rp.h
+        const frame = box(W, H, 0.1, 0x1b2226, { rough: 0.5 })
+        frame.position.y = H / 2 + 0.5
+        rg.add(frame)
+        for (const [ox, oy] of [
+          [-W / 4, H / 4],
+          [W / 4, H / 4],
+          [-W / 4, -H / 4],
+          [W / 4, -H / 4],
+        ] as const) {
+          const scr = box(W / 2 - 0.08, H / 2 - 0.08, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.75 })
+          scr.position.set(ox, H / 2 + 0.5 + oy, 0.06)
+          rg.add(scr)
+        }
+        // a slim stand under it
+        const stand = box(W * 0.5, 0.06, 0.36, 0x2a2f34, { metal: 0.5 })
+        stand.position.y = 0.5
+        rg.add(stand)
+        for (const lx of [-W * 0.2, W * 0.2]) {
+          const leg = cyl(0.03, 0.03, 0.5, 0x3a4147, 8, 0.7)
+          leg.position.set(lx, 0.25, 0)
+          rg.add(leg)
+        }
+        break
+      }
+      case 'nook': {
+        // A low round table with two soft tub chairs — the discussion nook.
+        const topm = cyl(rp.hw, rp.hw, 0.05, 0x8f6f4a, 22, 0.1)
+        topm.position.y = rp.h
+        rg.add(topm)
+        const stem = cyl(0.06, 0.09, rp.h, 0x6d7378, 10, 0.5)
+        stem.position.y = rp.h / 2
+        rg.add(stem)
+        const base = cyl(0.28, 0.32, 0.04, 0x6d7378, 16, 0.5)
+        base.position.y = 0.02
+        rg.add(base)
+        // Two tub chairs either side, in a soft colour, TURNED TO FACE THE TABLE.
+        //
+        // The two rotations were swapped, so both chairs had their BACKRESTS toward the
+        // table — reported as "there is a chair positioned with its back to the table".
+        //
+        // The chair mesh puts its backrest at local +z. For the sitter to face the table, the
+        // backrest must land on the far side, so the west chair's backrest must point WEST
+        // (-x, rotation -pi/2) and the east chair's EAST (+x, rotation +pi/2). Measured:
+        //   rot +pi/2 -> backrest world dir (+1, 0)   <- what the west chair had: at the table
+        //   rot -pi/2 -> backrest world dir (-1, 0)   <- correct for the west chair
+        for (const [cxx, czz, rot] of [
+          [-0.95, 0, -Math.PI / 2],
+          [0.95, 0, Math.PI / 2],
+        ] as const) {
+          const cg = new THREE.Group()
+          cg.position.set(cxx, 0, czz)
+          cg.rotation.y = rot
+          const cs = new THREE.Mesh(rbox(0.62, 0.14, 0.6, 0.06), stdMat(0x8c6d5a, { rough: 0.95 }))
+          cs.position.y = 0.42
+          cg.add(cs)
+          const cb = new THREE.Mesh(rbox(0.62, 0.5, 0.14, 0.06), stdMat(0x8c6d5a, { rough: 0.95 }))
+          cb.position.set(0, 0.66, 0.23)
+          cg.add(cb)
+          for (const [lx, lz] of [
+            [-0.24, -0.22],
+            [0.24, -0.22],
+            [-0.24, 0.22],
+            [0.24, 0.22],
+          ] as const) {
+            const cl = cyl(0.025, 0.025, 0.42, 0x6b4423, 8)
+            cl.position.set(lx, 0.21, lz)
+            cg.add(cl)
+          }
+          rg.add(cg)
+        }
+        break
+      }
+      case 'backdrop': {
+        // A shoot backdrop: a paper roll on a frame, pulled down to the floor.
+        const W = rp.hw * 2
+        const H = rp.h
+        for (const sx of [-rp.hw + 0.08, rp.hw - 0.08]) {
+          const post = cyl(0.035, 0.035, H, 0x3a4147, 8, 0.7)
+          post.position.set(sx, H / 2, 0)
+          rg.add(post)
+        }
+        const cross = cyl(0.045, 0.045, W, 0x3a4147, 10, 0.7)
+        cross.rotation.z = Math.PI / 2
+        cross.position.y = H
+        rg.add(cross)
+        // the roll: a wide sheet falling to the floor
+        const sheet = box(W - 0.16, H - 0.1, 0.02, 0xe8e4d8, { rough: 0.95 })
+        sheet.position.set(0, (H - 0.1) / 2, 0)
+        rg.add(sheet)
+        // a soft tint across the top, so it reads as a photo backdrop
+        const tint = box(W - 0.16, H * 0.42, 0.015, 0xbfc9d4, { rough: 0.9 })
+        tint.position.set(0, H - 0.1 - (H * 0.42) / 2, 0.02)
+        rg.add(tint)
+        break
+      }
+      case 'tripod': {
+        // A CAMERA on a tripod, built from explicit POINTS so the orientation cannot be
+        // guessed wrong.
+        //
+        // Two reports, both correct, and both from hand-rolled angles:
+        //
+        //   1. "the tripod legs are upside down". The legs were cylinders placed at
+        //      `y = H*0.28` with a length of `H*0.78`, so two thirds of every leg was BELOW
+        //      the floor, and the splay was inverted.
+        //   2. Still wrong after the first fix: I positioned the legs correctly (foot far
+        //      out, hub narrow) but oriented them with a hand-written `rotation.z`/`x` pair.
+        //      Euler angles COMPOSE, so tilting by both does not point the cylinder along the
+        //      foot->hub vector — the legs stayed splayed outward going up.
+        //
+        // The fix is to stop writing angles: each leg now gets a direction vector and a
+        // quaternion, so its axis IS the foot->hub line by construction.
+        const H = rp.h
+        const hubY = H * 0.62
+        const footR = 0.42
+        const hubR = 0.06
+        const up = new THREE.Vector3(0, 1, 0)
+        for (let i = 0; i < 3; i++) {
+          const a = (i / 3) * Math.PI * 2 + Math.PI / 6
+          const foot = new THREE.Vector3(Math.sin(a) * footR, 0, Math.cos(a) * footR)
+          const hub = new THREE.Vector3(Math.sin(a) * hubR, hubY, Math.cos(a) * hubR)
+          const dir = new THREE.Vector3().subVectors(hub, foot)
+          const len = dir.length()
+          const leg = cyl(0.016, 0.022, len, 0x2f373d, 8, 0.6)
+          leg.position.copy(foot).addScaledVector(dir, 0.5)
+          leg.quaternion.setFromUnitVectors(up, dir.clone().normalize())
+          rg.add(leg)
+          // a foot pad ON THE FLOOR under each leg, so it clearly stands on something
+          const pad = cyl(0.034, 0.038, 0.03, 0x1b2226, 10, 0.3)
+          pad.position.copy(foot).setY(0.015)
+          rg.add(pad)
+        }
+        // the column, ON THE AXIS from the hub up
+        const column = cyl(0.028, 0.03, H * 0.4, 0x2f373d, 10, 0.6)
+        column.position.set(0, hubY + H * 0.14, 0)
+        rg.add(column)
+        // THE CAMERA, dead centre on the column's axis
+        const camY = hubY + H * 0.34
+        const cam = box(0.24, 0.16, 0.18, 0x1b2226, { rough: 0.45 })
+        cam.position.set(0, camY, 0)
+        rg.add(cam)
+        // the lens points at the set (-z), on the same axis
+        const lens = cyl(0.055, 0.06, 0.12, 0x14181b, 14, 0.5)
+        lens.rotation.x = Math.PI / 2
+        lens.position.set(0, camY, -0.14)
+        rg.add(lens)
+        // a small monitor, centred on the axis and tipped toward the operator
+        const mon = box(0.16, 0.12, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
+        mon.position.set(0, camY - 0.02, 0.13)
+        mon.rotation.x = -0.35
+        rg.add(mon)
+        break
+      }
+      case 'lightstand': {
+        // A STUDIO LIGHT: legs FOOT-to-HUB (the right way up), a riser, and a softbox that
+        // throws down the group's local -z, aimed by `facing`.
+        //
+        // Reported: "tripod untuk lightning kakinya masih terbalik" and "lightning tidak
+        // menghadap background". A light is not a camera, so it is its own kind — and its
+        // legs get the same foot->hub quaternion construction as the camera tripod's, because
+        // hand-written Euler angles COMPOSE and do not point a cylinder where you expect.
+        const H = rp.h
+        const hubY = H * 0.45
+        const footR = 0.38
+        const hubR = 0.05
+        const up = new THREE.Vector3(0, 1, 0)
+        for (let i = 0; i < 3; i++) {
+          const a = (i / 3) * Math.PI * 2 + Math.PI / 6
+          const foot = new THREE.Vector3(Math.sin(a) * footR, 0, Math.cos(a) * footR)
+          const hub = new THREE.Vector3(Math.sin(a) * hubR, hubY, Math.cos(a) * hubR)
+          const dir = new THREE.Vector3().subVectors(hub, foot)
+          const leg = cyl(0.015, 0.02, dir.length(), 0x3a4147, 8, 0.6)
+          leg.position.copy(foot).addScaledVector(dir, 0.5)
+          leg.quaternion.setFromUnitVectors(up, dir.clone().normalize())
+          rg.add(leg)
+          const pad = cyl(0.03, 0.034, 0.028, 0x1b2226, 10, 0.3)
+          pad.position.copy(foot).setY(0.014)
+          rg.add(pad)
+        }
+        const riser = cyl(0.026, 0.028, H * 0.62, 0x3a4147, 10, 0.6)
+        riser.position.y = hubY + H * 0.31
+        rg.add(riser)
+        // the head: a short arm reaching FORWARD (-z), then the softbox.
+        //
+        // THE SOFTBOX MUST GLOW TOWARD THE SET. Reported as "lightningnya masih sama aja
+        // kebalik": the plate was in the right PLACE — offset toward the aim — but its lit
+        // face pointed the other way, so it shone off the back of the stand. Measured on the
+        // built mesh: the face normal dotted -0.96 against the direction to the backdrop.
+        //
+        // The rim is built as a dark plate just BEHIND the white one, and a white emissive
+        // face behind a dark rim reads as "off". Putting the rim on the far side of the panel
+        // (local +z, i.e. further from the aim) makes the white face the one that shows.
+        const headY = H * 0.92
+        const arm = cyl(0.02, 0.02, 0.26, 0x3a4147, 8, 0.6)
+        arm.rotation.x = Math.PI / 2
+        arm.position.set(0, headY, -0.13)
+        rg.add(arm)
+        const panel = box(0.72, 0.72, 0.05, 0xf4efe2, { emissive: 0xfff0d0, ei: 0.85 })
+        panel.position.set(0, headY, -0.30)
+        panel.rotation.x = -0.3
+        rg.add(panel)
+        // the rim BEHIND the panel (local +z is toward the stand, away from the aim), so the
+        // white face — not the dark frame — is what points at the set
+        const rim = box(0.78, 0.78, 0.03, 0x2f373d, { rough: 0.5 })
+        rim.position.set(0, headY, -0.255)
+        rim.rotation.x = -0.3
+        rg.add(rim)
+        break
+      }
+      case 'plant': {
+        // A pot with a bush, so every room has something alive in it.
+        const pot = cyl(rp.hw * 0.7, rp.hw * 0.55, 0.4, 0x8c5a3f, 14, 0.1)
+        pot.position.y = 0.2
+        rg.add(pot)
+        const soil = cyl(rp.hw * 0.65, rp.hw * 0.65, 0.03, 0x3a2a1e, 14)
+        soil.position.y = 0.4
+        rg.add(soil)
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2
+          const leaf = new THREE.Mesh(
+            new THREE.ConeGeometry(0.12, 0.62, 6),
+            stdMat(0x3f6b3a, { rough: 0.9 }),
+          )
+          leaf.position.set(Math.sin(a) * 0.12, 0.7, Math.cos(a) * 0.12)
+          leaf.rotation.set(Math.cos(a) * 0.4, 0, -Math.sin(a) * 0.4)
+          rg.add(leaf)
+        }
+        const crown = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), stdMat(0x4a7a42, { rough: 0.95 }))
+        crown.position.y = 0.86
+        rg.add(crown)
+        break
+      }
+    }
+    group.add(rg)
+  }
+
   /* ------------------------------------------------------ division rooms -- */
   const deskTopMat = woodMat
   for (const d of DESKS) {
@@ -1604,28 +2197,39 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   {
     const g = new THREE.Group()
     g.position.set(PANTRY.x, 0, PANTRY.z)
-    // counter along the wall
-    const body = box(0.9, 0.9, 6.4, 0xe8e2d4, { rough: 0.85 })
-    body.position.y = 0.45
+    // COUNTER along the wall — SHORTER than it used to be, and offset south.
+    //
+    // It was 6.4 m long centred on PANTRY.z, so it ran z 4.8..11.2 and the fridge (a
+    // 0.8 m deep box at z 4.6..5.4, 1.9 m TALL) sat inside that run: the fridge was
+    // half-buried in the counter and the taller body swallowed the shorter one. Reported
+    // as "the fridge seems to be clashing with the counter".
+    //
+    // Now the counter runs PANTRY_COUNTER.z1..z2, which starts south of the fridge with a
+    // clear gap, measured from the same constants the footprints and the self-test read.
+    const len = PANTRY_COUNTER.z2 - PANTRY_COUNTER.z1
+    const cz = PANTRY_COUNTER.z1 + len / 2
+    const body = box(0.9, 0.9, len, 0xe8e2d4, { rough: 0.85 })
+    body.position.set(0, 0.45, cz - PANTRY.z)
     g.add(body)
-    const top = new THREE.Mesh(rbox(1.0, 0.08, 6.5, 0.04), marbleMat)
-    top.position.y = 0.94
+    const top = new THREE.Mesh(rbox(1.0, 0.08, len + 0.1, 0.04), marbleMat)
+    top.position.set(0, 0.94, cz - PANTRY.z)
     g.add(top)
     // sink: a recessed box with a tap
     const sink = box(0.7, 0.14, 0.9, 0xb9c4cb, { metal: 0.7, rough: 0.3 })
-    sink.position.set(0, 0.9, -1.4)
+    sink.position.set(0, 0.9, PANTRY_SINK_Z - PANTRY.z)
     g.add(sink)
     const tap = cyl(0.03, 0.03, 0.4, 0xcfd6da, 8, 0.9)
-    tap.position.set(-0.28, 1.15, -1.4)
+    tap.position.set(-0.28, 1.15, PANTRY_SINK_Z - PANTRY.z)
     g.add(tap)
-    // fridge at the north end
+    // FRIDGE at the north end, NORTH of the counter's end, so the two never overlap.
+    // The counter starts at PANTRY_COUNTER.z1 and the fridge ends before it.
     const fridge = box(0.85, 1.9, 0.8, 0xd7dee2, { metal: 0.4, rough: 0.35 })
-    fridge.position.set(0, 0.95, -3.0)
+    fridge.position.set(0, 0.95, FRIDGE.z - PANTRY.z)
     g.add(fridge)
     // wall shelves
     for (let i = 0; i < 3; i++) {
-      const shelf = box(0.4, 0.05, 3.2, 0x8f6f4a, { rough: 0.7 })
-      shelf.position.set(-0.55, 1.35 + i * 0.42, 1.6)
+      const shelf = box(0.4, 0.05, len - 0.4, 0x8f6f4a, { rough: 0.7 })
+      shelf.position.set(-0.55, 1.35 + i * 0.42, cz - PANTRY.z)
       g.add(shelf)
     }
     // WATER COOLER: a dispenser with a full bottle on top, at the south end of the
@@ -1633,7 +2237,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // z 11.2) and of the wall, and the bottle is translucent so it reads as water.
     {
       const cg = new THREE.Group()
-      cg.position.set(PANTRY.x - 0.1, 0, PANTRY.z + 3.6)
+      // RELATIVE to `g`, which is already at (PANTRY.x, 0, PANTRY.z). Setting the WORLD z
+      // here put the cooler at z = 8 + 11.8 = 19.8 — inside the pantry's south wall, where
+      // nothing could see it. Caught by probing the live scene for meshes near the constant.
+      cg.position.set(WATER_COOLER.x - PANTRY.x, 0, WATER_COOLER.z - PANTRY.z)
       const body = box(0.42, 1.05, 0.42, 0xe4e8ea, { metal: 0.3, rough: 0.35 })
       body.position.y = 0.52
       cg.add(body)
@@ -1666,7 +2273,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     // on top, so it reads as a machine rather than as a box.
     {
       const mg = new THREE.Group()
-      mg.position.set(PANTRY.x, 0.98, PANTRY.z - 2.5)
+      mg.position.set(0, 0.98, PANTRY_COFFEE_Z - PANTRY.z)
       const body = box(0.36, 0.44, 0.34, 0x2f3438, { metal: 0.4, rough: 0.4 })
       body.position.y = 0.22
       mg.add(body)
@@ -1748,6 +2355,172 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
     tvScreen.position.set(LOUNGE_TV.x, LOUNGE_TV.y, LOUNGE_TV.z + 0.06)
     group.add(tvScreen)
+  }
+
+  /* ------------------------------------------------- ping-pong / darts / sim -- */
+  // The three rec stations. Each is placed from its LAYOUT constant, so the mesh, its
+  // footprint and the idle spot that uses it can never drift apart.
+  {
+    // ---- TABLE TENNIS ----------------------------------------------------------
+    // A real 2.74 x 1.525 top at 0.76 m, with the white edge line, a centre line, and the
+    // net across the middle. Legs at the four corners, inset.
+    const tg = new THREE.Group()
+    tg.position.set(PINGPONG.x, 0, PINGPONG.z)
+    const top = box(PINGPONG.w, 0.05, PINGPONG.d, 0x2f5d3a, { rough: 0.75 })
+    top.position.y = PINGPONG.h - 0.025
+    tg.add(top)
+    // white edge border, drawn as four thin strips just proud of the surface
+    const edge = 0.02
+    for (const [w, d, ox, oz] of [
+      [PINGPONG.w, edge, 0, PINGPONG.d / 2 - edge / 2],
+      [PINGPONG.w, edge, 0, -PINGPONG.d / 2 + edge / 2],
+      [edge, PINGPONG.d, PINGPONG.w / 2 - edge / 2, 0],
+      [edge, PINGPONG.d, -PINGPONG.w / 2 + edge / 2, 0],
+    ] as const) {
+      const e = box(w, 0.008, d, 0xf2f2ee, { rough: 0.5 })
+      e.position.set(ox, PINGPONG.h + 0.002, oz)
+      tg.add(e)
+    }
+    // centre line, along the length
+    const centre = box(PINGPONG.w - 0.1, 0.006, 0.02, 0xf2f2ee, { rough: 0.5 })
+    centre.position.y = PINGPONG.h + 0.002
+    tg.add(centre)
+    // the net across the middle
+    const net = box(PINGPONG.w, 0.15, 0.01, 0xd8d8d2, { rough: 0.9 })
+    net.position.y = PINGPONG.h + 0.075
+    net.scale.x = 1.0
+    tg.add(net)
+    const netTop = cyl(0.006, 0.006, PINGPONG.w, 0xcfcfc8, 8, 0.5)
+    netTop.rotation.z = Math.PI / 2
+    netTop.position.y = PINGPONG.h + 0.152
+    tg.add(netTop)
+    // four legs
+    for (const [sx, sz] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ] as const) {
+      const leg = cyl(0.03, 0.03, PINGPONG.h - 0.05, 0x4a4f55, 8, 0.6)
+      leg.position.set(sx * (PINGPONG.w / 2 - 0.22), (PINGPONG.h - 0.05) / 2, sz * (PINGPONG.d / 2 - 0.18))
+      tg.add(leg)
+    }
+    // two paddles resting on the surface, one at each end
+    for (const [px, rot] of [
+      [-PINGPONG.w / 2 + 0.5, 0.4],
+      [PINGPONG.w / 2 - 0.5, -0.5],
+    ] as const) {
+      const blade = cyl(0.075, 0.075, 0.012, 0x9a2f2f, 16, 0.3)
+      blade.rotation.x = Math.PI / 2
+      blade.rotation.z = rot
+      blade.position.set(px, PINGPONG.h + 0.012, PINGPONG.d / 4)
+      tg.add(blade)
+      const handle = box(0.03, 0.012, 0.09, 0x6b4423, { rough: 0.8 })
+      handle.rotation.y = rot
+      handle.position.set(px + Math.sin(rot) * 0.11, PINGPONG.h + 0.012, PINGPONG.d / 4 + Math.cos(rot) * 0.11)
+      tg.add(handle)
+    }
+    group.add(tg)
+
+    // ---- DARTBOARD -------------------------------------------------------------
+    // Flat on the east wall, bullseye at 1.73 m, with a surround and a small scorer.
+    {
+      const dg = new THREE.Group()
+      dg.position.set(DARTBOARD.x, 0, DARTBOARD.z)
+      // the surround backing, so the board is not a floating disc
+      const back = box(0.06, DARTBOARD.r * 2.4, DARTBOARD.r * 2.4, 0x1e2428, { rough: 0.7 })
+      back.position.y = DARTBOARD.y
+      dg.add(back)
+      // the board face: concentric rings, dark and light, from the wall outward
+      const rings: [number, number][] = [
+        [1.0, 0x14100c],
+        [0.62, 0xe8e0cc],
+        [0.42, 0x14100c],
+        [0.16, 0xe8c04a],
+        [0.07, 0xc23b2f],
+      ]
+      for (const [frac, col] of rings) {
+        const disc = cyl(DARTBOARD.r * frac, DARTBOARD.r * frac, 0.015, col, 24, 0.2)
+        disc.rotation.z = Math.PI / 2
+        disc.position.x = -0.045
+        disc.position.y = DARTBOARD.y
+        dg.add(disc)
+      }
+      // a small scoreboard above the board
+      const sb = box(0.03, 0.24, 0.4, 0x2a2f34, { rough: 0.6 })
+      sb.position.set(-0.03, DARTBOARD.y + DARTBOARD.r + 0.34, 0)
+      dg.add(sb)
+      const sbFace = box(0.005, 0.17, 0.32, 0x0b1418, { emissive: 0x224a3a, ei: 0.5 })
+      sbFace.position.set(-0.05, DARTBOARD.y + DARTBOARD.r + 0.34, 0)
+      dg.add(sbFace)
+      group.add(dg)
+      // the oche line on the floor, so the throw position is legible
+      const oche = box(0.02, 0.004, 1.4, 0xc8b070, { rough: 0.6 })
+      oche.position.set(DART_THROW.x + 0.4, 0.008, DART_THROW.z)
+      group.add(oche)
+    }
+
+    // ---- RACING SIMULATOR ------------------------------------------------------
+    // A bucket seat, a wheel on a column, a pedal box, and a screen — facing NORTH.
+    {
+      const rg = new THREE.Group()
+      rg.position.set(RACING.x, 0, RACING.z)
+      rg.rotation.y = RACING.facing
+      // the seat base + back + side bolsters, in a dark racing red
+      const seat = new THREE.Mesh(rbox(0.52, 0.12, 0.5, 0.04), stdMat(0x8f2f2f, { rough: 0.8 }))
+      seat.position.y = RACING_SEAT_H
+      rg.add(seat)
+      const back = new THREE.Mesh(rbox(0.52, 0.62, 0.12, 0.04), stdMat(0x8f2f2f, { rough: 0.8 }))
+      back.position.set(0, RACING_SEAT_H + 0.31, 0.24)
+      rg.add(back)
+      for (const bx of [-0.24, 0.24]) {
+        const bolster = new THREE.Mesh(rbox(0.07, 0.4, 0.42, 0.03), stdMat(0x7a2727, { rough: 0.8 }))
+        bolster.position.set(bx, RACING_SEAT_H + 0.1, 0.02)
+        rg.add(bolster)
+      }
+      // the seat pedestal
+      const ped = cyl(0.06, 0.09, RACING_SEAT_H, 0x3a3f45, 10, 0.7)
+      ped.position.y = RACING_SEAT_H / 2
+      rg.add(ped)
+      // wheel column, forward of the seat (the rig faces -z when facing==0)
+      const column = cyl(0.035, 0.035, 0.6, 0x3a3f45, 10, 0.7)
+      column.rotation.x = 0.5
+      column.position.set(0, 0.62, -0.52)
+      rg.add(column)
+      // the wheel: a ring plus a hub
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), stdMat(0x1c1f24, { rough: 0.5 }))
+      wheel.rotation.x = 0.5
+      wheel.position.set(0, 0.86, -0.66)
+      rg.add(wheel)
+      const hub = cyl(0.055, 0.055, 0.04, 0x2a2f34, 12, 0.5)
+      hub.rotation.x = Math.PI / 2 + 0.5
+      hub.position.set(0, 0.86, -0.66)
+      rg.add(hub)
+      // the pedal box, on the floor ahead
+      const pedals = box(0.34, 0.09, 0.26, 0x2a2f34, { metal: 0.4, rough: 0.5 })
+      pedals.position.set(0, 0.05, -1.02)
+      rg.add(pedals)
+      for (const px of [-0.09, 0.09]) {
+        const pad = box(0.1, 0.03, 0.14, 0x9aa2a8, { metal: 0.7, rough: 0.3 })
+        pad.position.set(px, 0.1, -1.0)
+        rg.add(pad)
+      }
+      // the screen on a post, ahead of the wheel
+      const post = cyl(0.03, 0.03, 1.1, 0x3a3f45, 8, 0.7)
+      post.position.set(0, 0.55, -1.5)
+      rg.add(post)
+      const scr = box(1.1, 0.62, 0.05, 0x1b2226, { metal: 0.3, rough: 0.3 })
+      scr.position.set(0, 1.24, -1.52)
+      rg.add(scr)
+      const scrFace = box(1.02, 0.54, 0.02, 0x24343c, { emissive: 0x3a5a6a, ei: 0.7 })
+      scrFace.position.set(0, 1.24, -1.49)
+      rg.add(scrFace)
+      // a floor mat, so the rig reads as a station rather than loose props
+      const mat = box(1.4, 0.01, 2.6, 0x24282c, { rough: 0.95 })
+      mat.position.set(0, 0.006, -0.5)
+      rg.add(mat)
+      group.add(rg)
+    }
   }
 
   /* ------------------------------------------------------------ lighting -- */
