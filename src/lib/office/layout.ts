@@ -1021,8 +1021,16 @@ export const RACING_SEAT_H = 0.46
  * everything else here, for the same reason.
  */
 export const BOWLING = {
-  /** The lane's centre LINE, across its width. This is the z coordinate of the whole lane. */
-  z: -8.0,
+  /**
+   * The lane's centre LINE, across its width — the z coordinate of the whole lane.
+   *
+   * Pushed flush against the pantry wall. That wall (`part-leisure-pantry`) sits on the room
+   * line z = 2 with WALL_T of thickness, so the leisure room's inner face is at z = 1.85. The
+   * lane plus its two gutters is 1.54 m across, so its centre lands half that inside the face:
+   * 1.85 − 0.77 = 1.08. Nothing here may drift without a matching change to the wall, which is
+   * why the self-test measures the gap off both.
+   */
+  z: 1.08,
   /** The playing surface, across. A real lane is 1.05 m; the gutters sit outside it. */
   w: 1.06,
   /** Gutter width, each side. */

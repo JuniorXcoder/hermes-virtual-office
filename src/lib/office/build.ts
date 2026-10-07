@@ -2662,8 +2662,10 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       group.add(wall)
     }
 
-    // the approach, laid flush with the floor west of the foul line
-    const approach = box(1.4, 0.024, BOWLING.w + 2 * BOWLING.gutter + 0.4, 0x9a8266, { rough: 0.85 })
+    // the approach, laid flush with the floor west of the foul line. Its depth is exactly the
+    // lane plus its gutters: the lane's north edge is against the pantry wall, so an approach
+    // any wider would disappear into that wall.
+    const approach = box(1.4, 0.024, BOWLING.w + 2 * BOWLING.gutter, 0x9a8266, { rough: 0.85 })
     approach.position.set(BOWLING.xFoul - 0.7, 0.006, BOWLING.z)
     group.add(approach)
 
@@ -2730,18 +2732,19 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     }
 
     // the score screen past the pin deck, its face turned WEST at the bowler, on two posts
-    // clear of the lane
+    // clear of the lane. Its width is held inside the lane's: the lane's far edge is against
+    // the pantry wall, so a screen any wider would bury a post in that wall.
     const scrY = BOWLING.y + 1.9
     const scrX = BOWLING.xEnd + 0.34
     for (const side of [-1, 1]) {
       const post = cyl(0.04, 0.04, scrY, 0x2b3138, 8, 0.6)
-      post.position.set(scrX - 0.08, scrY / 2, BOWLING.z + side * 0.86)
+      post.position.set(scrX - 0.08, scrY / 2, BOWLING.z + side * 0.55)
       group.add(post)
     }
-    const scrBody = box(0.06, 0.52, 1.7, 0x141a1f, { metal: 0.3, rough: 0.35 })
+    const scrBody = box(0.06, 0.52, 1.3, 0x141a1f, { metal: 0.3, rough: 0.35 })
     scrBody.position.set(scrX, scrY, BOWLING.z)
     group.add(scrBody)
-    const scrFace = box(0.02, 0.44, 1.58, 0x0e1620, { emissive: 0x2a5a8a, ei: 0.55 })
+    const scrFace = box(0.02, 0.44, 1.2, 0x0e1620, { emissive: 0x2a5a8a, ei: 0.55 })
     scrFace.position.set(scrX - 0.04, scrY, BOWLING.z)
     group.add(scrFace)
   }

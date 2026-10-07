@@ -3384,6 +3384,44 @@ void (async () => {
       }
     }
 
+    // ── flush against the pantry wall ──
+    // The lane's outer edge must MEET the wall, not sit near it — and nothing in the assembly
+    // may poke through. The score screen is the trap: it sits past the pin deck at full lane
+    // width, so a screen even slightly too wide buries a post inside the wall, and from above
+    // that looks exactly like a screen that fits.
+    const pantryWall = (FOOTPRINTS as any[]).find((f) => f.id === 'part-leisure-pantry')
+    if (!pantryWall) {
+      problems.push('the pantry wall footprint is gone, so nothing can check the lane is flush')
+    } else {
+      const face = pantryWall.z - pantryWall.hd // the leisure-room side of the wall
+      const edge = BOWLING.z + BOWLING.w / 2 + BOWLING.gutter
+      if (Math.abs(edge - face) > 0.02) {
+        problems.push(
+          `the lane's edge is at z ${edge.toFixed(2)} but the pantry wall's face is at ${face.toFixed(2)} — a ${(face - edge).toFixed(2)} m gap`,
+        )
+      }
+      let pierced = 0
+      let worst = 0
+      scene.traverse((n: any) => {
+        if (!n.isMesh || !n.geometry) return
+        const bb = new THREE.Box3().setFromObject(n)
+        if (!isFinite(bb.min.x)) return
+        if (bb.min.x < BOWLING.xEnd - 0.1 || bb.min.x > BOWLING.xEnd + 1.5) return
+        // only small props: the room's own walls are meshes that START in this x band too, and
+        // the east outer wall runs the whole depth of the building, so without this the check
+        // reports a 19 m "pierce" that is just the wall doing its job
+        if (bb.max.z - bb.min.z > 3 || bb.max.x - bb.min.x > 3) return
+        if (Math.abs((bb.min.z + bb.max.z) / 2 - BOWLING.z) > 2) return
+        if (bb.max.z > face + 0.01) {
+          pierced++
+          worst = Math.max(worst, bb.max.z - face)
+        }
+      })
+      if (pierced > 0) {
+        problems.push(`${pierced} mesh(es) past the pin deck reach through the pantry wall face, by up to ${worst.toFixed(2)} m`)
+      }
+    }
+
     // the ball must actually be IN the hand during the delivery, not near it
     {
       const av = buildAvatar('backend')
