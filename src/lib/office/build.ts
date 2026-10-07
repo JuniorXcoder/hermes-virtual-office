@@ -77,6 +77,8 @@ import {
   ROOMS,
   ROOM_PLAQUES,
   PLAQUE_T,
+  PLAQUE_W,
+  PLAQUE_H,
   STAIRS,
   STAIR_FLIGHT_TOP,
   STAIR_RAIL_EXTENSION,
@@ -1444,13 +1446,13 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const nx = Math.sin(p.face)
     const nz = Math.cos(p.face)
     // the slab: its back sits ON the wall face, so it spans from the face outward by PLAQUE_T
-    const back = box(1.96, 0.53, PLAQUE_T, 0x2a1f16, { rough: 0.7 })
+    const back = box(PLAQUE_W + 0.06, PLAQUE_H + 0.055, PLAQUE_T, 0x2a1f16, { rough: 0.7 })
     back.position.set(p.x, p.y, p.z)
     back.rotation.y = p.face
     group.add(back)
     // the face itself, a hair proud of the slab so the two do not z-fight
     const plate = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.9, 0.475),
+      new THREE.PlaneGeometry(PLAQUE_W, PLAQUE_H),
       new THREE.MeshStandardMaterial({ map: track(signTexture(p.text)), roughness: 0.55 }),
     )
     plate.position.set(p.x + nx * (PLAQUE_T / 2 + 0.002), p.y, p.z + nz * (PLAQUE_T / 2 + 0.002))

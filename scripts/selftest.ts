@@ -71,6 +71,7 @@ import {
   DARTBOARD,
   TERRACE_PROPS,
   ROOM_PLAQUES,
+  PLAQUE_W,
   ROOM_PROPS,
 } from '../src/lib/office/layout'
 import { BODY_R, blocked, onStairArea, planRoute, route, routeBetween, stairCentre } from '../src/lib/office/nav'
@@ -2167,6 +2168,17 @@ void (async () => {
       if (!inWall(p.x - nx * 0.06, p.z - nz * 0.06, p.level)) {
         problems.push(`the "${p.text}" plaque is not against a wall — it floats`)
       }
+      // and its two ENDS must still be over wall. A plate wider than the wall segment it is
+      // fixed to overhangs the doorway next to it, which reads as a sign hung in mid-air over
+      // an opening even though its centre is perfectly attached.
+      const tx = Math.cos(p.face) * (PLAQUE_W / 2)
+      const tz = -Math.sin(p.face) * (PLAQUE_W / 2)
+      for (const end of [-1, 1]) {
+        if (!inWall(p.x + end * tx - nx * 0.06, p.z + end * tz - nz * 0.06, p.level)) {
+          problems.push(`the "${p.text}" plaque overhangs the end of the wall segment it is fixed to`)
+          break
+        }
+      }
       const fx = p.x + nx * 0.06
       const fz = p.z + nz * 0.06
       if (inWall(fx, fz, p.level)) problems.push(`the "${p.text}" plaque faces into a wall`)
@@ -2181,10 +2193,10 @@ void (async () => {
 
     // only the rooms the operator asked for, and never circulation space
     const marked = new Set(ROOM_PLAQUES.map((p) => p.id))
-    for (const id of ['lobby', 'courtyard', 'terrace', 'corridor1', 'ceo']) {
+    for (const id of ['lobby', 'courtyard', 'terrace', 'corridor1']) {
       if (marked.has(id)) problems.push(`${id} is circulation space and must not carry a plaque`)
     }
-    for (const id of ['dev', 'mkt', 'content', 'leisure', 'pantry', ...MEETING_ROOM_IDS]) {
+    for (const id of ['dev', 'mkt', 'content', 'leisure', 'pantry', 'ceo', ...MEETING_ROOM_IDS]) {
       if (!marked.has(id)) problems.push(`${id} has no plaque`)
     }
 

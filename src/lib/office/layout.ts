@@ -1945,9 +1945,9 @@ export const OPENINGS: { x: number; z: number; hw: number; hd: number; level: 0 
  * hanging them on nothing was. Every entry here therefore names a WALL SEGMENT to be screwed
  * to and the yaw that turns the plate out of that wall, so a plaque cannot be airborne.
  *
- * Which rooms get one, per the operator: the three work rooms, the five meeting rooms, and the
- * pantry with the lounge beside it. The lobby, courtyard, terrace, CEO room and corridor are
- * circulation space and stay unmarked.
+ * Which rooms get one, per the operator: the three work rooms, the five meeting rooms, the
+ * pantry with the lounge beside it, and the CEO room. The lobby, courtyard, terrace and
+ * corridor are circulation space and stay unmarked.
  *
  * Names come from `ROOMS`, so a renamed room renames its plaque. Meeting rooms take the
  * operator's `R. MEETING <gunung>` form.
@@ -1971,6 +1971,9 @@ export const OPENINGS: { x: number; z: number; hw: number; hd: number; level: 0 
 const PLAQUE_Y = 1.7
 /** Half the plate's depth, so the slab's back sits just inside the wall face it is fixed to. */
 export const PLAQUE_T = 0.03
+/** The plate itself, and the backing slab that carries it. */
+export const PLAQUE_W = 1.9
+export const PLAQUE_H = 0.475
 const MEETING_SET = new Set<string>(MEETING_ROOM_IDS)
 
 const PLAQUE_AT: Record<string, { x: number; z: number; face: number }> = {
@@ -1982,6 +1985,9 @@ const PLAQUE_AT: Record<string, { x: number; z: number; face: number }> = {
   leisure: { x: 13.85 - PLAQUE_T / 2, z: -0.3, face: -Math.PI / 2 },
   pantry: { x: 13.85 - PLAQUE_T / 2, z: 4.3, face: -Math.PI / 2 },
   // the exec floor, on the south face of the corridor wall
+  // The CEO's door is x -22.2..-19.8, which leaves a 5.65 m segment to the west and only
+  // 0.5 m to the east — so the plate goes on the west segment, centred.
+  ceo: { x: -25.03, z: -11.35 + PLAQUE_T / 2, face: 0 },
   rinjani: { x: -16.8, z: -11.35 + PLAQUE_T / 2, face: 0 },
   merapi: { x: -5.2, z: -11.35 + PLAQUE_T / 2, face: 0 },
   bromo: { x: 3.5, z: -11.35 + PLAQUE_T / 2, face: 0 },
