@@ -1575,7 +1575,7 @@ void (async () => {
 
   // The office's own DB (data/office.db) is a separate store from the Hermes CLI
   // data, and it is the one thing the office keeps across reloads: the office
-  // name, where each avatar stood, and the agent Q&A threads. It runs on
+  // name and where each avatar stood. It runs on
   // `node:sqlite`, so the round trip is asserted here rather than assumed —
   // a silent failure means avatars snap back to the door on every reload.
   {
@@ -1600,12 +1600,6 @@ void (async () => {
       if (!a1 || a1.x !== 9 || a1.z !== 8 || a1.level !== 1 || a1.activity !== 'coffee') {
         problems.push(`avatar not updated: ${JSON.stringify(a1)}`)
       }
-      // Q&A: an open thread counts toward the responsible's badge until answered
-      const t = db.askQuestion('staff', 'manager', 'boleh akses staging?')
-      if (db.openQaCounts().manager !== 1) problems.push('open thread not counted')
-      const answered = db.answerQuestion(t.id, 'boleh')
-      if (answered?.status !== 'answered') problems.push(`answer did not close the thread: ${answered?.status}`)
-      if (db.openQaCounts().manager) problems.push('answered thread still counted as open')
     } catch (e) {
       problems.push(`THREW: ${(e as Error).message}`)
     } finally {
@@ -1614,7 +1608,7 @@ void (async () => {
         try { rmSync(testPath + suffix) } catch { /* not created */ }
       }
     }
-    check('office DB round-trips name, avatar position and Q&A', problems.length === 0, problems.join(' | '))
+    check('office DB round-trips name and avatar position', problems.length === 0, problems.join(' | '))
   }
 
   // The chat bridge reads the CLI's session line from stderr, because that is where

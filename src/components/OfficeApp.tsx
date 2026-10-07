@@ -14,7 +14,6 @@ import BoardPanel from './BoardPanel'
 import ChatPanel from './ChatPanel'
 import NewTaskDialog from './NewTaskDialog'
 import KanbanModal from './KanbanModal'
-import QaPanel from './QaPanel'
 import DummySpawnDialog from './DummySpawnDialog'
 import OfficeNameDialog from './OfficeNameDialog'
 import { startPolling, useOffice } from '@/lib/store'
@@ -52,11 +51,9 @@ export default function OfficeApp() {
   const [panelOpen, setPanelOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [boardOpen, setBoardOpen] = useState(false)
-  const [qaOpen, setQaOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
   /** Slot of a dummy avatar that was clicked, if any. */
   const [spawnSlot, setSpawnSlot] = useState<{ avatarId: string; division: AgentDivision } | null>(null)
-  const qaOpen_count = useOffice((s) => Object.keys(s.qaOpen).length)
   const loadOffice = useOffice((s) => s.loadOffice)
 
   useEffect(() => startPolling(), [])
@@ -145,9 +142,6 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setSystemOpen(true)}>
             Sistem
           </button>
-          <button className="vp-btn vp-btn-ghost" onClick={() => setQaOpen(true)}>
-            Q&amp;A{qaOpen_count ? ` (${qaOpen_count})` : ''}
-          </button>
           <button className="vp-btn vp-btn-ghost" onClick={() => setChatOpen(true)}>
             Chat
           </button>
@@ -196,7 +190,6 @@ export default function OfficeApp() {
       />
       <NewTaskDialog />
       {boardOpen && <KanbanModal onClose={() => setBoardOpen(false)} />}
-      {qaOpen && <QaPanel onClose={() => setQaOpen(false)} />}
       {nameOpen && <OfficeNameDialog onClose={() => setNameOpen(false)} />}
       {spawnSlot && (
         <DummySpawnDialog

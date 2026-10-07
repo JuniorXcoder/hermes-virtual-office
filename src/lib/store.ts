@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
-import type { AvatarState, QaThread } from './office/types'
+import type { AvatarState } from './office/types'
 import type { Health } from './office/health'
 import { fetchJson } from './api'
 
@@ -29,9 +29,6 @@ type State = {
   /** The office's own store (data/office.db), separate from the Hermes CLI data. */
   officeName: string
   avatars: AvatarState[]
-  qa: QaThread[]
-  /** Open Q&A thread count per responsible — the badge. */
-  qaOpen: Record<string, number>
 
   /**
    * Kesehatan sistem, dinilai dari data Hermes yang sebenarnya.
@@ -48,10 +45,6 @@ type State = {
   setOfficeName: (name: string) => Promise<void>
   /** Batch position flush from the 3D scene — the DB write behind idle wander. */
   saveAvatars: (list: AvatarState[]) => Promise<void>
-  /** Create a Q&A thread (staff asking their manager, or anyone asking the CEO). */
-  askQuestion: (asker: string, responsible: string, question: string) => Promise<boolean>
-  /** Answer a thread. An OPEN thread is the responsible's outstanding to-do. */
-  answerQuestion: (id: number, answer: string) => Promise<boolean>
   setView: (v: '3d' | '2d' | 'sprite') => void
   setPeek: (desk: number | null) => void
   openTask: (taskId: string | null) => void
@@ -77,8 +70,6 @@ export const useOffice = create<State>((set) => ({
 
   officeName: 'Hermes Office',
   avatars: [],
-  qa: [],
-  qaOpen: {},
 
   // Mulai dari TIDAK TAHU, bukan dari hijau. Sistem yang belum selesai membaca keadaannya
   // tidak boleh tampil sehat — itu kebohongan yang paling gampang terjadi.
@@ -121,15 +112,11 @@ export const useOffice = create<State>((set) => ({
     const res = await fetchJson<{
       name?: string
       avatars?: AvatarState[]
-      qa?: QaThread[]
-      qaOpen?: Record<string, number>
     }>('/api/hermes/office', { cache: 'no-store' })
     if (!res.ok || !res.data) return
     set({
       officeName: res.data.name || 'Hermes Office',
       avatars: res.data.avatars || [],
-      qa: res.data.qa || [],
-      qaOpen: res.data.qaOpen || {},
     })
   },
 
@@ -152,24 +139,6 @@ export const useOffice = create<State>((set) => ({
       method: 'POST',
       body: JSON.stringify({ action: 'saveAvatars', list }),
     })
-  },
-
-  async askQuestion(asker: string, responsible: string, question: string) {
-    const res = await fetchJson('/api/hermes/office', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'askQuestion', asker, responsible, question }),
-    })
-    if (res.ok) await useOffice.getState().loadOffice()
-    return res.ok
-  },
-
-  async answerQuestion(id: number, answer: string) {
-    const res = await fetchJson('/api/hermes/office', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'answerQuestion', id, answer }),
-    })
-    if (res.ok) await useOffice.getState().loadOffice()
-    return res.ok
   },
 
   async refreshMeeting() {

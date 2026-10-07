@@ -37,14 +37,3 @@ export type AvatarState = {
 
 /** Everything needed to write one avatar back to the DB. */
 export type AvatarWrite = Omit<AvatarState, 'updatedAt'>
-
-export type QaThread = {
-  id: number
-  asker: string
-  responsible: string
-  question: string
-  answer: string | null
-  status: 'open' | 'answered'
-  createdAt: string
-  answeredAt: string | null
-}

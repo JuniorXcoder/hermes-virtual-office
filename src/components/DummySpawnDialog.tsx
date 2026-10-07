@@ -24,7 +24,6 @@ export default function DummySpawnDialog({
   onClose: () => void
 }) {
   const agents = useOffice((s) => s.agents)
-  const askQuestion = useOffice((s) => s.askQuestion)
   const loadOffice = useOffice((s) => s.loadOffice)
 
   const [name, setName] = useState('')
@@ -75,8 +74,6 @@ export default function DummySpawnDialog({
           list: [{ avatarId, name: clean, division, kind: 'agent', x: 0, z: 0, level: 0, activity: 'idle', facing: 0, spawned: true }],
         }),
       })
-      // Staff report to their manager through the DB: ask for the first task.
-      await askQuestion(clean, `${division}-manager`, `Baru bergabung di divisi ${DIVISION_LABEL[division]}. Apa prioritas pertama saya?`)
       await loadOffice()
       onClose()
     } catch (e) {

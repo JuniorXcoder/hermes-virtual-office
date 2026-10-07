@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  answerQuestion,
-  askQuestion,
   getOfficeName,
   listAvatars,
-  listQa,
-  openQaCounts,
   saveAvatars,
   seedAvatars,
   setOfficeName,
@@ -18,7 +14,7 @@ import type { AgentDivision } from '@/types/hermes'
 export const dynamic = 'force-dynamic'
 
 /**
- * The office's own store: name, avatar positions/activities, and agent Q&A.
+ * The office's own store: name and avatar positions/activities.
  *
  * This is deliberately separate from `/api/hermes/*` (tasks, agents, cron,
  * meeting). Those read the Hermes CLI; this reads `data/office.db`, which belongs
@@ -33,9 +29,6 @@ export async function GET() {
     return NextResponse.json({
       name: getOfficeName(),
       avatars: listAvatars(),
-      qa: listQa(),
-      /** Open thread count per responsible — the badge the UI shows. */
-      qaOpen: openQaCounts(),
     })
   } catch (err) {
     return NextResponse.json(
@@ -96,36 +89,6 @@ export async function POST(req: NextRequest) {
           .map(cleanAvatar)
           .filter((a): a is AvatarWrite => a !== null)
         return NextResponse.json({ saved: saveAvatars(list) })
-      }
-      case 'askQuestion': {
-        const asker = String(body.asker ?? '').trim()
-        const responsible = String(body.responsible ?? '').trim()
-        const question = String(body.question ?? '').trim()
-        if (!asker || !responsible || !question) {
-          return NextResponse.json(
-            { error: { code: 'invalid_request', message: 'asker, responsible, question wajib', status: 400 } },
-            { status: 400 },
-          )
-        }
-        return NextResponse.json({ thread: askQuestion(asker, responsible, question) })
-      }
-      case 'answerQuestion': {
-        const id = Number(body.id)
-        const answer = String(body.answer ?? '').trim()
-        if (!Number.isFinite(id) || !answer) {
-          return NextResponse.json(
-            { error: { code: 'invalid_request', message: 'id dan answer wajib', status: 400 } },
-            { status: 400 },
-          )
-        }
-        const thread = answerQuestion(id, answer)
-        if (!thread) {
-          return NextResponse.json(
-            { error: { code: 'not_found', message: `thread ${id} tidak ada`, status: 404 } },
-            { status: 404 },
-          )
-        }
-        return NextResponse.json({ thread })
       }
       default:
         return NextResponse.json(

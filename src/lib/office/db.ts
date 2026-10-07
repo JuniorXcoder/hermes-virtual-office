@@ -4,7 +4,7 @@
  * Why a database at all: the office has state that outlives a page reload and
  * does not belong to Hermes' task board — the office NAME (editable from the 3D
  * lobby), where each avatar was standing and what it was doing last, which
- * division slots are still dummy avatars, and the Q&A threads between agents.
+ * division slots are still dummy avatars.
  *
  * Why `node:sqlite`: this project has NO SQLite driver (every Hermes read goes
  * through the CLI), and Node 22 ships `DatabaseSync` built in. Adding
@@ -20,9 +20,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { AgentDivision } from '@/types/hermes'
-import type { AvatarKind, AvatarState, AvatarWrite, QaThread } from './types'
+import type { AvatarKind, AvatarState, AvatarWrite } from './types'
 
-export type { AvatarKind, AvatarState, AvatarWrite, QaThread } from './types'
+export type { AvatarKind, AvatarState, AvatarWrite } from './types'
 
 /**
  * `data/` is inside the repo and already gitignored, so the file is portable
@@ -62,19 +62,6 @@ export function officeDb(): DatabaseSync {
       anchored   INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
-
-    CREATE TABLE IF NOT EXISTS qa_threads (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      asker        TEXT NOT NULL,
-      responsible  TEXT NOT NULL,
-      question     TEXT NOT NULL,
-      answer       TEXT,
-      status       TEXT NOT NULL DEFAULT 'open',
-      created_at   TEXT NOT NULL,
-      answered_at  TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_qa_open ON qa_threads (status, responsible);
   `)
   // Additive migrations for databases created by an earlier version.
   // `CREATE TABLE IF NOT EXISTS` does NOT add columns to a table that already
@@ -233,66 +220,4 @@ export function seedAvatars(specs: DummySpec[]): number {
       anchored: !!s.anchored,
     })),
   )
-}
-
-/* --------------------------------------------------------------------- qa -- */
-
-type QaRow = {
-  id: number
-  asker: string
-  responsible: string
-  question: string
-  answer: string | null
-  status: string
-  created_at: string
-  answered_at: string | null
-}
-
-const toQa = (r: QaRow): QaThread => ({
-  id: r.id,
-  asker: r.asker,
-  responsible: r.responsible,
-  question: r.question,
-  answer: r.answer,
-  status: r.status as 'open' | 'answered',
-  createdAt: r.created_at,
-  answeredAt: r.answered_at,
-})
-
-export function listQa(): QaThread[] {
-  const rows = officeDb()
-    .prepare(`SELECT * FROM qa_threads ORDER BY status = 'answered', id DESC`)
-    .all() as QaRow[]
-  return rows.map(toQa)
-}
-
-export function askQuestion(asker: string, responsible: string, question: string): QaThread {
-  const d = officeDb()
-  const info = d
-    .prepare(
-      `INSERT INTO qa_threads (asker, responsible, question, status, created_at)
-       VALUES (?, ?, ?, 'open', ?)`,
-    )
-    .run(asker, responsible, question.trim(), now())
-  const row = d.prepare(`SELECT * FROM qa_threads WHERE id = ?`).get(Number(info.lastInsertRowid)) as QaRow
-  return toQa(row)
-}
-
-/** Answering closes the thread — an open thread is the responsible's to-do (poin 12). */
-export function answerQuestion(id: number, answer: string): QaThread | null {
-  const d = officeDb()
-  d.prepare(
-    `UPDATE qa_threads SET answer = ?, status = 'answered', answered_at = ?
-     WHERE id = ? AND status = 'open'`,
-  ).run(answer.trim(), now(), id)
-  const row = d.prepare(`SELECT * FROM qa_threads WHERE id = ?`).get(id) as QaRow | undefined
-  return row ? toQa(row) : null
-}
-
-/** Open threads per responsible — the badge the UI shows. */
-export function openQaCounts(): Record<string, number> {
-  const rows = officeDb()
-    .prepare(`SELECT responsible, COUNT(*) AS n FROM qa_threads WHERE status = 'open' GROUP BY responsible`)
-    .all() as { responsible: string; n: number }[]
-  return Object.fromEntries(rows.map((r) => [r.responsible, r.n]))
 }
