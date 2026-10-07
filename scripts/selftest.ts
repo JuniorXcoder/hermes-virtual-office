@@ -65,8 +65,7 @@ import {
   WALL_H,
   WALL_T,
   ROOM_SIGNS,
-  RACING,
-  PINGPONG,
+  RACING_RIGS,
   DARTBOARD,
   TERRACE_PROPS,
   ROOM_PROPS,
@@ -827,6 +826,12 @@ console.log('geometry')
           fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1, font: '', textAlign: '', textBaseline: '',
           fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {},
           arc() {}, ellipse() {},
+          // closePath is NOT optional: `racingFeedTexture` closes the road and barrier
+          // trapezoids. An incomplete stub here fails the TV check with a TypeError that has
+          // nothing to do with the code under test.
+          closePath() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+          translate() {}, rotate() {}, scale() {}, setLineDash() {},
+          measureText: () => ({ width: 0 }),
           createLinearGradient: () => ({ addColorStop() {} }),
           createRadialGradient: () => ({ addColorStop() {} }),
           drawImage() {},
@@ -1448,6 +1453,12 @@ console.log('geometry')
           fillStyle: '', strokeStyle: '', globalAlpha: 1, lineWidth: 1, font: '', textAlign: '', textBaseline: '',
           fillRect() {}, strokeRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, fill() {},
           arc() {}, ellipse() {},
+          // closePath is NOT optional: `racingFeedTexture` closes the road and barrier
+          // trapezoids. An incomplete stub here fails the TV check with a TypeError that has
+          // nothing to do with the code under test.
+          closePath() {}, quadraticCurveTo() {}, bezierCurveTo() {},
+          translate() {}, rotate() {}, scale() {}, setLineDash() {},
+          measureText: () => ({ width: 0 }),
           createLinearGradient: () => ({ addColorStop() {} }),
           createRadialGradient: () => ({ addColorStop() {} }),
           drawImage() {},
@@ -2469,10 +2480,10 @@ void (async () => {
   // THE LOUNGE AND TERRACE SEATS FACE THEIR FURNITURE.
   //
   // Reported: "make sure the chairs of the furniture we just built face the table, rather
-  // than having their backs to it". The RACING seat was the real offender: the rig mesh is
-  // built with the wheel and screen at its local -z, and `RACING.facing` is also the mesh's
+  // than having their backs to it". The racing seat was the real offender: each rig mesh is
+  // built with the wheel and screen at its local -z, and a rig's `facing` is also the mesh's
   // rotation, so copying it into the body's `face` sat the driver looking due south with its
-  // back to its own screen — measured head-dot -1.00 against the screen.
+  // back to its own wheel — measured head-dot -1.00.
   //
   // Measured BEHAVIOURALLY: pose a real body at each seat with the real pose, then require
   // the body's forward (its own local +z) to point at the furniture. Scoped to `seatdir.ts`
@@ -2481,26 +2492,43 @@ void (async () => {
   {
     const problems: string[] = []
     const cases: { label: string; x: number; z: number; face: number; act: Activity; tx: number; tz: number }[] = []
-    // The RACING seat is read from the IDLE SPOT data (the thing under test), and its target
-    // is the rig's SCREEN, whose position is INDEPENDENT of the spot: the rig mesh is built
-    // with the screen at local z = -1.5 and rotated by RACING.facing, so the screen's world
-    // position is derived from the MESH, not from the seat's `face`. An earlier version
+    // Each driver spot is read from the IDLE SPOT data (the thing under test), and its target
+    // is the rig's WHEEL, whose position is INDEPENDENT of the spot: the rig mesh is built
+    // with the wheel and screen at local z, rotated by that rig's `facing`, so the wheel's
+    // world position is derived from the MESH, not from the spot's `face`. An earlier version
     // computed the expected `face` with the same `+ Math.PI` the code uses, so reintroducing
     // the bug changed the expectation too and the test could never fail.
-    for (const s of IDLE_SPOTS.filter((x) => x.act === 'racing')) {
-      const scr = new THREE.Vector3(0, 0, -1.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), RACING.facing)
+    // Every rig must have exactly one driver, and every driver exactly one rig: four of each,
+    // matched on position. A spot with no rig (or a rig nobody can reach) is the failure this
+    // catches — it is what "an avatar drives a rig that is not there" looks like in data.
+    const racingSpots = IDLE_SPOTS.filter((x) => x.act === 'racing')
+    if (racingSpots.length !== RACING_RIGS.length) {
+      problems.push(`${RACING_RIGS.length} rigs but ${racingSpots.length} racing idle spot(s)`)
+    }
+    for (const r of RACING_RIGS) {
+      const n = racingSpots.filter((s) => Math.hypot(s.x - r.x, s.z - r.z) < 0.01).length
+      if (n !== 1) problems.push(`the rig at (${r.x}, ${r.z}) has ${n} driver spot(s)`)
+    }
+    // The rig each driver sits at is taken from the RIG's own transform, never from the
+    // spot's `face`. An earlier version computed the expected target with the same `+ PI`
+    // the code uses, so reintroducing the bug changed the expectation too and the test could
+    // never fail.
+    for (const s of racingSpots) {
+      const rig = RACING_RIGS.find((r) => Math.hypot(r.x - s.x, r.z - s.z) < 0.01)
+      if (!rig) {
+        problems.push(`a racing spot at (${s.x}, ${s.z}) has no rig`)
+        continue
+      }
+      const scr = new THREE.Vector3(0, 0, -1.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), rig.facing)
       cases.push({
         label: 'racing driver',
         x: s.x,
         z: s.z,
         face: s.face,
         act: 'racing',
-        tx: RACING.x + scr.x,
-        tz: RACING.z + scr.z,
+        tx: rig.x + scr.x,
+        tz: rig.z + scr.z,
       })
-    }
-    for (const s of IDLE_SPOTS.filter((x) => x.act === 'pingpong')) {
-      cases.push({ label: 'ping-pong player', x: s.x, z: s.z, face: s.face, act: 'pingpong', tx: PINGPONG.x, tz: PINGPONG.z })
     }
     for (const s of IDLE_SPOTS.filter((x) => x.act === 'dart')) {
       cases.push({ label: 'dart thrower', x: s.x, z: s.z, face: s.face, act: 'dart', tx: DARTBOARD.x, tz: DARTBOARD.z })
@@ -3160,6 +3188,68 @@ void (async () => {
     }
 
     check('a persisted facing stays bounded and points the same way', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE LOUNGE TV PLAYS THE RACE FEED WHILE SOMEBODY IS DRIVING.
+  //
+  // Reported: "saat ada yang pakai racing simulator tvnya berubah jadi main seperti lagi
+  // balapan". Two things have to hold — the bay really has four rigs, and the screen really
+  // swaps. Both are read off the BUILT scene; the wiring is read off scene.ts, because a
+  // `setTvRacing` nobody calls is the same as no feature at all.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const scene = new THREE.Scene()
+    const office = buildOffice(scene, 12)
+    scene.updateMatrixWorld(true)
+
+    // Four rigs, counted from the wheel meshes that identify a rig.
+    let rigs = 0
+    scene.traverse((n: any) => {
+      if (!n.isMesh || !n.geometry || n.geometry.type !== 'TorusGeometry') return
+      const v = new THREE.Vector3()
+      n.getWorldPosition(v)
+      if (v.x >= 14 && v.x <= 28 && v.z <= -10) rigs++
+    })
+    if (rigs !== 4) problems.push(`the racing bay has ${rigs} rig(s), expected 4`)
+
+    // The ping-pong table is gone. 2.74 x 1.525 was its top and nothing else is that size.
+    let tables = 0
+    scene.traverse((n: any) => {
+      if (!n.isMesh || !n.geometry) return
+      const p = (n.geometry as any).parameters || {}
+      if (Math.abs((p.width ?? 0) - 2.74) < 0.01 && Math.abs((p.depth ?? 0) - 1.525) < 0.01) tables++
+    })
+    if (tables !== 0) problems.push(`a 2.74x1.525 ping-pong top is still in the scene (${tables})`)
+
+    // The screen swaps to a feed and back, and a repeated call is a no-op.
+    const tv: any = scene.getObjectByName('lounge-tv-screen')
+    if (!tv) {
+      problems.push('no lounge TV screen in the scene, so setTvRacing has nothing to drive')
+    } else {
+      const mat = tv.material as THREE.MeshStandardMaterial
+      const idleHex = mat.emissive.getHex()
+      const idleEi = mat.emissiveIntensity
+      office.setTvRacing(true)
+      const feed = mat.map
+      if (!feed) problems.push('setTvRacing(true) left the screen with no feed texture')
+      office.setTvRacing(true)
+      if (feed && mat.map !== feed) problems.push('setTvRacing is not idempotent: it reallocated the feed texture')
+      office.setTvRacing(false)
+      if (mat.map) problems.push('setTvRacing(false) did not clear the feed')
+      if (mat.emissive.getHex() !== idleHex || mat.emissiveIntensity !== idleEi) {
+        problems.push('the screen did not return to its standby glow')
+      }
+    }
+
+    // And the render loop must actually drive it, gated on "has arrived" like the rack bar.
+    const loopSrc = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    if (!/office\.setTvRacing\(avatars\.some\(\(a\) => a\.activity === 'racing'/.test(loopSrc)) {
+      problems.push('the render loop never switches the TV to the race feed')
+    }
+
+    check('the lounge TV plays the race feed while a rig is occupied', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

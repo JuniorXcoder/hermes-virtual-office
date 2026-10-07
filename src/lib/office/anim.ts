@@ -193,8 +193,6 @@ export type Activity =
   | 'dumbbell'
   /** Cooking at the grill. */
   | 'bbq'
-  /** Standing at the table, playing table tennis. */
-  | 'pingpong'
   /** Sitting in the racing simulator, hands on the wheel, feet on the pedals. */
   | 'racing'
 
@@ -944,41 +942,6 @@ function pool(a: AnimAgent, t: number) {
 }
 
 /**
- * Table tennis: the ready stance, with a paddle arm that swings on the ball.
- *
- * Standing, knees slightly bent, the body turned a little to the table, and the RIGHT
- * arm making a short forehand swing every ~1.1 s. The left arm is held out for balance.
- * Deliberately small motions: a stance that waves its arms about reads as confusion, not
- * as play.
- */
-function pingpong(a: AnimAgent, t: number) {
-  const av = a.avatar
-  standLegs(a, t)
-  // a shallow crouch, both knees a little bent — the ready position
-  const [L, R] = av.legs
-  L.elbow.rotation.x = 14 * D
-  R.elbow.rotation.x = 14 * D
-  av.hips.position.y = (HIP_STAND - 0.06) * Math.min(1, a.ease)
-  // the body is angled slightly to the table, head up watching the ball
-  av.chest.rotation.x = -8 * D
-  av.chest.rotation.y = 14 * D
-  av.head.rotation.x = -4 * D
-  av.head.rotation.y = (-10 + Math.sin(t * 2.0 + a.phase) * 6) * D
-  // the swing: a fast forehand every 1.1 s, mostly quiet in between
-  const c = (t * 0.9 + a.phase) % 1
-  const swing = Math.sin(Math.PI * Math.min(1, Math.max(0, c / 0.4)))
-  const [LA, RA] = av.arms
-  // paddle arm: from back-swing to follow-through, across the body
-  RA.shoulder.rotation.x = (-40 - swing * 30) * D
-  RA.shoulder.rotation.z = (18 - swing * 40) * D
-  RA.elbow.rotation.x = (-52 + swing * 26) * D
-  // free arm: out for balance, a slow counter-sway
-  LA.shoulder.rotation.x = (-18 + Math.sin(t * 2.0 + a.phase) * 6) * D
-  LA.shoulder.rotation.z = -26 * D
-  LA.elbow.rotation.x = -34 * D
-}
-
-/**
  * The racing simulator: seated, leaning back, hands on the wheel, working it.
  *
  * The wheel gets a real correction cycle — a slow turn each way, as if catching a slide —
@@ -1050,7 +1013,6 @@ const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
   muscleup,
   dumbbell,
   bbq,
-  pingpong,
   racing,
 }
 

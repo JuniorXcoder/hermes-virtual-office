@@ -1070,6 +1070,10 @@ export function createScene(
     // The rack's bar is hidden while somebody is benching: the bar is in their hands, and
     // leaving a second one resting in the hooks draws two bars in the same place.
     office.setRackBarVisible(!avatars.some((a) => a.activity === 'benchpress' && a.walking < 0.5))
+    // The lounge TV plays the race feed while anybody is actually ON a rig. `walking < 0.5` is
+    // the same "has arrived" test the bench bar above uses — an avatar striding toward the bay
+    // must not switch the television on before it has sat down.
+    office.setTvRacing(avatars.some((a) => a.activity === 'racing' && a.walking < 0.5))
     controls.update()
     // A test may drive the simulation without paying for WebGL: rendering every step made
     // even 30 frames too slow to measure over a debugger (software GL), which is what made a

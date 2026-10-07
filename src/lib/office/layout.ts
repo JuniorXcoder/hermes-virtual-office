@@ -953,36 +953,22 @@ export const LOUNGE_TABLE = { x: 22.5, z: -19.6 }
 /* ---------------------------------------------------- the lounge rec gear -- */
 
 /**
- * The three rec stations in the leisure room, so the lounge is a place to BE, not just a
- * sofa facing a television.
+ * The rec area in the leisure room, so the lounge is a place to BE, not just a sofa
+ * facing a television.
  *
  * Placed once, read by the mesh, the footprints AND the idle spots — the same rule as
  * everything else here, and for the same reason: when the model and the spots disagree an
- * avatar plays ping-pong against empty air.
+ * avatar drives a rig that is not there.
  *
  * The room is x 14.15..27.85, z -20.85..2. The sofa group takes the north end (z -20.8..
- * -17.2), so all three stations live in the SOUTH half, clear of each other and of the
- * door on the west wall at z -5.4..-2.6:
+ * -17.2), so the rec stations live in the SOUTH half, clear of each other and of the door
+ * on the west wall at z -5.4..-2.6:
  *
- *   ping-pong   x 18.0, z -14.0    a 2.74 x 1.525 table, the long axis EAST-WEST (x),
- *                                  so a player stands at each end along x
- *   dartboard   x 25.6, z -13.0    board on the EAST wall (inner face x 27.85), the
+ *   dartboard   x 27.7, z -13.0    board on the EAST wall (inner face x 27.85), the
  *                                  thrower stands ~2.4 m west of it
- *   racing rig  x 21.5, z -5.5     a seat + wheel + pedals, facing NORTH into the room
+ *   racing bay  x 18..24, z -14    FOUR simulators in a row, each facing NORTH — they
+ *                                  stand where the ping-pong table used to be
  */
-export const PINGPONG = {
-  /** Table centre. */
-  x: 18.0,
-  z: -14.0,
-  /** Table top: 2.74 x 1.525 is the real size, rounded to the centimetre. */
-  w: 2.74,
-  d: 1.525,
-  /** Top surface height. */
-  h: 0.76,
-}
-/** A player stands this far out from the table's end, along x. */
-export const PINGPONG_STAND = 1.35
-
 export const DARTBOARD = {
   /** Board centre, flat on the east wall (inner face x = 27.85). */
   x: 27.7,
@@ -995,17 +981,25 @@ export const DARTBOARD = {
 export const DART_THROW = { x: 25.3, z: -13.0 }
 
 /**
- * The racing simulator: a bucket seat, a wheel on a column, and a pedal box.
+ * The FOUR racing simulators — a bucket seat, a wheel on a column, a pedal box and a screen
+ * for each.
  *
- * The seat faces NORTH (into the room, away from the south wall), so the rig reads as a
- * car pointed into the space rather than at a wall.
+ * Every rig faces NORTH (into the room, away from the south wall) so the bay reads as an
+ * arcade pointed into the space rather than at a wall. `facing` is BOTH the mesh's rotation
+ * AND the rig's look direction: the seat mesh is built with its wheel and screen at local
+ * -z, so at `facing: 0` the driver looks north with the wheel ahead of them — an avatar
+ * seated here uses `facing + PI` for its body, because a body's `face` is the direction its
+ * CHEST points (see IDLE_SPOTS).
+ *
+ * The x pitch of 2.0 m leaves 0.6 m between neighbouring footprints (each 1.4 m wide), which
+ * is what keeps four rigs in a 6 m bay from overlapping.
  */
-export const RACING = {
-  x: 21.5,
-  z: -5.5,
-  /** 0 = faces -z (north), which is what the seat mesh does at rotation 0. */
-  facing: 0,
-}
+export const RACING_RIGS = [
+  { x: 18.0, z: -14.0, facing: 0 },
+  { x: 20.0, z: -14.0, facing: 0 },
+  { x: 22.0, z: -14.0, facing: 0 },
+  { x: 24.0, z: -14.0, facing: 0 },
+] as const
 /** Seat surface height — from SEATS.chair, so the seated pose is unchanged. */
 export const RACING_SEAT_H = 0.46
 
@@ -1528,11 +1522,10 @@ export const FOOTPRINTS: Footprint[] = [
   /* -------------------------------------------------------------- leisure -- */
   fp('lounge-sofa', LOUNGE.x, LOUNGE.z, 1.5, 0.55, 0.85, 'seat'),
   fp('lounge-table', LOUNGE_TABLE.x, LOUNGE_TABLE.z, 0.6, 0.3, 0.44, 'desk'),
-  // The rec gear. The table and the rig block; the dartboard is ON the wall, so its
-  // footprint is the small area its surround occupies, not the throw position — a
-  // footprint at the thrower's feet would fence off the very spot they stand on.
-  fp('lounge-pingpong', PINGPONG.x, PINGPONG.z, PINGPONG.w / 2, PINGPONG.d / 2, PINGPONG.h),
-  fp('lounge-racing', RACING.x, RACING.z - 0.5, 0.7, 1.3, 0.9),
+  // The rec gear. The racing bay blocks; the dartboard is ON the wall, so its footprint is
+  // the small area its surround occupies, not the throw position — a footprint at the
+  // thrower's feet would fence off the very spot they stand on.
+  ...RACING_RIGS.map((r, i) => fp(`lounge-racing-${i}`, r.x, r.z - 0.5, 0.7, 1.3, 0.9)),
   fp('lounge-dartboard', DARTBOARD.x, DARTBOARD.z, 0.08, DARTBOARD.r * 1.2, DARTBOARD.y + DARTBOARD.r),
 
   /* ------------------------------------------------------------ ceo suite -- */
@@ -1731,18 +1724,7 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // LOOK AT THE TV. `face: 0` faces north, and the TV is SOUTH of the sofa, so the sitter
   // had its back to the screen: dot -1.00. This is the "ngebelakangin sofa" bug.
   { x: LOUNGE.x, z: LOUNGE.z, act: 'sofa', seated: true, face: faceToward(LOUNGE.x, LOUNGE.z, LOUNGE_TV.x, LOUNGE_TV.z), level: 0 },
-  /* ---- the lounge rec gear: ping-pong, darts and the racing sim ----------- */
-  // Ping-pong needs TWO players, one at each end of the table. They face each other across
-  // the table's WIDTH line, so a rally reads as a rally rather than two people swinging at
-  // nothing. `face` points in, toward the table.
-  {
-    x: PINGPONG.x - PINGPONG.w / 2 - PINGPONG_STAND, z: PINGPONG.z,
-    act: 'pingpong', face: Math.PI / 2, level: 0,
-  },
-  {
-    x: PINGPONG.x + PINGPONG.w / 2 + PINGPONG_STAND, z: PINGPONG.z,
-    act: 'pingpong', face: -Math.PI / 2, level: 0,
-  },
+  /* ---- the lounge rec gear: darts and the four racing sims --------------- */
   // The marketing nook: its two soft chairs were built as furniture but had NO idle spot, so
   // nobody could ever sit in them. Each chair faces the low table between them, computed from
   // its own position rather than a fixed angle (the two chairs are on opposite sides).
@@ -1752,14 +1734,17 @@ export const IDLE_SPOTS: IdleSpot[] = [
   ]),
   // One thrower at the oche, facing the board on the east wall.
   { x: DART_THROW.x, z: DART_THROW.z, act: 'dart', face: faceToward(DART_THROW.x, DART_THROW.z, DARTBOARD.x, DARTBOARD.z), level: 0 },
-  // One driver in the rig's seat. `seated` arms the settling exemption, so the body may
-  // tuck into a chair the footprint would otherwise block.
-  // The DRIVER faces the screen, which the rig puts on its local -z (the rig mesh is built
-  // with the wheel and screen ahead of the seat at negative local z, so `RACING.facing` is
-  // also its mesh rotation). Copying `RACING.facing` into the body's `face` was wrong: a
-  // BODY looks along its own local +z, the opposite of the mesh convention, so the driver
-  // sat facing due south with its back to its own screen — measured head-dot -1.00.
-  { x: RACING.x, z: RACING.z, act: 'racing', seated: true, face: RACING.facing + Math.PI, level: 0 },
+  // One driver per rig — four of them, read from RACING_RIGS so a rig can never be drawn in
+  // one place and driven in another. `seated` arms the settling exemption, so the body may
+  // tuck into a seat the footprint would otherwise block.
+  // The DRIVER faces the WHEEL, which the rig puts on its local -z (the rig mesh is built
+  // with the wheel and screen ahead of the seat at negative local z, so a rig's `facing` is
+  // also its mesh rotation). Copying `facing` into the body's `face` was wrong: a BODY looks
+  // along its own local +z, the opposite of the mesh convention, so the driver sat facing
+  // due south with its back to its own wheel — measured head-dot -1.00.
+  ...RACING_RIGS.map((r) => ({
+    x: r.x, z: r.z, act: 'racing' as const, seated: true, face: r.facing + Math.PI, level: 0 as const,
+  })),
 
   /* ---- under the second floor: the covered terrace ------------------------ */
   // The work bar: a body perched on each stool, facing the bar (north, toward the counter).

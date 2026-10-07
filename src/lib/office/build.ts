@@ -48,10 +48,9 @@ import {
   LOUNGE_TV,
   ROOM_PROPS,
   TERRACE_PROPS,
-  PINGPONG,
   DARTBOARD,
   DART_THROW,
-  RACING,
+  RACING_RIGS,
   RACING_SEAT_H,
   courtyardWallSegments,
   MEETING_ROOMS,
@@ -265,6 +264,79 @@ function signTexture(text: string, sub?: string) {
   return tex
 }
 
+/**
+ * The lounge TV's RACE FEED — what the screen shows while somebody is on a racing rig.
+ *
+ * A first-person racing frame rather than an abstract glow: a road with a vanishing point,
+ * lane dashes, barriers and a HUD strip. The requirement was that the TV read as "somebody
+ * is playing a racing game", and a flat colour swap does not say that from across the room.
+ *
+ * Drawn ONCE here and kept; `setTvRacing` only swaps which texture the screen material
+ * carries, so the canvas is never redrawn per frame.
+ */
+function racingFeedTexture() {
+  const cv = document.createElement('canvas')
+  cv.width = 512
+  cv.height = 288
+  const c = cv.getContext('2d')!
+  const HORIZON = 118
+
+  // sky / dusk glow above the horizon
+  const sky = c.createLinearGradient(0, 0, 0, HORIZON)
+  sky.addColorStop(0, '#0d1b3a')
+  sky.addColorStop(1, '#5b4a86')
+  c.fillStyle = sky
+  c.fillRect(0, 0, 512, HORIZON)
+  // ground either side of the road
+  c.fillStyle = '#2b3a2a'
+  c.fillRect(0, HORIZON, 512, 288 - HORIZON)
+
+  // the road: a trapezoid from a narrow vanishing point to past the frame at the bottom
+  c.beginPath()
+  c.moveTo(234, HORIZON)
+  c.lineTo(278, HORIZON)
+  c.lineTo(572, 288)
+  c.lineTo(-60, 288)
+  c.closePath()
+  c.fillStyle = '#3b4046'
+  c.fill()
+
+  // barriers hugging both edges
+  c.fillStyle = '#c8402f'
+  c.beginPath(); c.moveTo(234, HORIZON); c.lineTo(252, HORIZON); c.lineTo(-88, 288); c.lineTo(-118, 288); c.closePath(); c.fill()
+  c.beginPath(); c.moveTo(278, HORIZON); c.lineTo(296, HORIZON); c.lineTo(600, 288); c.lineTo(630, 288); c.closePath(); c.fill()
+
+  // lane dashes: they widen as they come forward, which is what sells the depth
+  c.fillStyle = '#e8e2c8'
+  for (let i = 0; i < 7; i++) {
+    const t0 = i / 7
+    const t1 = t0 + 0.06
+    const y0 = HORIZON + (288 - HORIZON) * t0 * t0
+    const y1 = HORIZON + (288 - HORIZON) * t1 * t1
+    const w = 1 + 6 * t0 * t0
+    c.fillRect(256 - w / 2, y0, w, Math.max(1, y1 - y0))
+  }
+
+  // HUD strip along the bottom
+  c.fillStyle = 'rgba(6,10,16,0.74)'
+  c.fillRect(0, 288 - 48, 512, 48)
+  c.textBaseline = 'middle'
+  c.font = 'bold 30px ui-monospace, monospace'
+  c.textAlign = 'left'
+  c.fillStyle = '#7ef0a8'
+  c.fillText('LAP 3/5', 18, 288 - 24)
+  c.textAlign = 'right'
+  c.fillStyle = '#ffd45e'
+  c.fillText('248 KM/H', 494, 288 - 24)
+  // a rev strip, so the HUD is not just two numbers
+  c.fillStyle = '#39d3ff'
+  c.fillRect(150, 288 - 21, 212, 9)
+
+  const tex = new THREE.CanvasTexture(cv)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
 /** The green whiteboard face — the office Kanban, now clickable. */
 function whiteboardTexture() {
   const cv = document.createElement('canvas')
@@ -339,6 +411,11 @@ export type OfficeProps = {
    * place would draw two bars in the same spot.
    */
   setRackBarVisible: (visible: boolean) => void
+  /**
+   * Swap the lounge TV between its standby glow and the race feed. The scene calls this once
+   * per frame with whether any avatar is driving; it is a no-op unless the state changed.
+   */
+  setTvRacing: (on: boolean) => void
   applyPalette: (hour: number) => void
   dispose: () => void
 }
@@ -350,6 +427,15 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   const bbqSmoke: THREE.Mesh[] = []
   let bbqFire: THREE.Mesh | null = null
   let bbqGlow: THREE.PointLight | null = null
+  /**
+   * The lounge TV screen, hoisted to function scope so `setTvRacing` (built near the end of
+   * this function) can reach it. The lounge block runs long before that, so a `const` inside
+   * the block would be out of reach.
+   */
+  let tvScreen: THREE.Mesh | null = null
+  /** The TV's standby look, captured when the mesh is built so `setTvRacing` can restore it. */
+  let tvIdleEmissive = 0x2a4a5a
+  let tvIdleIntensity = 0.6
   /** The bar and plates resting in the rack's hooks, hidden while somebody benches. */
   const rackBarParts: THREE.Mesh[] = []
   let pal: Palette = paletteFor(hour)
@@ -2352,76 +2438,24 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     const tv = box(1.8, 1.0, 0.08, 0x1b2226, { metal: 0.3, rough: 0.3 })
     tv.position.set(LOUNGE_TV.x, LOUNGE_TV.y, LOUNGE_TV.z)
     group.add(tv)
-    const tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
+    // THE SCREEN HAS TWO STATES. Idle is the cool standby glow; the race feed switches on
+    // while any driver is on a rig, driven from the scene's frame loop. The material is
+    // allocated once and only its map/emissive are swapped, so nothing re-allocates per frame.
+    tvScreen = box(1.7, 0.9, 0.02, 0x24343c, { emissive: 0x2a4a5a, ei: 0.6 })
     tvScreen.position.set(LOUNGE_TV.x, LOUNGE_TV.y, LOUNGE_TV.z + 0.06)
+    tvScreen.name = 'lounge-tv-screen'
+    {
+      const tvMat = tvScreen.material as THREE.MeshStandardMaterial
+      tvIdleEmissive = tvMat.emissive.getHex()
+      tvIdleIntensity = tvMat.emissiveIntensity
+    }
     group.add(tvScreen)
   }
 
-  /* ------------------------------------------------- ping-pong / darts / sim -- */
-  // The three rec stations. Each is placed from its LAYOUT constant, so the mesh, its
-  // footprint and the idle spot that uses it can never drift apart.
+  /* -------------------------------------------------------- darts / racing -- */
+  // The rec stations. Each is placed from its LAYOUT constant, so the mesh, its footprint
+  // and the idle spot that uses it can never drift apart.
   {
-    // ---- TABLE TENNIS ----------------------------------------------------------
-    // A real 2.74 x 1.525 top at 0.76 m, with the white edge line, a centre line, and the
-    // net across the middle. Legs at the four corners, inset.
-    const tg = new THREE.Group()
-    tg.position.set(PINGPONG.x, 0, PINGPONG.z)
-    const top = box(PINGPONG.w, 0.05, PINGPONG.d, 0x2f5d3a, { rough: 0.75 })
-    top.position.y = PINGPONG.h - 0.025
-    tg.add(top)
-    // white edge border, drawn as four thin strips just proud of the surface
-    const edge = 0.02
-    for (const [w, d, ox, oz] of [
-      [PINGPONG.w, edge, 0, PINGPONG.d / 2 - edge / 2],
-      [PINGPONG.w, edge, 0, -PINGPONG.d / 2 + edge / 2],
-      [edge, PINGPONG.d, PINGPONG.w / 2 - edge / 2, 0],
-      [edge, PINGPONG.d, -PINGPONG.w / 2 + edge / 2, 0],
-    ] as const) {
-      const e = box(w, 0.008, d, 0xf2f2ee, { rough: 0.5 })
-      e.position.set(ox, PINGPONG.h + 0.002, oz)
-      tg.add(e)
-    }
-    // centre line, along the length
-    const centre = box(PINGPONG.w - 0.1, 0.006, 0.02, 0xf2f2ee, { rough: 0.5 })
-    centre.position.y = PINGPONG.h + 0.002
-    tg.add(centre)
-    // the net across the middle
-    const net = box(PINGPONG.w, 0.15, 0.01, 0xd8d8d2, { rough: 0.9 })
-    net.position.y = PINGPONG.h + 0.075
-    net.scale.x = 1.0
-    tg.add(net)
-    const netTop = cyl(0.006, 0.006, PINGPONG.w, 0xcfcfc8, 8, 0.5)
-    netTop.rotation.z = Math.PI / 2
-    netTop.position.y = PINGPONG.h + 0.152
-    tg.add(netTop)
-    // four legs
-    for (const [sx, sz] of [
-      [-1, -1],
-      [1, -1],
-      [-1, 1],
-      [1, 1],
-    ] as const) {
-      const leg = cyl(0.03, 0.03, PINGPONG.h - 0.05, 0x4a4f55, 8, 0.6)
-      leg.position.set(sx * (PINGPONG.w / 2 - 0.22), (PINGPONG.h - 0.05) / 2, sz * (PINGPONG.d / 2 - 0.18))
-      tg.add(leg)
-    }
-    // two paddles resting on the surface, one at each end
-    for (const [px, rot] of [
-      [-PINGPONG.w / 2 + 0.5, 0.4],
-      [PINGPONG.w / 2 - 0.5, -0.5],
-    ] as const) {
-      const blade = cyl(0.075, 0.075, 0.012, 0x9a2f2f, 16, 0.3)
-      blade.rotation.x = Math.PI / 2
-      blade.rotation.z = rot
-      blade.position.set(px, PINGPONG.h + 0.012, PINGPONG.d / 4)
-      tg.add(blade)
-      const handle = box(0.03, 0.012, 0.09, 0x6b4423, { rough: 0.8 })
-      handle.rotation.y = rot
-      handle.position.set(px + Math.sin(rot) * 0.11, PINGPONG.h + 0.012, PINGPONG.d / 4 + Math.cos(rot) * 0.11)
-      tg.add(handle)
-    }
-    group.add(tg)
-
     // ---- DARTBOARD -------------------------------------------------------------
     // Flat on the east wall, bullseye at 1.73 m, with a surround and a small scorer.
     {
@@ -2460,12 +2494,14 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       group.add(oche)
     }
 
-    // ---- RACING SIMULATOR ------------------------------------------------------
-    // A bucket seat, a wheel on a column, a pedal box, and a screen — facing NORTH.
-    {
+    // ---- RACING SIMULATORS (four) ----------------------------------------------
+    // A bucket seat, a wheel on a column, a pedal box and a screen each, all facing NORTH.
+    // Built from RACING_RIGS, so the bay, its four footprints and the four drivers can never
+    // disagree about where a rig stands.
+    for (const rig of RACING_RIGS) {
       const rg = new THREE.Group()
-      rg.position.set(RACING.x, 0, RACING.z)
-      rg.rotation.y = RACING.facing
+      rg.position.set(rig.x, 0, rig.z)
+      rg.rotation.y = rig.facing
       // the seat base + back + side bolsters, in a dark racing red
       const seat = new THREE.Mesh(rbox(0.52, 0.12, 0.5, 0.04), stdMat(0x8f2f2f, { rough: 0.8 }))
       seat.position.y = RACING_SEAT_H
@@ -2837,6 +2873,37 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     }
   }
 
+  /**
+   * Switch the lounge TV between its standby glow and the live race feed.
+   *
+   * Driven from the scene's frame loop with whether ANY driver is on a rig. Kept idempotent
+   * and allocation-free: the loop calls it every frame, so it early-returns unless the state
+   * actually changed, and the feed texture is drawn once and reused.
+   */
+  let tvFeed: THREE.Texture | null = null
+  let tvRacing = false
+  function setTvRacing(on: boolean) {
+    if (!tvScreen || on === tvRacing) return
+    tvRacing = on
+    const mat = tvScreen.material as THREE.MeshStandardMaterial
+    if (on) {
+      if (!tvFeed) tvFeed = track(racingFeedTexture())
+      mat.map = tvFeed
+      // the same texture drives the emissive, so the road and the HUD GLOW instead of sitting
+      // as a dark decal on the standby-blue panel
+      mat.emissiveMap = tvFeed
+      mat.emissive.setHex(0xffffff)
+      mat.emissiveIntensity = 0.95
+    } else {
+      mat.map = null
+      mat.emissiveMap = null
+      mat.emissive.setHex(tvIdleEmissive)
+      mat.emissiveIntensity = tvIdleIntensity
+    }
+    // adding or removing a map changes the compiled program, so the material must recompile
+    mat.needsUpdate = true
+  }
+
   return {
     group,
     monitors,
@@ -2847,6 +2914,7 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     animateStreet,
     animateBbq,
     setRackBarVisible,
+    setTvRacing,
     sun,
     applyPalette,
     dispose,
