@@ -16,6 +16,8 @@ import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
 import { blockedAssigneesFor } from '@/lib/hermes/approvals'
+import { agentPermissionSummary, checkAgentAction, type AgentActionKind } from '@/lib/hermes/control'
+import { denyAudit } from '@/lib/hermes/audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,6 +81,8 @@ export async function GET() {
               : 'no_profile',
       })),
       hidden: hiddenNames(),
+      /** Batas izin per role (TAHAP 5.4), dari tabel tunggal di control.ts. */
+      permissions: agentPermissionSummary(),
     })
   } catch (err) {
     return NextResponse.json(
@@ -125,6 +129,34 @@ export async function POST(req: NextRequest) {
       { error: { code: 'invalid_request', message: 'name is required', status: 400 } },
       { status: 400 },
     )
+  }
+
+  // Atas nama agent (TAHAP 5.4): bila `onBehalfOf` ada, batas izin per role dinilai DULU dan
+  // penolakannya dicatat di audit. Tanpa `onBehalfOf` (operator lewat UI), tidak ada yang
+  // berubah.
+  if (body?.onBehalfOf != null) {
+    const ob = body.onBehalfOf as { agent?: unknown; role?: unknown }
+    const kind: AgentActionKind =
+      action === 'kill' ? 'kill' : action === 'create' ? 'create' : action === 'set-model' ? 'setModel' : 'spawn'
+    const agent = typeof ob?.agent === 'string' ? ob.agent.trim() : ''
+    const role = (typeof ob?.role === 'string' ? ob.role.trim() : '') as AgentRole
+    const verdict = checkAgentAction({ agent, role, action: kind, reason: body?.reason ? String(body.reason) : undefined })
+    if (!verdict.allowed) {
+      denyAudit(
+        {
+          at: new Date().toISOString(),
+          action: `agent:${action}`,
+          agent: agent || '(tanpa nama)',
+          reason: `${action} "${name}" atas nama ${agent || '?'} (${role || '?'})`.slice(0, 300),
+          effect: `permintaan agent untuk ${action} profil "${name}"`,
+        },
+        verdict.why,
+      )
+      return NextResponse.json(
+        { error: { code: 'refused', message: verdict.why, status: 400 } },
+        { status: 400 },
+      )
+    }
   }
 
   // The profile's default model: what its workers and chat turns run unless a task

@@ -34,6 +34,9 @@ type Row = {
   soulExists?: boolean | null
 }
 
+/** Batas izin per role dari route agents GET (tabel tunggal di control.ts). */
+type Permissions = Record<string, { allow: string[]; deny: string[]; anyTask: boolean }>
+
 const ROLE_OPTIONS = Object.entries(ROLE_LABEL) as [AgentRole, string][]
 const DIVISION_OPTIONS = Object.entries(DIVISION_LABEL) as [AgentDivision, string][]
 
@@ -47,6 +50,7 @@ export default function AgentSpawnPanel({
   onChanged: () => void
 }) {
   const [rows, setRows] = useState<Row[]>([])
+  const [perms, setPerms] = useState<Permissions>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -77,11 +81,12 @@ export default function AgentSpawnPanel({
     setLoading(true)
     setErr(null)
     try {
-      const res = await fetchJson<{ available?: Row[] }>('/api/hermes/agents', {
+      const res = await fetchJson<{ available?: Row[]; permissions?: Permissions }>('/api/hermes/agents', {
         cache: 'no-store',
       })
       if (!res.ok) throw new Error(res.error || 'gagal memuat daftar agent')
       setRows(res.data?.available || [])
+      setPerms(res.data?.permissions || {})
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -225,6 +230,20 @@ export default function AgentSpawnPanel({
     )
   }
 
+  /** Satu baris batas izin untuk role agent ini. Kosong bila role/tabel tidak ada. */
+  function limits(r: Row) {
+    const p = r.role ? perms[r.role] : undefined
+    if (!p) return null
+    const allow = p.allow.length
+      ? p.allow.join(', ') + (p.anyTask ? '' : ' (task sendiri)')
+      : '—'
+    return (
+      <span className="vp-muted" style={{ fontSize: 11 }} title="Batas izin bila aksi diminta atas nama agent ini">
+        boleh: {allow} · tidak boleh: {p.deny.length ? p.deny.join(', ') : '—'}
+      </span>
+    )
+  }
+
   return (
     <aside className="vp-panel right-0">
       <header className="vp-panel-head">
@@ -341,6 +360,7 @@ export default function AgentSpawnPanel({
                 </b>
                 <i>{r.total} tugas</i>
                 {badges(r)}
+                {limits(r)}
               </div>
               {/* The profile's default model: what its workers and chats run.
                   Saving here writes `model.default` for that profile, so it
@@ -434,6 +454,7 @@ export default function AgentSpawnPanel({
                           : 'tanpa tugas'}
                     </i>
                     {badges(r)}
+                    {limits(r)}
                   </div>
                   <button
                     className="vp-btn"

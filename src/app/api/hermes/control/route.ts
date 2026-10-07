@@ -3,6 +3,7 @@ import { assertLocalWriteRequest } from '@/lib/local-guard'
 import {
   ACTION_EFFECT,
   ESTOP_PATH,
+  agentPermissionSummary,
   checkAction,
   readPause,
   type ActionKind,
@@ -11,7 +12,7 @@ import {
 import { advanceTask, pauseAll, resumeAll, steerTask } from '@/lib/hermes/kanban'
 import { applyFallback, planFallback } from '@/lib/hermes/fallback'
 import { readProviders } from '@/lib/hermes/providers'
-import { beginAudit, readAudit } from '@/lib/hermes/audit'
+import { beginAudit, denyAudit, readAudit } from '@/lib/hermes/audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +40,8 @@ export async function GET() {
     estopPath: ESTOP_PATH,
     actions: ACTION_EFFECT,
     audit: readAudit(30),
+    /** Batas izin per role agent (TAHAP 5.4), dari tabel tunggal di control.ts. */
+    agentPermissions: agentPermissionSummary(),
   })
 }
 
@@ -69,6 +72,18 @@ export async function POST(req: NextRequest) {
 
   const verdict = checkAction(body)
   if (!verdict.allowed) {
+    // Penolakan juga dicatat: tanpa ini, "ditolak diam-diam" tidak bisa dibedakan dari
+    // "tidak pernah diminta".
+    denyAudit(
+      {
+        at: new Date().toISOString(),
+        action: body.steer ? 'steer' : body.action,
+        taskId: body.taskId,
+        reason: (body.reason || '').slice(0, 300),
+        effect: ACTION_EFFECT[body.action]?.effect || '',
+      },
+      verdict.why,
+    )
     return NextResponse.json(
       { error: { code: 'refused', message: verdict.why, status: 400 } },
       { status: 400 },

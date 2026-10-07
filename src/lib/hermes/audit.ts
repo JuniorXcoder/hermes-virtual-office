@@ -33,6 +33,8 @@ function auditPath(): string {
 export type AuditEntry = {
   at: string
   action: string
+  /** Agent yang atas namanya aksi diminta; kosong = operator lewat UI. */
+  agent?: string
   taskId?: string
   reason?: string
   /** Apa yang dikatakan server akan terjadi. */
@@ -56,6 +58,15 @@ export function beginAudit(entry: AuditEntry): { finish: (result: string, ok: bo
       appendLine({ ...entry, result, ok })
     },
   }
+}
+
+/**
+ * Catat PENOLAKAN. Aksi yang ditolak tidak pernah jalan, tapi permintaannya tetap peristiwa:
+ * tanpa catatan ini, "ditolak diam-diam" tidak bisa dibedakan dari "tidak pernah diminta".
+ * Pola yang sama dengan aksi biasa — niat dulu, lalu hasil `ok:false` berisi alasannya.
+ */
+export function denyAudit(entry: Omit<AuditEntry, 'result' | 'ok'>, why: string): void {
+  beginAudit(entry).finish(`DITOLAK: ${why}`, false)
 }
 
 function appendLine(e: AuditEntry): void {

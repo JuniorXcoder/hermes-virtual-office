@@ -25,6 +25,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { AgentRole } from '@/types/hermes'
 
 const HERMES = process.env.HERMES_HOME || join(homedir(), '.hermes')
 const ESTOP = join(HERMES, 'ESTOP')
@@ -82,6 +83,148 @@ export function checkAction(req: ActionRequest): Verdict {
     if (r.length < 3) return { allowed: false, why: 'membuka blokir wajib disertai alasan' }
   }
   return { allowed: true }
+}
+
+/* -------------------------------------------------------- izin per agent -- */
+
+/**
+ * Aksi yang bisa diminta ATAS NAMA sebuah agent. Daftar tertutup, sama seperti `ActionKind`.
+ *
+ *   pauseAll — hentikan seluruh kerja baru (ESTOP).
+ *   spawn    — ubah siapa yang ada di kantor (spawn / sembunyikan).
+ *   kill     — hapus profil agent beserta tugasnya.
+ *   create   — buat profil agent baru.
+ *   setModel — ganti model bawaan profil agent.
+ *   steer    — kirim arahan ke worker yang memegang satu task.
+ *   advance  — gerakkan satu task: unblock / promote / release.
+ */
+export type AgentActionKind = 'pauseAll' | 'spawn' | 'kill' | 'create' | 'setModel' | 'steer' | 'advance'
+
+export const AGENT_ACTIONS: AgentActionKind[] = ['pauseAll', 'spawn', 'kill', 'create', 'setModel', 'steer', 'advance']
+
+export const AGENT_ACTION_LABEL: Record<AgentActionKind, string> = {
+  pauseAll: 'jeda semua',
+  spawn: 'spawn/sembunyikan',
+  kill: 'kill',
+  create: 'buat profil',
+  setModel: 'ganti model',
+  steer: 'arahkan task',
+  advance: 'gerakkan task',
+}
+
+export type AgentPermission = {
+  /** Aksi yang boleh. Yang tidak ada di sini dan tidak ada di `deny` tetap DITOLAK. */
+  allow: AgentActionKind[]
+  /** Aksi yang ditolak, masing-masing dengan alasannya sendiri — bukan pesan generik. */
+  deny: Partial<Record<AgentActionKind, string>>
+  /** false = steer/advance hanya untuk task milik agent itu sendiri. */
+  anyTask: boolean
+}
+
+const STAFF: AgentPermission = {
+  allow: ['steer', 'advance'],
+  deny: {
+    pauseAll: 'agent staff tidak boleh menghentikan seluruh sistem — jeda semua adalah keputusan operator atau orkestrasi',
+    spawn: 'agent staff tidak boleh mengubah siapa yang ada di kantor — memunculkan/menyembunyikan rekan adalah tugas orkestrasi',
+    kill: 'agent staff tidak boleh menghapus agent lain — kill menghapus profil dan seluruh tugasnya permanen',
+    create: 'agent staff tidak boleh membuat profil agent baru — menambah anggota tim adalah keputusan orkestrasi',
+    setModel: 'agent staff tidak boleh mengganti model profil — itu mengubah biaya dan perilaku agent lain',
+  },
+  anyTask: false,
+}
+
+/**
+ * TABEL IZIN PER ROLE — satu-satunya tempat aturan ini hidup. Route dan UI membaca dari sini.
+ *
+ * Orkestrasi (ceo/orchestrator) boleh semua aksi dan boleh menyentuh task siapa pun, karena
+ * membagi dan menggerakkan kerja orang lain memang tugasnya. Manager memimpin satu divisi:
+ * boleh mengatur anggota dan task, tapi tidak menghentikan SELURUH sistem dan tidak menghapus
+ * agent. Jeda semua tetap tunduk pada `checkAction` (wajib beralasan) — tabel ini tidak
+ * pernah melonggarkannya.
+ */
+export const AGENT_PERMISSIONS: Record<AgentRole, AgentPermission> = {
+  ceo: { allow: [...AGENT_ACTIONS], deny: {}, anyTask: true },
+  orchestrator: { allow: [...AGENT_ACTIONS], deny: {}, anyTask: true },
+  manager: {
+    allow: ['spawn', 'create', 'setModel', 'steer', 'advance'],
+    deny: {
+      pauseAll: 'manager memimpin satu divisi — menghentikan SELURUH sistem adalah keputusan ceo/orchestrator',
+      kill: 'manager tidak boleh menghapus agent — kill menghapus profil dan tugasnya permanen, minta ceo/orchestrator',
+    },
+    anyTask: true,
+  },
+  backend: STAFF,
+  frontend: STAFF,
+  qa: STAFF,
+  researcher: STAFF,
+  devops: STAFF,
+  marketing: STAFF,
+  seo: STAFF,
+  content: STAFF,
+  affiliator: STAFF,
+}
+
+export type AgentActionRequest = {
+  agent: string
+  role: AgentRole
+  action: AgentActionKind
+  taskId?: string
+  /** Pemilik task yang disasar; null = task tanpa pemilik, undefined = tidak diketahui. */
+  taskAssignee?: string | null
+  reason?: string
+}
+
+/**
+ * Apakah sebuah agent boleh meminta aksi ini. Fungsi MURNI, sama seperti `checkAction`.
+ *
+ * Urutannya: identitas → tabel role → kepemilikan task → aturan operator lama (`checkAction`).
+ * Aturan lama SELALU ikut dinilai di ujung, jadi izin per agent hanya bisa MENAMBAH larangan.
+ */
+export function checkAgentAction(req: AgentActionRequest): Verdict {
+  const agent = (req.agent || '').trim()
+  if (!agent) return { allowed: false, why: 'aksi atas nama agent butuh nama agent' }
+  const perm = (AGENT_PERMISSIONS as Record<string, AgentPermission | undefined>)[req.role]
+  if (!perm) return { allowed: false, why: `role "${req.role}" tidak dikenal — tidak ada izin untuknya` }
+  if (!AGENT_ACTIONS.includes(req.action)) {
+    return { allowed: false, why: `aksi "${req.action}" tidak dikenal` }
+  }
+  const denied = perm.deny[req.action]
+  if (denied) return { allowed: false, why: `${agent}: ${denied}` }
+  if (!perm.allow.includes(req.action)) {
+    return { allowed: false, why: `${agent}: aksi "${req.action}" tidak ada di daftar izin role ${req.role}` }
+  }
+
+  if (req.action === 'steer' || req.action === 'advance') {
+    if (!req.taskId || !/^t_[0-9a-f]{8}$/.test(req.taskId)) {
+      return { allowed: false, why: `${req.action} butuh id task yang sah` }
+    }
+    if (!perm.anyTask) {
+      if (req.taskAssignee === undefined) {
+        return { allowed: false, why: `${agent}: pemilik ${req.taskId} tidak diketahui — hanya boleh menyentuh task miliknya sendiri` }
+      }
+      if (req.taskAssignee !== agent) {
+        const owner = req.taskAssignee ? `milik ${req.taskAssignee}` : 'tidak punya pemilik'
+        return { allowed: false, why: `${agent}: ${req.taskId} ${owner}, bukan milik ${agent} — role ${req.role} hanya boleh menyentuh task miliknya sendiri` }
+      }
+    }
+  }
+
+  // Aturan operator lama tetap berlaku untuk agent: jeda semua wajib beralasan.
+  if (req.action === 'pauseAll') return checkAction({ action: 'pauseAll', reason: req.reason })
+  return { allowed: true }
+}
+
+/** Ringkasan tabel untuk UI: label "boleh" dan "tidak boleh" per role. */
+export function agentPermissionSummary(): Record<AgentRole, { allow: string[]; deny: string[]; anyTask: boolean }> {
+  const out = {} as Record<AgentRole, { allow: string[]; deny: string[]; anyTask: boolean }>
+  for (const [role, p] of Object.entries(AGENT_PERMISSIONS) as [AgentRole, AgentPermission][]) {
+    out[role] = {
+      allow: p.allow.map((a) => AGENT_ACTION_LABEL[a]),
+      deny: AGENT_ACTIONS.filter((a) => !p.allow.includes(a)).map((a) => AGENT_ACTION_LABEL[a]),
+      anyTask: p.anyTask,
+    }
+  }
+  return out
 }
 
 /**

@@ -148,7 +148,19 @@ Aksi mengubah keadaan, jadi paling akhir dan harus ada konfirmasi.
         batch {claim, claim, failed}. Server uji dimatikan (port 3413 bebas).
         `npm run selftest` (94/94: no review trail reads as claim; reviewed reads verified +
         reviewer; invalidated review does not verify; batch cap neutral — never false "verified")
-- [ ] **5.4** Batas izin per agent.
+- [x] **5.4** Batas izin per agent.
+      — terbukti: tabel tunggal AGENT_PERMISSIONS + checkAgentAction() pure di control.ts
+        (aksi tertutup: pauseAll/spawn/kill/create/setModel/steer/advance). Staff (backend…affiliator)
+        dilarang pauseAll/spawn/kill/create/setModel, alasan eksplisit per aksi; steer/advance hanya
+        task miliknya sendiri (penolakan menyebut pemiliknya). ceo/orchestrator boleh semua; manager
+        tanpa pauseAll/kill. pauseAll tetap lewat checkAction (wajib beralasan) — tidak dilonggarkan.
+        Penolakan tercatat: denyAudit() di audit.ts (niat + hasil ok:false "DITOLAK: <alasan>"),
+        dipakai route control POST (penolakan checkAction yang dulu diam-diam) dan route agents POST
+        bila ada `onBehalfOf: {agent, role}` (tolak = 400 refused); tanpa onBehalfOf perilaku lama.
+        GET agents/control mengembalikan ringkasan izin; AgentSpawnPanel satu baris
+        "boleh: … · tidak boleh: …" per agent. `npm run typecheck`, `npm run build`,
+        `npm run selftest` (96/96: staff pause/spawn/kill + task orang lain ditolak & tercatat;
+        orchestrator pause beralasan + steer task sendiri lolos; tanpa alasan tetap ditolak & tercatat)
 
 ---
 

@@ -20,10 +20,19 @@ import {
   readBoard,
   readStuck,
 } from '../src/lib/hermes/board'
-import { ACTION_EFFECT, ESTOP_PATH, checkAction, readPause, type ActionKind } from '../src/lib/hermes/control'
+import {
+  ACTION_EFFECT,
+  AGENT_ACTIONS,
+  AGENT_PERMISSIONS,
+  ESTOP_PATH,
+  checkAction,
+  checkAgentAction,
+  readPause,
+  type ActionKind,
+} from '../src/lib/hermes/control'
 import { MIN_SAMPLES, readProviders, type ProviderStat } from '../src/lib/hermes/providers'
 import { planFallback, readFallback } from '../src/lib/hermes/fallback'
-import { auditPathFor, beginAudit, readAudit } from '../src/lib/hermes/audit'
+import { auditPathFor, beginAudit, denyAudit, readAudit } from '../src/lib/hermes/audit'
 import { readUsage } from '../src/lib/hermes/observability'
 import { EVIDENCE_BATCH_CAP, EVIDENCE_MARK_LABEL, readEvidence, splitEvidenceBatch, type EvidenceInput } from '../src/lib/hermes/evidence'
 import { markClass, markOf } from '../src/components/useEvidenceMarks'
@@ -4086,6 +4095,133 @@ void (async () => {
     }
 
     check('every control action is recorded before it runs, with its outcome', problems.length === 0, problems.join(' | '))
+  }
+
+  /* ------------------------------------------- batas izin per agent (5.4) -- */
+  // Agent staff tidak boleh menghentikan sistem, memunculkan/menghapus rekan, atau menyentuh
+  // task orang lain — dan setiap penolakan HARUS tercatat, bukan ditolak diam-diam.
+  {
+    const problems: string[] = []
+    const tmp = mkdtempSync(join(tmpdir(), 'perm-'))
+    const path = join(tmp, 'a.jsonl')
+    process.env.OFFICE_AUDIT_PATH = path
+    if (auditPathFor() !== path) {
+      problems.push(`override path audit tidak berlaku (dapat ${auditPathFor()}) — tes akan mengotori berkas asli`)
+    }
+    // Pola yang dipakai route: nilai, dan bila ditolak, catat denial.
+    const attempt = (req: Parameters<typeof checkAgentAction>[0]) => {
+      const v = checkAgentAction(req)
+      if (!v.allowed) {
+        denyAudit({ at: new Date().toISOString(), action: `agent:${req.action}`, agent: req.agent, taskId: req.taskId, effect: 'uji' }, v.why)
+      }
+      return v
+    }
+    try {
+      // Tabel tertutup: tiap role memutuskan SETIAP aksi, dan tiap larangan staff beralasan sendiri.
+      for (const [role, p] of Object.entries(AGENT_PERMISSIONS)) {
+        for (const a of AGENT_ACTIONS) {
+          if (p.allow.includes(a) && p.deny[a]) problems.push(`${role}.${a} sekaligus boleh dan dilarang`)
+        }
+      }
+      const staffWhy = new Set(['pauseAll', 'spawn', 'kill'].map((a) => AGENT_PERMISSIONS.backend.deny[a as 'kill']))
+      if (staffWhy.size !== 3 || staffWhy.has(undefined)) problems.push('larangan staff tidak punya alasan eksplisit per aksi')
+
+      // a) staff: pauseAll / kill / spawn ditolak dengan alasan eksplisit, dan tercatat.
+      const forbidden = [
+        { action: 'pauseAll' as const, reason: 'provider 5xx terus', must: /menghentikan seluruh sistem/ },
+        { action: 'kill' as const, must: /menghapus agent lain/ },
+        { action: 'spawn' as const, must: /siapa yang ada di kantor/ },
+      ]
+      for (const f of forbidden) {
+        const v = attempt({ agent: 'budi', role: 'backend', action: f.action, reason: f.reason })
+        if (v.allowed) problems.push(`staff boleh ${f.action}`)
+        else if (!f.must.test(v.why)) problems.push(`alasan penolakan ${f.action} tidak eksplisit: "${v.why}"`)
+      }
+      // b) task milik orang lain: ditolak, menyebut pemiliknya.
+      const other = attempt({ agent: 'budi', role: 'frontend', action: 'steer', taskId: 't_12345678', taskAssignee: 'sari' })
+      if (other.allowed) problems.push('staff boleh mengarahkan task milik agent lain')
+      else if (!/milik sari/.test(other.why)) problems.push(`penolakan task orang lain tidak menyebut pemiliknya: "${other.why}"`)
+      if (checkAgentAction({ agent: 'budi', role: 'qa', action: 'advance', taskId: 't_12345678' }).allowed) {
+        problems.push('staff boleh menggerakkan task yang pemiliknya tidak diketahui')
+      }
+      if (checkAgentAction({ agent: 'budi', role: 'qa', action: 'advance', taskId: 't_12345678', taskAssignee: null }).allowed) {
+        problems.push('staff boleh menggerakkan task tanpa pemilik')
+      }
+
+      // Semua penolakan tercatat: ok:false, alasannya terbaca lewat readAudit.
+      const denied = readAudit(50).filter((e) => e.ok === false)
+      if (denied.length !== 4) problems.push(`${denied.length} penolakan tercatat, bukan 4`)
+      for (const want of ['agent:pauseAll', 'agent:kill', 'agent:spawn', 'agent:steer']) {
+        const e = denied.find((d) => d.action === want)
+        if (!e) problems.push(`penolakan ${want} tidak tercatat`)
+        else if (!/^DITOLAK: /.test(e.result || '') || e.agent !== 'budi') problems.push(`catatan ${want} tanpa alasan/pelaku`)
+      }
+      if (!denied.some((d) => /milik sari/.test(d.result || ''))) problems.push('alasan "milik sari" tidak terbaca di audit')
+      // Niat juga tercatat (pola beginAudit), bukan cuma hasilnya.
+      if (readAudit(50).filter((e) => e.result === undefined).length !== 4) problems.push('catatan niat penolakan hilang')
+
+      // Jangan over-blocking: yang sah lolos.
+      const okCases = [
+        { agent: 'ops', role: 'orchestrator' as const, action: 'pauseAll' as const, reason: 'provider 5xx terus' },
+        { agent: 'budi', role: 'backend' as const, action: 'steer' as const, taskId: 't_12345678', taskAssignee: 'budi' },
+        { agent: 'budi', role: 'backend' as const, action: 'advance' as const, taskId: 't_12345678', taskAssignee: 'budi' },
+        { agent: 'bos', role: 'ceo' as const, action: 'kill' as const },
+        { agent: 'mira', role: 'manager' as const, action: 'steer' as const, taskId: 't_12345678', taskAssignee: 'sari' },
+      ]
+      for (const c of okCases) {
+        const v = attempt(c)
+        if (!v.allowed) problems.push(`${c.role} ${c.action} yang sah ditolak: ${v.why}`)
+      }
+      if (readAudit(50).filter((e) => e.ok === false).length !== 4) problems.push('aksi yang lolos ikut tercatat sebagai penolakan')
+
+      // c) aturan lama tidak dilonggarkan: orkestrasi tetap tidak boleh pauseAll tanpa alasan.
+      for (const role of ['ceo', 'orchestrator'] as const) {
+        const v = checkAgentAction({ agent: 'ops', role, action: 'pauseAll' })
+        if (v.allowed) problems.push(`${role} boleh menjeda semua tanpa alasan`)
+        else if (v.why !== (checkAction({ action: 'pauseAll' }) as { why: string }).why) problems.push(`${role} pauseAll tanpa alasan ditolak dengan alasan yang berbeda dari checkAction`)
+      }
+      if (checkAgentAction({ agent: 'mira', role: 'manager', action: 'pauseAll', reason: 'provider 5xx terus' }).allowed) {
+        problems.push('manager boleh menghentikan seluruh sistem')
+      }
+      if (checkAgentAction({ agent: 'x', role: 'hacker' as never, action: 'steer', taskId: 't_12345678', taskAssignee: 'x' }).allowed) {
+        problems.push('role tak dikenal diberi izin')
+      }
+      if (checkAgentAction({ agent: '', role: 'ceo', action: 'kill' }).allowed) problems.push('aksi tanpa nama agent diizinkan')
+    } finally {
+      delete process.env.OFFICE_AUDIT_PATH
+      rmSync(tmp, { recursive: true, force: true })
+    }
+    check('agent limits: staff cannot pause/spawn/kill or touch others\' tasks, every denial is audited, legit actions pass', problems.length === 0, problems.join(' | '))
+  }
+
+  // Regresi checkAction lama + penolakan operator ikut tercatat (lubang "ditolak diam-diam").
+  {
+    const problems: string[] = []
+    const tmp = mkdtempSync(join(tmpdir(), 'deny-'))
+    const path = join(tmp, 'a.jsonl')
+    process.env.OFFICE_AUDIT_PATH = path
+    try {
+      if (auditPathFor() !== path) problems.push('override path audit tidak berlaku')
+      const dangerous: { action: ActionKind; taskId?: string }[] = [
+        { action: 'pauseAll' },
+        { action: 'unblock', taskId: 't_12345678' },
+        { action: 'release' },
+      ]
+      for (const d of dangerous) {
+        const v = checkAction(d)
+        if (v.allowed) problems.push(`${d.action} tanpa alasan/id lolos`)
+        else denyAudit({ at: new Date().toISOString(), action: d.action, taskId: d.taskId, effect: ACTION_EFFECT[d.action].effect }, v.why)
+      }
+      const rows = readAudit(20)
+      if (rows.length !== 6) problems.push(`${rows.length} baris, bukan 6 (niat + hasil per penolakan)`)
+      if (!rows.some((r) => r.ok === false && r.action === 'pauseAll' && /wajib disertai alasan/.test(r.result || ''))) {
+        problems.push('penolakan pauseAll tanpa alasan tidak tercatat dengan alasannya')
+      }
+    } finally {
+      delete process.env.OFFICE_AUDIT_PATH
+      rmSync(tmp, { recursive: true, force: true })
+    }
+    check('dangerous operator actions without a reason are still refused, and the refusal is audited', problems.length === 0, problems.join(' | '))
   }
 
   /* ---------------------------------------------- bukti hasil kerja (5.2) -- */
