@@ -2518,19 +2518,45 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
       const ped = cyl(0.06, 0.09, RACING_SEAT_H, 0x3a3f45, 10, 0.7)
       ped.position.y = RACING_SEAT_H / 2
       rg.add(ped)
-      // wheel column, forward of the seat (the rig faces -z when facing==0)
-      const column = cyl(0.035, 0.035, 0.6, 0x3a3f45, 10, 0.7)
-      column.rotation.x = 0.5
-      column.position.set(0, 0.62, -0.52)
+      // ---- the wheel column, and the wheel that sits on its DRIVER-side end -----------
+      //
+      // The rig faces local -z, so the DRIVER sits at z 0 and the pedals/monitor are at
+      // negative z. The column therefore leans with its TOP toward the driver (+z) and its
+      // BASE toward the pedals.
+      //
+      // Reported: "posisi setir pada rig simulator itu kebalik bro, malah ada di belakang
+      // tiangnya (kearah monitor) bukan kearah kursi". Measured on the built mesh: the
+      // column runs from z -0.664 (base, at the pedals) to z -0.376 (top, at the driver),
+      // and the wheel was bolted at z -0.66 — the BASE end. So the wheel sat on the far side
+      // of the column with nothing on the driver's end.
+      //
+      // The wheel is now placed FROM the column's top itself, never from a literal, so the
+      // two cannot drift apart again.
+      const COL_LEN = 0.6
+      const COL_TILT = 0.5
+      /** The column's centre in the rig's local space. */
+      const COL_MID = { y: 0.62, z: -0.52 }
+      // The cylinder's axis is its local +Y, so a tilt of COL_TILT sends the TOP to
+      // (0, cos, sin) * half-length — i.e. up and toward the driver.
+      const colTop = {
+        y: COL_MID.y + Math.cos(COL_TILT) * (COL_LEN / 2),
+        z: COL_MID.z + Math.sin(COL_TILT) * (COL_LEN / 2),
+      }
+      const column = cyl(0.035, 0.035, COL_LEN, 0x3a3f45, 10, 0.7)
+      column.rotation.x = COL_TILT
+      column.position.set(0, COL_MID.y, COL_MID.z)
       rg.add(column)
-      // the wheel: a ring plus a hub
+      // The wheel: a ring plus a hub, seated ON the column's top and facing the driver. A
+      // torus lies in its own XY plane with its axis along +Z, so `COL_TILT - PI/2` turns
+      // that axis onto the column's — the wheel is perpendicular to the column, which is
+      // what a real rack is, instead of lying across it.
       const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), stdMat(0x1c1f24, { rough: 0.5 }))
-      wheel.rotation.x = 0.5
-      wheel.position.set(0, 0.86, -0.66)
+      wheel.rotation.x = COL_TILT - Math.PI / 2
+      wheel.position.set(0, colTop.y, colTop.z)
       rg.add(wheel)
       const hub = cyl(0.055, 0.055, 0.04, 0x2a2f34, 12, 0.5)
-      hub.rotation.x = Math.PI / 2 + 0.5
-      hub.position.set(0, 0.86, -0.66)
+      hub.rotation.x = COL_TILT
+      hub.position.set(0, colTop.y, colTop.z)
       rg.add(hub)
       // the pedal box, on the floor ahead
       const pedals = box(0.34, 0.09, 0.26, 0x2a2f34, { metal: 0.4, rough: 0.5 })

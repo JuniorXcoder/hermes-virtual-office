@@ -66,6 +66,7 @@ import {
   WALL_T,
   ROOM_SIGNS,
   RACING_RIGS,
+  RACING_SEAT_H,
   DARTBOARD,
   TERRACE_PROPS,
   ROOM_PROPS,
@@ -76,7 +77,7 @@ import { buildOffice } from '../src/lib/office/build'
 import type { IdleSpot, MeetingRoomId } from '../src/lib/office/layout'
 import type { AgentRole } from '@/types/hermes'
 import { IDLE_SPOTS } from '../src/lib/office/layout'
-import { buildAvatar, FOREARM } from '../src/lib/office/avatar'
+import { buildAvatar, FIST_FROM_ELBOW, FOREARM } from '../src/lib/office/avatar'
 import { ACTIVITIES, animate, type Activity } from '../src/lib/office/anim'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
 import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
@@ -3250,6 +3251,74 @@ void (async () => {
     }
 
     check('the lounge TV plays the race feed while a rig is occupied', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE WHEEL SITS ON THE COLUMN'S DRIVER-SIDE END, AND THE HANDS GRIP IT.
+  //
+  // Reported: "posisi setir pada rig simulator itu kebalik bro, malah ada di belakang tiangnya
+  // (kearah monitor) bukan kearah kursi". The wheel had been bolted to the column's BASE end
+  // (z -0.66, the pedal side) instead of its TOP (z -0.376, the driver side) — the two ends
+  // are 0.29 m apart and the difference is exactly which side of the post it reads as.
+  //
+  // Both halves are measured: a wheel in the right place that the hands float 0.4 m above is
+  // not the fix either. The hand positions come from a REAL posed avatar, not arithmetic.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const scene = new THREE.Scene()
+    buildOffice(scene, 12)
+    scene.updateMatrixWorld(true)
+
+    const rig = RACING_RIGS[0]
+    const at = (n: any) => { const v = new THREE.Vector3(); n.getWorldPosition(v); return v }
+    let wheel: THREE.Vector3 | null = null
+    let column: THREE.Vector3 | null = null
+    scene.traverse((n: any) => {
+      if (!n.isMesh || !n.geometry) return
+      const v = at(n)
+      if (Math.hypot(v.x - rig.x, v.z - rig.z) > 1.6) return
+      const g: any = n.geometry
+      if (g.type === 'TorusGeometry' && !wheel) wheel = v
+      if (g.type === 'CylinderGeometry' && Math.abs((g.parameters?.height ?? 0) - 0.6) < 0.01 && !column) column = v
+    })
+
+    const seat = new THREE.Vector3(rig.x, RACING_SEAT_H, rig.z)
+    const flat = (a: THREE.Vector3, b: THREE.Vector3) => Math.hypot(a.x - b.x, a.z - b.z)
+    if (!wheel) {
+      problems.push('no steering wheel on the rig')
+    } else if (!column) {
+      problems.push('no wheel column on the rig, so the wheel has no side to be on')
+    } else if (flat(wheel, seat) >= flat(column, seat)) {
+      problems.push(
+        `the wheel is on the FAR side of its column: ${flat(wheel, seat).toFixed(2)} m from the seat ` +
+        `vs the column centre's ${flat(column, seat).toFixed(2)} m`,
+      )
+    }
+
+    if (wheel) {
+      const av = buildAvatar('backend')
+      av.group.position.set(rig.x, 0, rig.z)
+      av.group.rotation.y = rig.facing + Math.PI
+      const a = { avatar: av, activity: 'racing' as Activity, ease: 1, phase: 0.2, meetingTalking: false }
+      for (let i = 0; i < 20; i++) animate(a, i * 0.1, 1 / 60)
+      av.group.updateMatrixWorld(true)
+      const fist = (limb: any) => {
+        const e = new THREE.Vector3()
+        limb.elbow.getWorldPosition(e)
+        const down = new THREE.Vector3(0, -1, 0).applyQuaternion(limb.elbow.getWorldQuaternion(new THREE.Quaternion()))
+        return e.addScaledVector(down, FIST_FROM_ELBOW)
+      }
+      av.arms.forEach((limb: any, i: number) => {
+        const gap = fist(limb).distanceTo(wheel as THREE.Vector3)
+        // the rim is r 0.16; allow a hand's width of slop around it
+        if (gap > 0.26) {
+          problems.push(`${i === 0 ? 'left' : 'right'} fist is ${gap.toFixed(2)} m from the wheel centre, so it does not grip the rim (r 0.16)`)
+        }
+      })
+    }
+
+    check("the racing wheel is on the column's driver side and the hands grip it", problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

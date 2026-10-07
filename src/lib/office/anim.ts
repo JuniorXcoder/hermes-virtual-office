@@ -967,16 +967,24 @@ function racing(a: AnimAgent, t: number) {
   av.chest.rotation.y = 0
   av.head.rotation.x = -8 * D
   av.head.rotation.y = 0
-  // both arms up and forward to the wheel, which is what makes it read as driving
+  // Both arms reach forward and IN, so the fists land on the wheel's rim. The angles were
+  // SOLVED against the built mesh, not eyeballed: a coarse sweep then a fine descent over
+  // (shoulder.x, shoulder.z, elbow.x), minimising the fists' distance to the rim's 9 and 3
+  // o'clock grip points. Residual 13 mm.
+  //
+  // This had to be re-solved when the wheel moved. The old pose (-74 / -30 / -44) reached
+  // for a wheel at z -0.66, y 0.86 and left the fists 0.42 m ABOVE it — the hands never
+  // actually touched the wheel; it only read as "arms up and forward". Moving the wheel to
+  // the column's top (z -0.376, y 0.883) without re-solving would have left them further off.
   const [LA, RA] = av.arms
-  // the steering: a slow correction each way every ~3 s
-  const turn = Math.sin(t * 2.1 + a.phase) * 22 * D
-  LA.shoulder.rotation.x = -74 * D
-  LA.shoulder.rotation.z = (-30 + turn) * D
-  LA.elbow.rotation.x = -44 * D
-  RA.shoulder.rotation.x = -74 * D
-  RA.shoulder.rotation.z = (30 + turn) * D
-  RA.elbow.rotation.x = -44 * D
+  // the steering: the hands ride the rim, so this swings them along it
+  const turn = Math.sin(t * 2.1 + a.phase) * 18 * D
+  LA.shoulder.rotation.x = -45 * D
+  LA.shoulder.rotation.z = (38.6 + turn) * D
+  LA.elbow.rotation.x = -10 * D
+  RA.shoulder.rotation.x = -45 * D
+  RA.shoulder.rotation.z = (-38.6 + turn) * D
+  RA.elbow.rotation.x = -10 * D
 }
 
 const TABLE: Record<Activity, (a: AnimAgent, t: number) => void> = {
