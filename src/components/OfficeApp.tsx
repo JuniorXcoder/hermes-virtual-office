@@ -9,6 +9,7 @@ import TaskPanel from './TaskPanel'
 import MeetingPanel from './MeetingPanel'
 import AgentSpawnPanel from './AgentSpawnPanel'
 import CronPanel from './CronPanel'
+import SystemPanel from './SystemPanel'
 import ChatPanel from './ChatPanel'
 import NewTaskDialog from './NewTaskDialog'
 import KanbanModal from './KanbanModal'
@@ -46,6 +47,7 @@ export default function OfficeApp() {
   const [meetOpen, setMeetOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
   const [cronOpen, setCronOpen] = useState(false)
+  const [systemOpen, setSystemOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [boardOpen, setBoardOpen] = useState(false)
   const [qaOpen, setQaOpen] = useState(false)
@@ -135,6 +137,9 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setCronOpen(true)}>
             Cron
           </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setSystemOpen(true)}>
+            Sistem
+          </button>
           <button className="vp-btn vp-btn-ghost" onClick={() => setQaOpen(true)}>
             Q&amp;A{qaOpen_count ? ` (${qaOpen_count})` : ''}
           </button>
@@ -177,6 +182,7 @@ export default function OfficeApp() {
         onChanged={() => void loadTasks()}
       />
       <CronPanel open={cronOpen} onClose={() => setCronOpen(false)} />
+      <SystemPanel open={systemOpen} onClose={() => setSystemOpen(false)} />
       <ChatPanel
         open={chatOpen}
         onClose={() => setChatOpen(false)}
