@@ -29,6 +29,7 @@ type UsageRow = {
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
+  apiCalls: number
   costUsd: number | null
 }
 
@@ -61,6 +62,7 @@ type Observability = {
     totalOutput: number
     totalCache: number
     knownCostUsd: number
+    windowDays: number
     unpricedModels: string[]
     unpricedTokens: number
     rows: UsageRow[]
@@ -196,7 +198,11 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
             {/* ---------- biaya ---------- */}
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Pemakaian & biaya {dbStale && <span className="ml-2 text-amber-400">· DATA BASI ({age(u!.ageSeconds)})</span>}
+                Pemakaian & biaya{' '}
+                <span className="text-slate-500">
+                  ({u!.windowDays >= 365 ? 'seumur hidup' : `${u!.windowDays} hari terakhir`})
+                </span>
+                {dbStale && <span className="ml-2 text-amber-400">· DATA BASI ({age(u!.ageSeconds)})</span>}
               </h3>
               <div className="grid grid-cols-4 gap-2 text-xs">
                 <div className="rounded border border-slate-700 bg-slate-800/50 p-2">
@@ -236,6 +242,7 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
                       <th className="text-left font-normal">model</th>
                       <th className="text-right font-normal">masuk</th>
                       <th className="text-right font-normal">keluar</th>
+                      <th className="text-right font-normal">panggilan</th>
                       <th className="text-right font-normal">biaya</th>
                     </tr>
                   </thead>
@@ -245,6 +252,7 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
                         <td className="py-1 pr-2 font-mono text-[11px]">{r.model}</td>
                         <td className="py-1 text-right text-slate-400">{tok(r.inputTokens)}</td>
                         <td className="py-1 text-right text-slate-400">{tok(r.outputTokens)}</td>
+                        <td className="py-1 text-right text-slate-400">{nfmt(r.apiCalls)}</td>
                         <td className="py-1 text-right font-semibold text-emerald-400">
                           {r.costUsd == null ? <span className="text-amber-500">belum ada harga</span> : usd(r.costUsd)}
                         </td>

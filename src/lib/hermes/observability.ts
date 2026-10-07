@@ -115,6 +115,8 @@ export type UsageRow = {
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
+  /** Berapa panggilan API. Pembeda antara "model mahal" dan "model sering dipakai". */
+  apiCalls: number
   /** null = tarif tidak diketahui. JANGAN ditampilkan sebagai 0. */
   costUsd: number | null
 }
@@ -122,6 +124,8 @@ export type UsageRow = {
 export type UsageReport = {
   /** Kapan data ini dibaca. Setiap angka di panel ini punya umur. */
   readAt: string
+  /** Jendela yang BENAR-BENAR diterapkan. Ditampilkan supaya tidak ada jendela yang diam-diam diabaikan. */
+  windowDays: number
   /** Umur file DB dalam detik — dasar untuk bilang "basi". */
   ageSeconds: number
   totalTokens: number
@@ -151,6 +155,7 @@ export function readUsage(days = 30): UsageReport {
   const empty: UsageReport = {
     readAt: now.toISOString(),
     ageSeconds: -1,
+    windowDays: days,
     totalTokens: 0,
     totalInput: 0,
     totalOutput: 0,
@@ -162,25 +167,43 @@ export function readUsage(days = 30): UsageReport {
     recentSessions: [],
   }
   const db = openState()
-  if (!db) return empty
+  if (!db) return { ...empty, failure: 'state.db tidak ditemukan atau tidak bisa dibuka' }
 
   try {
-    const since = new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10)
+    // BATAS WAKTUNYA DARI `last_seen`, DAN INI PERNAH SALAH.
+    //
+    // Versi pertama fungsi ini menghitung `since` lalu MEMBUANGNYA — filter tanggalnya tidak
+    // pernah diterapkan, jadi dropdown "1 hari / 7 hari / 30 hari" menampilkan angka yang SAMA
+    // untuk ketiganya. Kolom yang bisa diklik tapi tidak mengubah apa pun lebih buruk daripada
+    // tidak ada kolom: ia membuat orang mengira sudah memilih.
+    //
+    // `session_model_usage` TIDAK punya kolom waktu sendiri, tapi ia punya `last_seen` (unix
+    // detik) — waktu terakhir model itu dipakai di sesi itu. Itu yang dipakai.
+    const cutoff = days >= 365 ? 0 : now.getTime() / 1000 - days * 86_400
 
-    // Per model. Sengaja tanpa filter tanggal dulu: tabel ini kecil (ratusan baris) dan
-    // biaya seumur hidup lebih jujur daripada biaya yang terpotong diam-diam.
     const rows = db
       .prepare(
         `SELECT model,
                 COALESCE(billing_provider, '') AS provider,
                 COALESCE(SUM(input_tokens), 0) AS inp,
                 COALESCE(SUM(output_tokens), 0) AS out,
-                COALESCE(SUM(cache_read_tokens), 0) AS cache
+                COALESCE(SUM(cache_read_tokens), 0) AS cache,
+                COALESCE(SUM(api_call_count), 0) AS calls,
+                MAX(COALESCE(last_seen, 0)) AS latest
          FROM session_model_usage
+         WHERE ? = 0 OR COALESCE(last_seen, 0) >= ?
          GROUP BY model, provider
          ORDER BY SUM(input_tokens) DESC`,
       )
-      .all() as { model: string; provider: string; inp: number; out: number; cache: number }[]
+      .all(cutoff, cutoff) as {
+      model: string
+      provider: string
+      inp: number
+      out: number
+      cache: number
+      calls: number
+      latest: number
+    }[]
 
     const out: UsageRow[] = []
     let knownCost = 0
@@ -208,6 +231,7 @@ export function readUsage(days = 30): UsageReport {
         inputTokens: r.inp,
         outputTokens: r.out,
         cacheReadTokens: r.cache,
+        apiCalls: r.calls,
         costUsd: cost,
       })
     }
@@ -256,6 +280,7 @@ export function readUsage(days = 30): UsageReport {
 
     return {
       readAt: now.toISOString(),
+      windowDays: days,
       ageSeconds: stat ? Math.round((now.getTime() - stat) / 1000) : -1,
       totalTokens: totalIn + totalOut,
       totalInput: totalIn,

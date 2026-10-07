@@ -42,6 +42,8 @@ type BoardReadout = {
 
 type ActionEffect = { label: string; effect: string; danger: boolean }
 
+type AuditEntry = { at: string; action: string; taskId?: string; reason?: string; result?: string; ok?: boolean }
+
 type Payload = {
   board: BoardReadout
   pause: { paused: boolean; reason: string | null; engagedAt: string | null }
@@ -60,6 +62,7 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
   const [steerText, setSteerText] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [actions, setActions] = useState<Record<string, ActionEffect>>({})
+  const [audit, setAudit] = useState<AuditEntry[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -70,6 +73,7 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
       if (b?.error) throw new Error(b.error.message)
       setData(b)
       setActions(c?.actions || {})
+      setAudit(c?.audit || [])
       setErr(null)
     } catch (e) {
       setErr((e as Error).message)
@@ -348,6 +352,34 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
                 </div>
               )}
             </section>
+
+            {/* ---------- catatan aksi ---------- */}
+            {audit.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Yang pernah ditekan
+                </h3>
+                <div className="space-y-1">
+                  {audit.slice(0, 8).map((a, i) => (
+                    <div key={i} className="rounded border border-slate-700 bg-slate-800/40 p-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={a.ok === false ? 'text-red-300' : 'text-slate-300'}>
+                          {a.action}
+                          {a.taskId ? ` · ${a.taskId}` : ''}
+                        </span>
+                        <span className="shrink-0 text-slate-500">{a.at.slice(11, 19)}</span>
+                      </div>
+                      {a.reason && <div className="mt-0.5 text-slate-400">alasan: {a.reason}</div>}
+                      {a.result && (
+                        <div className={a.ok === false ? 'mt-0.5 text-red-400' : 'mt-0.5 text-slate-500'}>
+                          {a.result}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <div className="text-[11px] text-slate-500">
               {b!.total} task · {Object.entries(b!.byStatus).map(([k, v]) => `${k} ${v}`).join(' · ')}

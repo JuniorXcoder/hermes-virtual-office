@@ -11,6 +11,7 @@ import {
 import { advanceTask, pauseAll, resumeAll, steerTask } from '@/lib/hermes/kanban'
 import { applyFallback, planFallback } from '@/lib/hermes/fallback'
 import { readProviders } from '@/lib/hermes/providers'
+import { beginAudit, readAudit } from '@/lib/hermes/audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +38,7 @@ export async function GET() {
     pause: readPause(),
     estopPath: ESTOP_PATH,
     actions: ACTION_EFFECT,
+    audit: readAudit(30),
   })
 }
 
@@ -73,6 +75,19 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Dicatat SEBELUM aksinya berjalan. Aksi yang menghentikan sistem bisa ikut mematikan
+  // proses ini, dan catatan yang ditulis belakangan akan hilang justru pada kasus yang
+  // paling perlu dicatat.
+  const audit = beginAudit({
+    at: new Date().toISOString(),
+    action: body.steer ? 'steer' : body.action,
+    taskId: body.taskId,
+    reason: (body.reason || '').slice(0, 300),
+    effect: body.steer
+      ? 'mengirim arahan ke worker yang sedang jalan'
+      : ACTION_EFFECT[body.action]?.effect || '',
+  })
+
   try {
     // Arahkan (steer) bukan salah satu `ActionKind`: ia tidak mengubah status, cuma mengirim
     // teks. Ditangani terpisah supaya tidak ikut masuk daftar aksi yang mengubah keadaan.
@@ -84,6 +99,7 @@ export async function POST(req: NextRequest) {
         )
       }
       await steerTask(body.taskId, body.steer)
+      audit.finish(`arahan dikirim ke ${body.taskId}`, true)
       return NextResponse.json({ ok: true, did: `arahan dikirim ke ${body.taskId}`, pause: readPause() })
     }
 
@@ -141,8 +157,10 @@ export async function POST(req: NextRequest) {
     }
     // Keadaan pause dibaca ULANG dari sentinel setelah aksi, jadi UI tidak perlu menebak
     // apakah aksinya berhasil — yang dilaporkan adalah kenyataannya.
+    audit.finish(did, true)
     return NextResponse.json({ ok: true, did, pause: readPause() })
   } catch (err) {
+    audit.finish(`GAGAL: ${(err as Error).message}`, false)
     return NextResponse.json(
       { error: { code: 'action_failed', message: (err as Error).message, status: 502 } },
       { status: 502 },

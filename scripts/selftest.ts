@@ -23,6 +23,8 @@ import {
 import { ACTION_EFFECT, ESTOP_PATH, checkAction, readPause, type ActionKind } from '../src/lib/hermes/control'
 import { MIN_SAMPLES, readProviders, type ProviderStat } from '../src/lib/hermes/providers'
 import { planFallback, readFallback } from '../src/lib/hermes/fallback'
+import { auditPathFor, beginAudit, readAudit } from '../src/lib/hermes/audit'
+import { readUsage } from '../src/lib/hermes/observability'
 import type { Task } from '../src/types/hermes'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
@@ -3911,6 +3913,113 @@ void (async () => {
     if (!Array.isArray(readFallback())) problems.push('readFallback tidak mengembalikan daftar')
 
     check('providers are ranked from measured data, and never recommended on thin evidence', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // JENDELA WAKTU YANG BENAR-BENAR MENERAPKAN SESUATU.
+  //
+  // Versi pertama `readUsage` menghitung batas waktunya lalu MEMBUANGNYA — dropdown
+  // "1 hari / 7 hari / 30 hari" menampilkan angka yang SAMA untuk ketiganya. Itu bug yang
+  // tidak terlihat sebagai bug: panelnya rapi, angkanya masuk akal, dan kolomnya bisa diklik.
+  // Yang salah cuma satu — memilih tidak mengubah apa pun.
+  //
+  // Jadi yang diuji bukan "apakah filternya ada di kode", tapi "apakah angkanya BENAR-BENAR
+  // berbeda antar jendela".
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const long = readUsage(3650)
+    const short = readUsage(1)
+
+    if (long.windowDays !== 3650) problems.push(`jendela 3650 hari dilaporkan sebagai ${long.windowDays}`)
+    if (short.windowDays !== 1) problems.push(`jendela 1 hari dilaporkan sebagai ${short.windowDays}`)
+
+    // Jendela panjang TIDAK BOLEH lebih kecil dari jendela pendek — kalau sama, filternya mati.
+    if (long.totalInput < short.totalInput) {
+      problems.push('jendela panjang menghasilkan token lebih sedikit daripada jendela pendek')
+    }
+    // DAN PEMBANDINGNYA ADALAH JUMLAH BARIS, BUKAN JUMLAH TOKEN.
+    //
+    // Percobaan pertama membandingkan `totalInput` dengan `===`, dan itu LOLOS padahal
+    // filternya benar-benar mati: dengan bug aktif, jendela 1 hari memberi 65 baris (sama
+    // dengan seumur hidup) tapi tokennya beda ~24 ribu, jadi `===` bernilai false dan
+    // guard-nya diam. Membandingkan dua angka besar yang kebetulan berbeda bukan pengujian.
+    //
+    // Yang benar: kalau ada riwayat di luar jendela pendek, jendela pendeknya WAJIB punya
+    // lebih sedikit baris. 65 vs 10 itu bukti; 842 juta vs 842 juta bukan.
+    const outsideShort = long.rows.filter((r) => !short.rows.some((s) => s.model === r.model && s.provider === r.provider))
+    if (long.rows.length > short.rows.length && outsideShort.length === 0) {
+      problems.push('ada baris di luar jendela pendek, tapi jendela pendek mengembalikan jumlah baris yang sama — batas waktunya tidak diterapkan')
+    }
+    if (long.rows.length > short.rows.length && short.rows.length === 0) {
+      problems.push('jendela pendek mengembalikan nol baris padahal ada pemakaian baru-baru ini')
+    }
+    // Bukti langsung: ada riwayat lebih tua dari 1 hari, maka jendela 1 hari HARUS lebih kecil.
+    const newest = Math.max(...long.recentSessions.map((s) => Date.parse(s.startedAt || '')).filter(Number.isFinite))
+    if (Number.isFinite(newest) && Date.now() - newest < 86_400_000 && long.rows.length > short.rows.length) {
+      // ada pemakaian dalam 24 jam terakhir, DAN total lebih besar dari jendela pendek:
+      // berarti filternya benar-benar memotong sesuatu.
+    } else if (long.rows.length === short.rows.length && long.rows.length > 1) {
+      problems.push(
+        'jendela 1 hari dan 3650 hari mengembalikan jumlah baris yang SAMA padahal ada lebih dari satu model — batas waktunya kemungkinan besar tidak diterapkan',
+      )
+    }
+
+    // Setiap baris yang dilaporkan harus punya angka panggilan. Tanpa itu, "model mahal" dan
+    // "model sering dipakai" tidak bisa dibedakan.
+    for (const r of long.rows) {
+      if (typeof r.apiCalls !== 'number') {
+        problems.push(`baris ${r.model} tidak punya jumlah panggilan API`)
+        break
+      }
+    }
+
+    check('the cost panel actually applies its time window', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CATATAN AKSI: SEBUAH JEDA HARUS PUNYA PELAKU.
+  //
+  // Tanpa catatan, "sistem berhenti jam 3" jadi peristiwa tanpa pelaku — tidak ada cara tahu
+  // siapa yang menghentikan atau kenapa. Dan itu pertanyaan pertama yang ditanya orang.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const tmp = mkdtempSync(join(tmpdir(), 'audit-'))
+    const path = join(tmp, 'a.jsonl')
+    process.env.OFFICE_AUDIT_PATH = path
+    // PENJAGA: kalau override-nya tidak berlaku, tes ini akan menulis ke berkas ASLI dan
+    // mengotori riwayat aksi sungguhan. Itu pernah terjadi — 9 baris palsu masuk ke
+    // data/control-audit.jsonl. Jadi path-nya DIPERIKSA dulu, bukan diandaikan.
+    const realPath = auditPathFor()
+    if (realPath !== path) {
+      problems.push(`override path audit tidak berlaku (dapat ${realPath}) — tes akan mengotori berkas asli`)
+    }
+
+    try {
+      // Catatan harus ada SEBELUM aksinya dijalankan: aksi yang menghentikan sistem bisa ikut
+      // mematikan proses ini, dan catatan yang ditulis belakangan hilang tepat pada kasus yang
+      // paling perlu dicatat.
+      const h = beginAudit({ at: new Date().toISOString(), action: 'pauseAll', reason: '5xx terus', effect: 'kerja baru berhenti' })
+      const midway = readAudit(5)
+      if (midway.length !== 1) problems.push('catatan belum ada SEBELUM aksinya dijalankan')
+      else if (midway[0].action !== 'pauseAll' || midway[0].reason !== '5xx terus') {
+        problems.push('catatan awal tidak memuat aksi dan alasannya')
+      }
+      h.finish('semua kerja baru dihentikan', true)
+      const after = readAudit(5)
+      // Dua baris: niat, lalu hasil. Niatnya HARUS tetap ada setelah hasilnya ditulis.
+      if (after.length !== 2) problems.push(`catatan niat hilang setelah hasilnya ditulis (${after.length} baris)`)
+      else if (after[0].result !== 'semua kerja baru dihentikan' || after[0].ok !== true) {
+        problems.push('hasil aksi tidak tercatat')
+      }
+      if (!after.some((e) => !e.result)) problems.push('catatan niat tertimpa oleh hasilnya — tidak ada jejak apa yang DIMINTA')
+    } finally {
+      delete process.env.OFFICE_AUDIT_PATH
+      rmSync(tmp, { recursive: true, force: true })
+    }
+
+    check('every control action is recorded before it runs, with its outcome', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */
