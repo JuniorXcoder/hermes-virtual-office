@@ -11,6 +11,7 @@
  */
 import { readFileSync, rmSync } from 'node:fs'
 import { facingProblems } from '../src/lib/office/facing'
+import { assessHealth, HEALTH_COLOR, HEALTH_THRESHOLDS } from '../src/lib/office/health'
 import { wrapAngle } from '../src/lib/office/layout'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -3589,6 +3590,116 @@ void (async () => {
     }
 
     check('every partition reaches the wall it meets, with no gap at the junction', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // KESEHATAN: PENILAIANNYA, DAN LAMPU DI LOBBY.
+  //
+  // Ambangnya adalah satu-satunya hal di kantor ini yang menentukan "ada yang salah", dan
+  // kalau penilaiannya salah, lampunya salah. Jadi yang diuji bukan tampilannya, tapi
+  // KEPUTUSANNYA: apakah kasus yang jelas gawat dinilai gawat, dan apakah kasus aman dinilai
+  // aman. Ruangan yang lampunya selalu merah sama tidak bergunanya dengan yang selalu hijau.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const T = HEALTH_THRESHOLDS
+
+    const ok = assessHealth({
+      logAgeSeconds: 30,
+      errorCount: 2,
+      serverErrorCount: 0,
+      costUsd: 12,
+      unpricedModels: 0,
+    })
+    if (ok.level !== 'ok') problems.push(`sistem yang sehat dinilai "${ok.level}": ${ok.reasons.join(', ')}`)
+
+    // kegagalan provider yang membatalkan kerja harus MERAH, bukan kuning
+    const bad = assessHealth({
+      logAgeSeconds: 30,
+      errorCount: T.ERR_WARN + 1,
+      serverErrorCount: T.SVR_BAD,
+      costUsd: 12,
+      unpricedModels: 0,
+    })
+    if (bad.level !== 'bad') problems.push(`provider gagal ${T.SVR_BAD}x dinilai "${bad.level}", seharusnya bad`)
+    if (!bad.reasons.length) problems.push('tingkat gawat tanpa alasan — lampu tanpa alasan tidak berguna')
+
+    // PEMANTAUAN MATI HARUS MERAH, walaupun tidak ada error sama sekali. Log yang diam berarti
+    // tidak tahu ada berapa masalah, dan itu lebih buruk daripada masalah yang terlihat.
+    const blind = assessHealth({
+      logAgeSeconds: T.LOG_STALE_SEC + 60,
+      errorCount: 0,
+      serverErrorCount: 0,
+      costUsd: 0,
+      unpricedModels: 0,
+    })
+    if (blind.level !== 'bad') {
+      problems.push(`log basi ${T.LOG_STALE_SEC + 60}s dengan nol error dinilai "${blind.level}" — memantau yang mati terlihat seperti sehat`)
+    }
+
+    // pembacaan yang gagal = tidak tahu = merah, apa pun isinya
+    const cantRead = assessHealth({
+      logAgeSeconds: 30,
+      errorCount: 0,
+      serverErrorCount: 0,
+      costUsd: 0,
+      unpricedModels: 0,
+      failure: 'no such column: session_id',
+    })
+    if (cantRead.level !== 'bad') problems.push('pembacaan gagal tapi tidak dinilai bad')
+
+    // model tanpa tarif = kuning, karena total biayanya jadi batas bawah
+    const unpriced = assessHealth({
+      logAgeSeconds: 30,
+      errorCount: 0,
+      serverErrorCount: 0,
+      costUsd: 5,
+      unpricedModels: 3,
+    })
+    if (unpriced.level !== 'warn') problems.push('model tanpa tarif tidak ditandai')
+
+    // TINGKAT TIDAK BOLEH TURUN. Satu alasan bad di antara beberapa warn harus menghasilkan bad.
+    const mixed = assessHealth({
+      logAgeSeconds: 30,
+      errorCount: T.ERR_BAD,
+      serverErrorCount: 0,
+      costUsd: T.COST_WARN + 1,
+      unpricedModels: 2,
+    })
+    if (mixed.level !== 'bad') problems.push(`alasan bad tercampur warn dinilai "${mixed.level}"`)
+
+    // ── lampunya benar-benar ada di scene dan benar-benar berubah warna ──
+    {
+      const scene3d = new THREE.Scene()
+      const office = buildOffice(scene3d, 12)
+      scene3d.updateMatrixWorld(true)
+      const bulb = (office as unknown as { healthBulb?: THREE.Mesh }).healthBulb
+      if (!bulb) {
+        problems.push('lampu kesehatan tidak ada di scene, jadi tidak ada yang bisa memberi tahu')
+      } else {
+        const matOf = () => (bulb.material as THREE.MeshStandardMaterial)
+        const seen = new Map<string, number>()
+        for (const lvl of ['ok', 'warn', 'bad'] as const) {
+          office.setHealth(lvl)
+          const c = matOf().color.getHex()
+          if (c !== HEALTH_COLOR[lvl]) {
+            problems.push(`tingkat ${lvl} tidak menyalakan warna yang benar (${c.toString(16)} != ${HEALTH_COLOR[lvl].toString(16)})`)
+          }
+          seen.set(lvl, c)
+        }
+        if (new Set(seen.values()).size !== 3) {
+          problems.push('dua tingkat menyalakan warna yang SAMA — kalau begitu lampunya tidak membedakan apa pun')
+        }
+        // merah harus paling menarik perhatian
+        office.setHealth('bad')
+        const badI = matOf().emissiveIntensity
+        office.setHealth('ok')
+        const okI = matOf().emissiveIntensity
+        if (!(badI > okI)) problems.push(`lampu merah (${badI}) tidak lebih terang dari hijau (${okI})`)
+      }
+    }
+
+    check('health tells danger from calm, and the lobby lamp shows it', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

@@ -89,6 +89,7 @@ import {
   roomCentre,
   type Palette,
 } from './layout'
+import { HEALTH_COLOR, type Health } from './health'
 
 /* ------------------------------------------------------------- primitives -- */
 
@@ -470,6 +471,10 @@ export type OfficeProps = {
    * per frame with whether any avatar is driving; it is a no-op unless the state changed.
    */
   setTvRacing: (on: boolean) => void
+  /** Nyalakan lampu kesehatan di lobby. Warnanya dari `health.ts`, bukan dari sini. */
+  setHealth: (level: Health['level']) => void
+  /** Bola lampunya, untuk selftest. */
+  healthBulb: THREE.Mesh
   applyPalette: (hour: number) => void
   dispose: () => void
 }
@@ -1459,6 +1464,42 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     plate.rotation.y = p.face
     group.add(plate)
   }
+
+  /* ---------------------------------------------------- lampu kesehatan -- */
+  //
+  // Satu lampu di atas meja resepsionis, di lobby, tempat orang lewat.
+  //
+  // Kenapa di sini dan bukan di panel: provider sudah balas 503 berjam-jam tanpa ada yang
+  // tahu, karena panel harus DIBUKA dulu. Lampu ini dilihat tanpa siapa pun melakukan apa pun.
+  // Warnanya diputuskan `office/health.ts`, bukan di sini — supaya lampu dan panel tidak
+  // pernah berbeda pendapat soal "ada yang salah".
+  //
+  // Bentuknya sengaja sederhana: tiang pendek + bola yang menyala sendiri. Bola yang bercahaya
+  // terbaca dari seberang ruangan; kotak berwarna tidak.
+  const healthGroup = new THREE.Group()
+  healthGroup.position.set(RECEPTION.x, 0, RECEPTION.z - 1.0)
+  const postMat = stdMat(0x2b3138, { metal: 0.5, rough: 0.4 })
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 1.5, 10), postMat)
+  post.position.y = 0.75
+  post.castShadow = true
+  healthGroup.add(post)
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.05, 12), postMat)
+  base.position.y = 0.025
+  healthGroup.add(base)
+  const healthMat = new THREE.MeshStandardMaterial({
+    color: HEALTH_COLOR.ok,
+    emissive: HEALTH_COLOR.ok,
+    emissiveIntensity: 0.9,
+    roughness: 0.3,
+  })
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 12), healthMat)
+  bulb.position.y = 1.62
+  healthGroup.add(bulb)
+  // cahaya sungguhan, supaya warna lampunya jatuh ke lantai dan tidak hanya jadi bola berwarna
+  const healthLight = new THREE.PointLight(HEALTH_COLOR.ok, 0, 4.5, 2)
+  healthLight.position.y = 1.62
+  healthGroup.add(healthLight)
+  group.add(healthGroup)
 
   /* ------------------------------- under the second floor: the terrace --- */
   // The covered floor beneath the executive slab. Placed from TERRACE_PROPS so the mesh and
@@ -3111,10 +3152,30 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     mat.needsUpdate = true
   }
 
+  /**
+   * Nyalakan lampu kesehatan sesuai tingkatnya.
+   *
+   * Dipanggil dari scene saat data observability berubah. Warnanya dari HEALTH_COLOR, jadi
+   * lampu di kantor dan angka di panel tidak mungkin berbeda pendapat.
+   */
+  function setHealth(level: Health['level']) {
+    const c = HEALTH_COLOR[level]
+    healthMat.color.setHex(c)
+    healthMat.emissive.setHex(c)
+    // MERAH harus menarik perhatian dari seberang ruangan; hijau justru harus tenang, supaya
+    // yang menyala terang selalu berarti ada yang perlu dilihat.
+    healthMat.emissiveIntensity = level === 'bad' ? 1.5 : level === 'warn' ? 1.1 : 0.55
+    healthLight.color.setHex(c)
+    healthLight.intensity = level === 'bad' ? 2.4 : level === 'warn' ? 1.2 : 0.35
+  }
+
   return {
     group,
     monitors,
     lamps,
+    healthBulb: bulb,
+    healthGroup,
+    setHealth,
     boardSurface: boardSurface as THREE.Mesh,
     streaks,
     streetGroup,

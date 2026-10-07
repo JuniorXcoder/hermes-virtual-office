@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
 import type { AvatarState, QaThread } from './office/types'
+import type { Health } from './office/health'
 import { fetchJson } from './api'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
@@ -32,7 +33,17 @@ type State = {
   /** Open Q&A thread count per responsible — the badge. */
   qaOpen: Record<string, number>
 
+  /**
+   * Kesehatan sistem, dinilai dari data Hermes yang sebenarnya.
+   *
+   * Disimpan di store (bukan di dalam panel) karena LAMPU DI LOBBY membacanya. Kalau hanya
+   * panel yang punya, lampunya tidak akan pernah tahu apa-apa.
+   */
+  health: Health
+
   load: () => Promise<void>
+  /** Baca kesehatan. Terpisah dari load(), karena kegagalannya tidak boleh menjatuhkan kantor. */
+  loadHealth: () => Promise<void>
   loadOffice: () => Promise<void>
   setOfficeName: (name: string) => Promise<void>
   /** Batch position flush from the 3D scene — the DB write behind idle wander. */
@@ -68,6 +79,27 @@ export const useOffice = create<State>((set) => ({
   avatars: [],
   qa: [],
   qaOpen: {},
+
+  // Mulai dari TIDAK TAHU, bukan dari hijau. Sistem yang belum selesai membaca keadaannya
+  // tidak boleh tampil sehat — itu kebohongan yang paling gampang terjadi.
+  health: { level: 'warn', reasons: ['belum membaca keadaan sistem'] },
+
+  async loadHealth() {
+    try {
+      const res = await fetchJson<{ health?: Health }>('/api/hermes/observability?days=365&hours=24', {
+        cache: 'no-store',
+      })
+      if (!res.ok || !res.data?.health) {
+        set({ health: { level: 'bad', reasons: [res.error || 'tidak bisa membaca keadaan sistem'] } })
+        return
+      }
+      set({ health: res.data.health })
+    } catch (e) {
+      // Kalau pembacaannya sendiri gagal, itu MERAH — bukan "tetap seperti tadi". Diam
+      // beberapa detik itu wajar; tapi menampilkan keadaan lama sebagai sekarang tidak.
+      set({ health: { level: 'bad', reasons: [`tidak bisa membaca keadaan sistem: ${(e as Error).message}`] } })
+    }
+  },
 
   async load() {
     const res = await fetchJson<{ tasks?: Task[]; agents?: Agent[] }>('/api/hermes/tasks', {
@@ -186,6 +218,7 @@ export function startPolling() {
         useOffice.getState().load(),
         useOffice.getState().refreshMeeting(),
         useOffice.getState().loadOffice(),
+        useOffice.getState().loadHealth(),
       ])
     } finally {
       running = false

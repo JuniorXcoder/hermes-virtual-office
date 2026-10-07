@@ -20,6 +20,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 
 import { buildOffice, type OfficeProps } from './build'
+import type { Health } from './health'
 import { buildAvatar } from './avatar'
 import { animate, type Activity, type AnimAgent } from './anim'
 import { blocked, onStairArea, planRoute, stairCentre, BODY_R, type Level, type Waypoint } from './nav'
@@ -1255,6 +1256,16 @@ export function createScene(
     say,
     setHour,
     setQuality,
+    /**
+     * Nyalakan lampu kesehatan di lobby.
+     *
+     * Kantor harus bisa menunjukkan bahwa ada yang salah TANPA ada yang membuka panel. Provider
+     * sudah balas 503 berjam-jam tanpa ketahuan, dan itu persis kegagalan yang mau dicegah:
+     * pemantauan yang hanya bekerja kalau ditengok bukan pemantauan.
+     */
+    setHealth(level: Health['level']) {
+      office.setHealth(level)
+    },
     start,
     stop,
     resize,

@@ -25,6 +25,7 @@ export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
   const tasks = useOffice((s) => s.tasks)
   const meeting = useOffice((s) => s.meeting)
   const view = useOffice((s) => s.view)
+  const health = useOffice((s) => s.health)
   const setPeek = useOffice((s) => s.setPeek)
   const select = useOffice((s) => s.select)
   const openTask = useOffice((s) => s.openTask)
@@ -88,6 +89,12 @@ export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
     if (view === '3d') sceneRef.current?.start()
     else sceneRef.current?.stop()
   }, [view])
+
+  // Lampu kesehatan di lobby. Ini yang membuat kantornya SENDIRI yang memberi tahu, bukan
+  // menunggu ada yang membuka panel.
+  useEffect(() => {
+    sceneRef.current?.setHealth(health.level)
+  }, [health])
 
   // relay new meeting turns into speech bubbles
   const said = useRef(0)
