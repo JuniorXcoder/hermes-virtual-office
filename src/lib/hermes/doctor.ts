@@ -875,7 +875,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
         label: 'A2A menolak path tak dikenal',
         status: ft.status,
         detail: ft.detail,
-        fix: ft.status === 'fail' ? 'perbarui/tambal Hermes sisi server (fallthrough path tak dikenal ke agent default) lalu restart gateway' : '',
+        fix: ft.status === 'fail' ? 'pasang tambalan sisi-Hermes docs/patches/hermes-a2a-unknown-path-404.README.md (git apply --check, git apply, curl verifikasi, hermes gateway restart); bila Hermes versi baru sudah menolak path asing bawaan, tambalan tidak perlu' : '',
       })
     } catch (err) {
       checks.push({

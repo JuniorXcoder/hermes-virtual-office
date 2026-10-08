@@ -5661,6 +5661,39 @@ void (async () => {
     if (ftBad.status !== 'fail' || !ftBad.detail.includes('DIJAWAB')) problems.push('dijawab-default bukan fail')
     const ftHttp = fallthroughVerdict(false, '')
     if (ftHttp.status !== 'pass') problems.push('tolak-HTTP bukan pass')
+    // HERMES-PATCH-1 (check sendiri — bukan numpang selfrepair-1): string fix
+    // fallthrough WAJIB menyebut berkas dokumennya (doctor yang bilang "tambal
+    // Hermes" tanpa jalan keluar = bikin frustrasi). Baca source doctor, bukan
+    // klaim. Juga: patch .patch harus ada + README-nya.
+    {
+      const hp: string[] = []
+      const docSrcFt = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+      if (!/docs\/patches\/hermes-a2a-unknown-path-404\.README\.md/.test(docSrcFt)) {
+        hp.push('string fix fallthrough tak menyebut berkas dokumen patch')
+      }
+      const patchP = new URL('../docs/patches/hermes-a2a-unknown-path-404.patch', import.meta.url)
+      const readmeP = new URL('../docs/patches/hermes-a2a-unknown-path-404.README.md', import.meta.url)
+      let patchTxt = ''
+      try { patchTxt = readFileSync(patchP, 'utf8') } catch { hp.push('docs/patches/hermes-a2a-unknown-path-404.patch hilang') }
+      try {
+        const readmeTxt = readFileSync(readmeP, 'utf8')
+        if (!/hermes update/i.test(readmeTxt)) hp.push('README patch tanpa bagian setelah-hermes-update')
+        if (!/git apply --check/.test(readmeTxt)) hp.push('README patch tanpa langkah git-apply')
+      } catch { hp.push('README patch hilang') }
+      // NEGATIF: patch tulisan-tangan-ulang = tolak. Harus hasil git diff asli
+      // (header diff --git + index + hunk @@ ... @@).
+      if (patchTxt && (!/^diff --git a\/plugins\/platforms\/a2a\/adapter\.py/m.test(patchTxt) || !/^@@ -\d+,\d+ \+\d+,\d+ @@/m.test(patchTxt))) {
+        hp.push('patch bukan hasil git diff (ditulis tangan?)')
+      }
+      if (patchTxt && !/no agent is served at/.test(patchTxt)) hp.push('patch tanpa guard no-agent-is-served')
+      // Guardrail operator (threat_patterns/memory_tool_store/cronjob_prompt_scan/
+      // skills_guard) DILARANG ikut dibungkus — pilihan lingkungan kerja, bukan
+      // keperluan aplikasi.
+      if (patchTxt && /threat_patterns|memory_tool_store|cronjob_prompt_scan|skills_guard/.test(patchTxt)) {
+        hp.push('patch membungkus guardrail operator (dilarang)')
+      }
+      check('hermes-patch-1: fix fallthrough sebut berkas patch + patch git-diff asli + tanpa guardrail', hp.length === 0, hp.join(' | '))
+    }
 
     // 5. Round-trip served basi di config TMP (bukan config asli): tanam entri
     // basi + cabut via removeServedAgent → hilang; cabut lagi = removed:false

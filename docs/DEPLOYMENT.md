@@ -239,6 +239,36 @@ ALLOWED_ORIGINS=203.0.113.10:3300,office.example.com
 | Rapat mode `simulasi` | `AI_BASE_URL` + `AI_API_KEY` (endpoint OpenAI-compatible). Tanpa ini rapat menjawab "not configured". |
 | Rapat mode `a2a` | **Tidak** butuh AI_BASE_URL/AI_API_KEY (agent nyata yang bicara), tapi butuh platform A2A nyala + ≥ 2 agent di-serve + restart gateway sesudahnya |
 
+### 7.7 Kontrak Hermes yang dibutuhkan
+
+Perilaku sisi-Hermes yang aplikasi ini andalkan. Masing-masing bisa diperiksa
+sendiri (ganti `9900` dengan port A2A bila beda); panel **"Siap pakai?"**
+memeriksa yang bertanda dokter otomatis.
+
+1. **POST ke path agent tak dikenal DITOLAK, bukan dijawab agent default.**
+   Butuh tambalan `docs/patches/hermes-a2a-unknown-path-404.README.md`
+   (Hermes v0.21.2 bawaan tidak menolak). Tanpa ini, panggilan ke path yang
+   salah dijawab agent default — laporan menyesatkan. Dokter: `fallthrough`.
+   ```bash
+   curl -s -X POST http://127.0.0.1:9900/zz-tidak-ada \
+     -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":"cek","method":"message/send","params":{"message":{"role":"user","parts":[{"text":"ping"}]}}}'
+   # harus: HTTP 400 berisi "no agent is served at"
+   ```
+2. **GET ke path tak dikenal = 404.** Perilaku bawaan (bukan tambalan).
+   ```bash
+   curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:9900/zz-tidak-ada
+   # harus: 404
+   ```
+3. **Daftar served dibaca sekali saat gateway boot.** Entri baru butuh
+   `hermes gateway restart` — tanpa itu agent baru "tidak bisa dipanggil".
+   Dokter: periksa `needsRestart` (mtime config vs waktu start gateway).
+4. **Entri served harus `local: false`.** Dengan `local: true` request dijawab
+   sesi gateway yang hidup dengan identitas agent yang salah. (Lihat 7.3.)
+5. **Platform A2A nyala + mengikat loopback.** `hermes config get
+   platforms.a2a --json` harus `enabled: true`; tanpa token, server mengikat
+   127.0.0.1 saja (bawaan aman). (Lihat 7.1.)
+
 ---
 
 ## 8. Security Hardening Checklist

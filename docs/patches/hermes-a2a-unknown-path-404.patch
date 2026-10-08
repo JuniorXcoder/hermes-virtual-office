@@ -1,0 +1,57 @@
+diff --git a/plugins/platforms/a2a/adapter.py b/plugins/platforms/a2a/adapter.py
+index 79fbe9f..d4b7c13 100644
+--- a/plugins/platforms/a2a/adapter.py
++++ b/plugins/platforms/a2a/adapter.py
+@@ -445,6 +445,20 @@ class A2AAdapter(BasePlatformAdapter):
+         if agent.get("slug") == "" and tenant and (matches := [a for a in self._agents.values() if a.get("tenant") == tenant]):
+             agent = matches[0]
+             route = {"agent": agent, "subpath": route["subpath"]}
++        # An unmatched URL prefix must NOT silently reach the default (root) agent. The root agent
++        # serves "/" plus the public subpaths; any other unserved prefix is a routing mistake, and
++        # answering it means the served-agent list enforces nothing — a caller asking for somebody
++        # else's path gets the operator's own agent replying under that name.
++        if agent.get("slug") == "":
++            sub = str(route.get("subpath") or "/")
++            head = "/" + sub.strip("/").split("/", 1)[0] if sub.strip("/") else "/"
++            if head not in ("/", "/health", "/metrics", "/.well-known"):
++                served = sorted({a.get("path") or "/" for a in self._agents.values()})
++                return {"error": (
++                    f"no agent is served at {sub!r}; served paths: {', '.join(served)} "
++                    "(the served list is read at gateway startup, so a newly added entry needs a "
++                    "gateway restart)"
++                )}
+         expected = str(agent.get("tenant") or "")
+         if tenant and expected and tenant != expected:
+             return {"error": f"tenant {tenant!r} does not match routed agent {agent.get('slug') or 'default'}"}
+@@ -585,8 +599,17 @@ class A2AAdapter(BasePlatformAdapter):
+                 profile, "SELECT id FROM sessions WHERE title = ? ORDER BY started_at DESC LIMIT 1",
+                 (session_title,), "A2A: could not lookup forwarded session")
+             cmd = ["hermes", "chat", "-q", framed_text, "-Q", "--source", "a2a"] + (["--resume", session_id] if session_id else [])
++            # A served agent whose profile was deleted must not be dispatched at all: `hermes chat`
++            # with HERMES_HOME pointing at a missing directory CREATES that directory and only then
++            # fails, so the caller got a raw Python traceback (leaking internal paths) and an empty
++            # profile home was left behind after every call.
++            home = _profile_home(profile)
++            if home and not os.path.isdir(home):
++                return (f"profile {profile!r} does not exist ({home}); it is still in the A2A served "
++                        f"list but the profile is gone — remove the served entry or recreate the "
++                        f"profile."), protocol.STATE_FAILED
+             env = {**os.environ, "HERMES_A2A_PEER": peer}
+-            if home := _profile_home(profile):
++            if home:
+                 env["HERMES_HOME"] = home
+             start = time.time()
+             try:
+@@ -598,6 +621,12 @@ class A2AAdapter(BasePlatformAdapter):
+                 return security.redact_outbound(f"Profile dispatch failed: {e}"), protocol.STATE_FAILED
+             if proc.returncode != 0:
+                 msg = (proc.stderr or proc.stdout or f"profile exited {proc.returncode}").strip()
++                # Never hand a peer a Python traceback: it is unreadable and leaks host paths.
++                # Keep the exception line, and point at the log for the rest.
++                if "Traceback (most recent call last)" in msg:
++                    lines = [ln for ln in msg.splitlines() if ln.strip()]
++                    msg = (f"profile {profile!r} failed to answer: {lines[-1] if lines else 'failed'} "
++                           "(full traceback is in the gateway log)")
+                 return security.redact_outbound(msg[-2000:]), protocol.STATE_FAILED
+             if not session_id and (session_id := _state_db(
+                     profile, "SELECT id FROM sessions WHERE source = 'a2a' AND started_at >= ? ORDER BY started_at DESC LIMIT 1",
