@@ -117,7 +117,8 @@ export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
 
   return (
     <div className="absolute inset-0">
-      <canvas ref={canvasRef} className="block h-full w-full" />
+      {/* touch-none: tanpa ini, menyeret jari di HP men-scroll halaman, bukan memutar kamera. */}
+      <canvas ref={canvasRef} className="block h-full w-full touch-none" />
       <div ref={labelRef} className="pointer-events-none absolute inset-0" />
     </div>
   )

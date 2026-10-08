@@ -10,6 +10,15 @@
   --green: #46c08a;
   --amber: #f0b556;
   --red: #e5726f;
+
+  /* Satu skala lapisan untuk seluruh app. Banner error paling atas: kalau backend
+     mati saat panel terbuka, operator harus tetap melihatnya. */
+  --z-side: 15;
+  --z-topbar: 20;
+  --z-sheet: 45;
+  --z-full: 50;
+  --z-dialog: 55;
+  --z-banner: 70;
 }
 
 html,
@@ -32,7 +41,7 @@ kbd {
 .vp-topbar {
   position: absolute;
   inset: 0 0 auto 0;
-  z-index: 20;
+  z-index: var(--z-topbar);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -49,6 +58,10 @@ kbd {
   background-clip: text;
   color: transparent;
 }
+.vp-topbar-nav { margin-left: auto; }
+/* Panggung tampilan (3D/Kanban/Sprite). Di desktop ia tetap di BELAKANG top bar yang
+   transparan; di layar sempit ia digeser ke bawah top bar (lihat media query). */
+.vp-stage { position: absolute; inset: 0; }
 .vp-dot {
   width: 8px;
   height: 8px;
@@ -99,7 +112,7 @@ kbd {
   top: 58px;
   bottom: 12px;
   width: min(420px, 40vw);
-  z-index: 15;
+  z-index: var(--z-side);
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -149,7 +162,9 @@ kbd {
 
 .vp-input,
 .vp-panel textarea,
-.vp-panel select {
+.vp-panel select,
+.vp-full-vp textarea,
+.vp-full-vp select {
   background: #0f161b;
   border: 1px solid #34424c;
   border-radius: 8px;
@@ -246,7 +261,7 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
   position: absolute;
   right: 12px;
   top: 58px;
-  z-index: 16;
+  z-index: calc(var(--z-side) + 1);
   width: 250px;
   display: flex;
   flex-direction: column;
@@ -262,7 +277,8 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
 .vp-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /* Di atas panel layar penuh: "+ Tugas" (atau tombol N) bisa ditekan saat panel terbuka. */
+  z-index: var(--z-dialog);
   background: #05080ac9;
   display: grid;
   place-items: center;
@@ -461,11 +477,14 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
 
 
 .vp-banner {
-  position: absolute;
+  /* fixed + lapisan teratas: panel layar penuh tidak boleh menyembunyikan error.
+     pointer-events none supaya banner tidak pernah menghalangi tombol di bawahnya. */
+  position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 46px;
-  z-index: 30;
+  bottom: calc(46px + env(safe-area-inset-bottom));
+  z-index: var(--z-banner);
+  pointer-events: none;
   background: #3a1c1b;
   border: 1px solid #6d3a37;
   border-radius: 9px;
@@ -484,15 +503,223 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
   color: #e8dfc4; background: #25343b; border: 2px solid #62736a; font: 700 11px ui-monospace, monospace;
   image-rendering: pixelated;
 }
-.pixel-office { image-rendering: pixelated; margin: 0 auto 24px; border: 4px solid #596b61; box-shadow: 0 8px 0 #10191e; }
+/* Kanvasnya 820px intrinsik; tanpa batas ini layar HP harus digeser ke samping untuk
+   melihat separuh kantor. Klik tetap tepat karena SpriteOffice memetakan lewat rect. */
+.pixel-office {
+  image-rendering: pixelated; margin: 0 auto 24px; border: 4px solid #596b61; box-shadow: 0 8px 0 #10191e;
+  max-width: calc(100% - 8px); height: auto;
+}
+
+/* ------------------------------------------------------ full-screen panel -- */
+/* Kerangka bersama FullPanel.tsx. Hanya tata letak di sini; warna varian `slate`
+   (Papan/Sistem) tetap dari kelas Tailwind di komponennya supaya tampilannya persis
+   seperti sebelum dipindah. */
+.vp-full {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.vp-full-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  outline: none;
+}
+.vp-full-head { flex: 0 0 auto; }
+.vp-full-title { flex: 1; min-width: 0; }
+.vp-full-title h2 { margin: 0; }
+/* Body yang menggulir, bukan kartunya: header (judul + tutup) selalu terlihat. */
+.vp-full-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 44×44: ukuran minimum yang masih bisa ditekan jari tanpa meleset. */
+.vp-full-x {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.vp-full-vp {
+  width: min(768px, 100%);
+  max-height: 88vh;
+  background: #101820;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px #000a;
+}
+.vp-full-vp.tall { height: min(88vh, 860px); }
+.vp-full-vp > .vp-full-head { padding: 10px 12px 10px 16px; }
+.vp-full-vp > .vp-full-head h2 { font-size: 15px; }
+.vp-full-vp .vp-full-x { color: var(--muted); margin: -8px -6px -8px 0; }
+.vp-full-vp > .vp-full-body.vp-pad { padding: 16px; }
+
+/* --------------------------------------------- layar kecil-menengah (≤1180) -- */
+/* Satu baris top bar butuh ±1110px (logo+status, 7 tombol, saklar tampilan); di
+   bawah itu tombol paling kanan dulu keluar layar. Jadi: baris 1 = merek + saklar,
+   baris 2 = tombol panel. Batas 1180 dipilih supaya angka agent/tugas yang panjang
+   tidak mendorongnya keluar lagi. */
+@media (max-width: 1180px) {
+  .vp-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'brand view' 'nav nav';
+    row-gap: 6px;
+    background: #0b1015f2;
+  }
+  .vp-topbar-brand { grid-area: brand; min-width: 0; }
+  .vp-topbar-view { grid-area: view; }
+  .vp-topbar-nav { grid-area: nav; flex-wrap: wrap; margin-left: 0; }
+  .vp-topbar-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Top bar dua baris menutup terlalu banyak kalau tetap melayang di atas panggung. */
+  .vp-stage { top: var(--vp-topbar-h, 96px); }
+  .vp-k2d { padding-top: 16px; }
+  .vp-sprite-office { padding-top: 0; }
+  .vp-sprite-hud { top: 0; }
+
+  .vp-panel { top: calc(var(--vp-topbar-h, 96px) + 8px); width: min(420px, calc(50vw - 18px)); }
+  .vp-card-float { top: calc(var(--vp-topbar-h, 96px) + 8px); }
+}
+
+/* ------------------------------------------------------------ HP (≤720) -- */
 @media (max-width: 720px) {
-  .vp-panel { width: calc(100vw - 24px); }
-  .vp-topbar { align-items: flex-start; flex-direction: column; gap: 5px; padding: 7px 9px; }
-  .vp-topbar > div:last-child { width: 100%; flex-wrap: wrap; gap: 4px; }
-  .vp-topbar .vp-btn { padding: 6px 8px; font-size: 11px; }
-  .vp-topbar .vp-seg { margin-left: auto; }
-  .vp-topbar .vp-seg button { padding: 6px 8px; }
-  .vp-sprite-office { padding-top: 96px !important; }
+  .vp-topbar {
+    padding: max(7px, env(safe-area-inset-top)) max(9px, env(safe-area-inset-right)) 7px
+      max(9px, env(safe-area-inset-left));
+    column-gap: 8px;
+  }
+  /* Logo di atas, status di bawahnya: muat dalam tinggi saklar (40px) dan status tidak
+     terpotong jadi "12 a…" di layar 360px. */
+  .vp-topbar-brand { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
+  .vp-topbar-status { flex-basis: 100%; font-size: 11px; }
+  /* Tujuh tombol tidak muat di 360px. Wrap membuat top bar 3 baris (±140px) dan menelan
+     kanvas; satu baris yang digeser ke samping cuma ±48px. Pudaran di kanan memberi
+     tanda masih ada tombol lain, padding kanan memastikan tombol terakhir bisa keluar
+     dari area pudar. */
+  .vp-topbar-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin: 0 calc(-1 * max(9px, env(safe-area-inset-right))) 0 calc(-1 * max(9px, env(safe-area-inset-left)));
+    padding: 0 28px 0 max(9px, env(safe-area-inset-left));
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .vp-topbar-nav::-webkit-scrollbar { display: none; }
+  .vp-topbar .vp-btn,
+  .vp-topbar .vp-seg button {
+    min-height: 40px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0 11px;
+  }
+
+  /* Detail tugas & meja: di desktop panel samping (tidak berubah), di HP lembar penuh
+     yang menutupi segalanya — di 360px panel 40vw tidak terbaca. */
+  .vp-panel,
+  .vp-panel.left-0,
+  .vp-panel.right-0 {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    z-index: var(--z-sheet);
+    border: 0;
+    border-radius: 0;
+    background: #101820;
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .vp-panel > .vp-panel-head { padding-top: max(10px, env(safe-area-inset-top)); }
+  .vp-x { min-width: 44px; min-height: 44px; }
+  .vp-panel-head .vp-x { margin: -8px -6px -8px 0; }
+  .vp-card-float { left: 8px; right: 8px; width: auto; }
+
+  /* Panel layar penuh: tanpa gutter, setinggi viewport yang BENAR-BENAR terlihat
+     (--vp-vvh dari visualViewport, diisi FullPanel) supaya keyboard tidak menutupi
+     input; 100dvh hanya cadangan. */
+  .vp-full {
+    padding: 0;
+    align-items: stretch;
+    top: var(--vp-vvtop, 0px);
+    bottom: auto;
+    height: var(--vp-vvh, 100dvh);
+  }
+  /* `.vp-full >` supaya menang atas `.vp-full-vp.tall` (tinggi tetap desktop). */
+  .vp-full > .vp-full-card {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .vp-full-vp > .vp-full-head { padding-top: max(10px, env(safe-area-inset-top)); }
+  .vp-full-vp > .vp-full-body.vp-pad { padding: 12px; }
+  .vp-full-slate > .vp-full-head { padding: max(14px, env(safe-area-inset-top)) 14px 12px 16px; }
+  .vp-full-slate > .vp-full-body { padding-left: 16px; padding-right: 16px; }
+  .vp-full-body { overflow-wrap: break-word; }
+  /* Kolom pertama tabel (nama model/provider) yang boleh patah; kolom angka jangan. */
+  .vp-full-body td:first-child { overflow-wrap: anywhere; }
+
+  .vp-banner {
+    max-width: calc(100vw - 24px);
+    width: max-content;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  /* Kanban 2D: satu kolom ±selebar layar, digeser per kolom. Grid 1050px dulu
+     memaksa pengguna menggulir diagonal untuk membaca satu kartu. */
+  .vp-k2d {
+    padding: 12px max(12px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+  }
+  .vp-k2d-grid {
+    min-width: 0;
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: min(84vw, 320px);
+  }
+  .vp-k2d-grid > .vp-col { scroll-snap-align: start; }
+
+  .vp-sprite-office { padding-bottom: env(safe-area-inset-bottom); }
+  .vp-sprite-hud { flex-wrap: wrap; justify-content: center; width: auto; gap: 4px 10px; }
+
+  .vp-modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
+  /* Papan dari dinding 3D: di HP juga layar penuh, kolom digeser ke samping. */
+  .vp-modal-backdrop:has(.vp-kanban-modal) { padding: 0; }
+  .vp-kanban-modal {
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .vp-kanban-head { flex-wrap: wrap; padding-top: max(12px, env(safe-area-inset-top)); }
+  .vp-kanban-search { margin-left: 0; min-width: 0; flex: 1 1 100%; order: 3; }
+  .vp-kanban-scroll { grid-template-columns: repeat(4, min(82vw, 300px)); scroll-snap-type: x mandatory; }
+  .vp-kanban-col { scroll-snap-align: start; }
+}
+
+/* iOS memperbesar halaman saat fokus ke input di bawah 16px dan tidak mengecilkannya
+   lagi. :root menaikkan spesifisitas di atas .vp-input-sm yang juga !important. */
+@media (max-width: 720px), (max-width: 1180px) and (pointer: coarse) {
+  :root :is(input:not([type='checkbox']):not([type='radio']), textarea, select) { font-size: 16px !important; }
 }
 
 /* ------------------------------------------------------- kanban wall board -- */

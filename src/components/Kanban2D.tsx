@@ -32,8 +32,8 @@ export default function Kanban2D() {
   ]
 
   return (
-    <div className="absolute inset-0 overflow-auto p-4 pt-20">
-      <div className="grid min-w-[1050px] grid-cols-7 gap-3">
+    <div className="vp-k2d absolute inset-0 overflow-auto p-4 pt-20">
+      <div className="vp-k2d-grid grid min-w-[1050px] grid-cols-7 gap-3">
         {columns.map((column) => (
           <section key={column.label} className="vp-col">
             <header className="vp-col-head">

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
 import Collapsible from './Collapsible'
+import FullPanel from './FullPanel'
 import ActionItems, { type Candidate } from './ActionItems'
 import { fetchJson } from '@/lib/api'
 
@@ -186,234 +187,230 @@ export default function MeetingPanel({
   }
 
   return (
-    <aside className="vp-panel left-0">
-      <header className="vp-panel-head">
-        <h2>{screen === 'new' ? 'Rapat baru' : 'Ruang rapat'}</h2>
-        <div className="flex items-center gap-2">
-          {screen === 'new' && (
-            <button className="vp-chip-btn" onClick={() => setScreen('list')}>
-              ← Kembali
-            </button>
-          )}
-          <button className="vp-x" onClick={onClose} aria-label="Tutup">
-            ×
+    <FullPanel
+      onClose={onClose}
+      label="Ruang rapat"
+      title={screen === 'new' ? 'Rapat baru' : 'Ruang rapat'}
+      actions={
+        screen === 'new' && (
+          <button className="vp-chip-btn" onClick={() => setScreen('list')}>
+            ← Kembali
           </button>
-        </div>
-      </header>
+        )
+      }
+      bodyClassName="vp-pad flex flex-col gap-3"
+    >
+      {err && <div className="vp-err">{err}</div>}
 
-      <div className="vp-pad flex flex-col gap-3">
-        {err && <div className="vp-err">{err}</div>}
+      {screen === 'list' ? (
+        opened ? (
+          /* ------------------------------------------------ opened card ---- */
+          <>
+            <button className="vp-chip-btn" onClick={closeCard}>
+              ← Daftar rapat
+            </button>
 
-        {screen === 'list' ? (
-          opened ? (
-            /* ------------------------------------------------ opened card ---- */
-            <>
-              <button className="vp-chip-btn" onClick={closeCard}>
-                ← Daftar rapat
-              </button>
+            {opened.kind === 'archive' ? (
+              archBusy || !archive ? (
+                <div className="vp-muted">memuat transkrip…</div>
+              ) : (
+                <>
+                  <Collapsible
+                    label={`Transkrip · ${archive.id}`}
+                    text={archive.body}
+                    defaultOpen
+                  />
+                  <button
+                    className="vp-btn vp-btn-ghost"
+                    onClick={() => download(`rapat-${archive.id}.md`, archive.body)}
+                  >
+                    Unduh
+                  </button>
 
-              {opened.kind === 'archive' ? (
-                archBusy || !archive ? (
-                  <div className="vp-muted">memuat transkrip…</div>
-                ) : (
-                  <>
-                    <Collapsible
-                      label={`Transkrip · ${archive.id}`}
-                      text={archive.body}
-                      defaultOpen
+                  {itemsBusy ? (
+                    <div className="vp-muted">membaca tindak lanjut…</div>
+                  ) : (
+                    <ActionItems
+                      candidates={items}
+                      roster={roster}
+                      origin={{ kind: 'meeting', ref: archive.id }}
+                      label="TINDAK LANJUT → TUGAS"
                     />
+                  )}
+                </>
+              )
+            ) : !meeting ? (
+              <div className="vp-muted">rapat ini sudah tidak ada di memori</div>
+            ) : (
+              <>
+                <div className="vp-kv">
+                  <span>topik</span>
+                  <b>{meeting.topic || '(tanpa topik)'}</b>
+                </div>
+                <div className="vp-kv">
+                  <span>status</span>
+                  <b>
+                    {meeting.state} · {meeting.phase}
+                    {live && <span className="vp-live"> ●</span>}
+                  </b>
+                </div>
+                <div className="vp-kv">
+                  <span>peserta</span>
+                  <b>{meeting.participants.join(', ') || '—'}</b>
+                </div>
+                <div className="vp-kv">
+                  <span>giliran</span>
+                  <b>{meeting.currentSpeaker || '—'}</b>
+                </div>
+
+                <Collapsible
+                  label="Transkrip"
+                  count={meeting.turns.length}
+                  defaultOpen={!!live}
+                  empty="belum ada giliran"
+                >
+                  <div className="flex flex-col gap-2">
+                    {meeting.turns.map((t, i) => (
+                      <div
+                        key={i}
+                        className={`vp-turn ${
+                          t.speaker === meeting.currentSpeaker && live ? 'talk' : ''
+                        }`}
+                      >
+                        <div className="vp-turn-who">
+                          {t.speaker}
+                          <i>
+                            {t.kind}
+                            {t.round ? ` · r${t.round}` : ''}
+                          </i>
+                        </div>
+                        <div className="vp-turn-body">{t.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Collapsible>
+
+                {meeting.minutes && (
+                  <>
+                    <Collapsible label="Notulen" text={meeting.minutes} defaultOpen />
                     <button
                       className="vp-btn vp-btn-ghost"
-                      onClick={() => download(`rapat-${archive.id}.md`, archive.body)}
+                      onClick={() => download(`notulen-${meeting.id}.md`, meeting.minutes)}
                     >
-                      Unduh
+                      Unduh notulen
                     </button>
 
+                    {/* The cross-menu link: what this meeting asked for, as tasks. */}
                     {itemsBusy ? (
                       <div className="vp-muted">membaca tindak lanjut…</div>
                     ) : (
                       <ActionItems
                         candidates={items}
                         roster={roster}
-                        origin={{ kind: 'meeting', ref: archive.id }}
+                        origin={{ kind: 'meeting', ref: meeting.id }}
                         label="TINDAK LANJUT → TUGAS"
                       />
                     )}
                   </>
-                )
-              ) : !meeting ? (
-                <div className="vp-muted">rapat ini sudah tidak ada di memori</div>
-              ) : (
-                <>
-                  <div className="vp-kv">
-                    <span>topik</span>
-                    <b>{meeting.topic || '(tanpa topik)'}</b>
-                  </div>
-                  <div className="vp-kv">
-                    <span>status</span>
-                    <b>
-                      {meeting.state} · {meeting.phase}
-                      {live && <span className="vp-live"> ●</span>}
-                    </b>
-                  </div>
-                  <div className="vp-kv">
-                    <span>peserta</span>
-                    <b>{meeting.participants.join(', ') || '—'}</b>
-                  </div>
-                  <div className="vp-kv">
-                    <span>giliran</span>
-                    <b>{meeting.currentSpeaker || '—'}</b>
-                  </div>
-
-                  <Collapsible
-                    label="Transkrip"
-                    count={meeting.turns.length}
-                    defaultOpen={!!live}
-                    empty="belum ada giliran"
-                  >
-                    <div className="flex flex-col gap-2">
-                      {meeting.turns.map((t, i) => (
-                        <div
-                          key={i}
-                          className={`vp-turn ${
-                            t.speaker === meeting.currentSpeaker && live ? 'talk' : ''
-                          }`}
-                        >
-                          <div className="vp-turn-who">
-                            {t.speaker}
-                            <i>
-                              {t.kind}
-                              {t.round ? ` · r${t.round}` : ''}
-                            </i>
-                          </div>
-                          <div className="vp-turn-body">{t.text}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </Collapsible>
-
-                  {meeting.minutes && (
-                    <>
-                      <Collapsible label="Notulen" text={meeting.minutes} defaultOpen />
-                      <button
-                        className="vp-btn vp-btn-ghost"
-                        onClick={() => download(`notulen-${meeting.id}.md`, meeting.minutes)}
-                      >
-                        Unduh notulen
-                      </button>
-
-                      {/* The cross-menu link: what this meeting asked for, as tasks. */}
-                      {itemsBusy ? (
-                        <div className="vp-muted">membaca tindak lanjut…</div>
-                      ) : (
-                        <ActionItems
-                          candidates={items}
-                          roster={roster}
-                          origin={{ kind: 'meeting', ref: meeting.id }}
-                          label="TINDAK LANJUT → TUGAS"
-                        />
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </>
-          ) : (
-            /* ------------------------------------------------ the list ------ */
-            <>
-              <button className="vp-btn" onClick={() => setScreen('new')}>
-                + Buat rapat baru
-              </button>
-              {!configured && (
-                <div className="vp-note">
-                  LLM belum dikonfigurasi — rapat tidak bisa dimulai. Isi{' '}
-                  <code>AI_BASE_URL</code> dan <code>AI_API_KEY</code> di{' '}
-                  <code>.env.local</code>.
-                </div>
-              )}
-
-              {meeting && (
-                <>
-                  <div className="vp-sub">
-                    RAPAT AKTIF {live && <span className="vp-live">●</span>}
-                  </div>
-                  <Card
-                    title={meeting.topic || '(tanpa topik)'}
-                    meta={`${meeting.state} · ${meeting.participants.length} peserta · ${meeting.turns.length} giliran`}
-                    highlight={!!live}
-                    onClick={() => setOpened({ kind: 'live', id: meeting.id })}
-                  />
-                </>
-              )}
-
-              <div className="vp-sub">RAPAT TERDAHULU ({history.length})</div>
-              <div className="flex flex-col gap-2">
-                {history.map((h) => (
-                  <Card
-                    key={h.id}
-                    title={h.topic}
-                    meta={`${h.startedAt} · ${h.participants.length || '?'} peserta · ${h.turnCount} giliran`}
-                    disabled={archBusy}
-                    onClick={() => openArchive(h.id)}
-                  />
-                ))}
-                {!history.length && (
-                  <span className="vp-muted">belum ada rapat tersimpan</span>
                 )}
-              </div>
-            </>
-          )
-        ) : (
-          /* ---------------------------------------------------- create form -- */
-          <>
-            <label className="vp-sub">TOPIK</label>
-            <textarea
-              className="vp-input"
-              rows={2}
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="Rencana rilis endpoint refund"
-            />
-
-            <label className="vp-sub">PESERTA (2–4) · {agents.length} agent aktif</label>
-            <div className="flex flex-wrap gap-2">
-              {agents.map((a) => (
-                <button
-                  key={a.name}
-                  className={`vp-chip-btn ${picked.includes(a.name) ? 'on' : ''}`}
-                  onClick={() => toggle(a.name)}
-                >
-                  {a.displayName}
-                  <i className="vp-chip-role">{a.status}</i>
-                </button>
-              ))}
-              {!agents.length && <span className="vp-muted">belum ada agent aktif</span>}
-            </div>
-
-            <label className="vp-sub">PEMBAWA ACARA</label>
-            <select
-              className="vp-input"
-              value={moderator}
-              onChange={(e) => setModerator(e.target.value)}
-            >
-              {picked.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-
-            <button
-              className="vp-btn"
-              disabled={busy || !topic.trim() || picked.length < 2 || !configured}
-              onClick={start}
-            >
-              {busy ? 'Memulai…' : 'Mulai rapat'}
-            </button>
-            {picked.length < 2 && <div className="vp-muted">pilih minimal 2 peserta</div>}
+              </>
+            )}
           </>
-        )}
-      </div>
-    </aside>
+        ) : (
+          /* ------------------------------------------------ the list ------ */
+          <>
+            <button className="vp-btn" onClick={() => setScreen('new')}>
+              + Buat rapat baru
+            </button>
+            {!configured && (
+              <div className="vp-note">
+                LLM belum dikonfigurasi — rapat tidak bisa dimulai. Isi{' '}
+                <code>AI_BASE_URL</code> dan <code>AI_API_KEY</code> di{' '}
+                <code>.env.local</code>.
+              </div>
+            )}
+
+            {meeting && (
+              <>
+                <div className="vp-sub">
+                  RAPAT AKTIF {live && <span className="vp-live">●</span>}
+                </div>
+                <Card
+                  title={meeting.topic || '(tanpa topik)'}
+                  meta={`${meeting.state} · ${meeting.participants.length} peserta · ${meeting.turns.length} giliran`}
+                  highlight={!!live}
+                  onClick={() => setOpened({ kind: 'live', id: meeting.id })}
+                />
+              </>
+            )}
+
+            <div className="vp-sub">RAPAT TERDAHULU ({history.length})</div>
+            <div className="flex flex-col gap-2">
+              {history.map((h) => (
+                <Card
+                  key={h.id}
+                  title={h.topic}
+                  meta={`${h.startedAt} · ${h.participants.length || '?'} peserta · ${h.turnCount} giliran`}
+                  disabled={archBusy}
+                  onClick={() => openArchive(h.id)}
+                />
+              ))}
+              {!history.length && (
+                <span className="vp-muted">belum ada rapat tersimpan</span>
+              )}
+            </div>
+          </>
+        )
+      ) : (
+        /* ---------------------------------------------------- create form -- */
+        <>
+          <label className="vp-sub">TOPIK</label>
+          <textarea
+            className="vp-input"
+            rows={2}
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Rencana rilis endpoint refund"
+          />
+
+          <label className="vp-sub">PESERTA (2–4) · {agents.length} agent aktif</label>
+          <div className="flex flex-wrap gap-2">
+            {agents.map((a) => (
+              <button
+                key={a.name}
+                className={`vp-chip-btn ${picked.includes(a.name) ? 'on' : ''}`}
+                onClick={() => toggle(a.name)}
+              >
+                {a.displayName}
+                <i className="vp-chip-role">{a.status}</i>
+              </button>
+            ))}
+            {!agents.length && <span className="vp-muted">belum ada agent aktif</span>}
+          </div>
+
+          <label className="vp-sub">PEMBAWA ACARA</label>
+          <select
+            className="vp-input"
+            value={moderator}
+            onChange={(e) => setModerator(e.target.value)}
+          >
+            {picked.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+
+          <button
+            className="vp-btn"
+            disabled={busy || !topic.trim() || picked.length < 2 || !configured}
+            onClick={start}
+          >
+            {busy ? 'Memulai…' : 'Mulai rapat'}
+          </button>
+          {picked.length < 2 && <div className="vp-muted">pilih minimal 2 peserta</div>}
+        </>
+      )}
+    </FullPanel>
   )
 }

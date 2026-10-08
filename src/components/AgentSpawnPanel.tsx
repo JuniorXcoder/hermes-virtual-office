@@ -6,6 +6,7 @@ import ModelPicker, { type ModelChoice } from './ModelPicker'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { DIVISION_LABEL } from '@/types/hermes'
 import { ROLE_LABEL } from '@/lib/hermes/soul'
+import FullPanel from './FullPanel'
 
 /**
  * Spawn / hide / kill control.
@@ -245,231 +246,222 @@ export default function AgentSpawnPanel({
   }
 
   return (
-    <aside className="vp-panel right-0">
-      <header className="vp-panel-head">
-        <h2>Agent</h2>
-        <button className="vp-x" onClick={onClose} aria-label="Tutup">
-          ×
-        </button>
-      </header>
+    <FullPanel onClose={onClose} label="Agent" title="Agent" bodyClassName="vp-pad flex flex-col gap-3">
+      <div className="vp-kv">
+        <span>di kantor</span>
+        <b>{inOffice.length}</b>
+      </div>
+      <div className="vp-kv">
+        <span>profil tersedia</span>
+        <b>{rows.length}</b>
+      </div>
 
-      <div className="vp-pad flex flex-col gap-3">
-        <div className="vp-kv">
-          <span>di kantor</span>
-          <b>{inOffice.length}</b>
+      {err && <div className="vp-err">{err}</div>}
+      {note && <div className="vp-ok">{note}</div>}
+      {soulPreview && (
+        <div className="vp-ok">
+          <b>Soul tersimpan:</b>
+          <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 11 }}>{soulPreview}</pre>
         </div>
-        <div className="vp-kv">
-          <span>profil tersedia</span>
-          <b>{rows.length}</b>
-        </div>
+      )}
+      {loading && <div className="vp-muted">memuat…</div>}
 
-        {err && <div className="vp-err">{err}</div>}
-        {note && <div className="vp-ok">{note}</div>}
-        {soulPreview && (
-          <div className="vp-ok">
-            <b>Soul tersimpan:</b>
-            <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 11 }}>{soulPreview}</pre>
-          </div>
-        )}
-        {loading && <div className="vp-muted">memuat…</div>}
-
-        <div className="vp-sub">BUAT PROFIL BARU</div>
-        <input
-          className="vp-input"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="budi"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void create()
-          }}
-        />
-        <input
-          className="vp-input"
-          value={newDesc}
-          onChange={(e) => setNewDesc(e.target.value)}
-          placeholder="deskripsi"
-        />
-        <div className="flex gap-2">
-          <select
-            className="vp-input"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value as AgentRole)}
-            title="Role agent"
-          >
-            {ROLE_OPTIONS.map(([v, label]) => (
-              <option key={v} value={v}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <select
-            className="vp-input"
-            value={newDivision}
-            onChange={(e) => setNewDivision(e.target.value as AgentDivision)}
-            title="Divisi agent"
-          >
-            {DIVISION_OPTIONS.map(([v, label]) => (
-              <option key={v} value={v}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <textarea
-          className="vp-input"
-          value={newSoul}
-          onChange={(e) => setNewSoul(e.target.value)}
-          placeholder="cth: Budi adalah CEO visioner — ambil keputusan akhir, bagi tugas ke tiap divisi, jaga visi perusahaan. Gaya: tegas, ringkas, eksekusi langsung. (opsional)"
-          rows={3}
-        />
-        <button
-          className="vp-btn"
-          disabled={creating || !newName.trim()}
-          onClick={create}
-        >
-          {creating ? 'Membuat…' : '+ Buat profil'}
-        </button>
-
-        <button className="vp-btn vp-btn-rosy" disabled={!!busy} onClick={load}>
-          Segarkan
-        </button>
-
-        <div className="vp-sub">FILTER DIVISI</div>
+      <div className="vp-sub">BUAT PROFIL BARU</div>
+      <input
+        className="vp-input"
+        value={newName}
+        onChange={(e) => setNewName(e.target.value)}
+        placeholder="budi"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void create()
+        }}
+      />
+      <input
+        className="vp-input"
+        value={newDesc}
+        onChange={(e) => setNewDesc(e.target.value)}
+        placeholder="deskripsi"
+      />
+      <div className="flex gap-2">
         <select
           className="vp-input"
-          value={divFilter}
-          onChange={(e) => setDivFilter(e.target.value as 'all' | AgentDivision)}
-          title="Filter daftar agent per divisi"
+          value={newRole}
+          onChange={(e) => setNewRole(e.target.value as AgentRole)}
+          title="Role agent"
         >
-          <option value="all">Semua</option>
+          {ROLE_OPTIONS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="vp-input"
+          value={newDivision}
+          onChange={(e) => setNewDivision(e.target.value as AgentDivision)}
+          title="Divisi agent"
+        >
           {DIVISION_OPTIONS.map(([v, label]) => (
             <option key={v} value={v}>
               {label}
             </option>
           ))}
         </select>
+      </div>
+      <textarea
+        className="vp-input"
+        value={newSoul}
+        onChange={(e) => setNewSoul(e.target.value)}
+        placeholder="cth: Budi adalah CEO visioner — ambil keputusan akhir, bagi tugas ke tiap divisi, jaga visi perusahaan. Gaya: tegas, ringkas, eksekusi langsung. (opsional)"
+        rows={3}
+      />
+      <button
+        className="vp-btn"
+        disabled={creating || !newName.trim()}
+        onClick={create}
+      >
+        {creating ? 'Membuat…' : '+ Buat profil'}
+      </button>
 
-        <div className="vp-sub">DI KANTOR ({inOffice.length})</div>
-        <div className="flex flex-col gap-2">
-          {inOffice.map((r) => (
-            <div key={r.name} className="vp-agent-row">
-              <div className="vp-agent-meta">
-                <b>
-                  {r.name}
-                  {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
-                </b>
-                <i>{r.total} tugas</i>
-                {badges(r)}
-                {limits(r)}
-              </div>
-              {/* The profile's default model: what its workers and chats run.
-                  Saving here writes `model.default` for that profile, so it
-                  applies to every future spawn — not just one task. */}
-              {r.profile && (
-                <div className="vp-agent-model">
-                  <ModelPicker
-                    value={pick[r.name] ?? r.model ?? ''}
-                    onChange={(model) => setPick((p) => ({ ...p, [r.name]: model }))}
-                    models={models}
-                    disabled={busy === r.name}
-                    emptyLabel="bawaan Hermes"
-                    title="Model bawaan profil ini"
-                  />
-                  <button
-                    className="vp-btn"
-                    disabled={busy === r.name || (pick[r.name] ?? r.model ?? '') === (r.model ?? '')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void setModel(r.name, pick[r.name] ?? '')
-                    }}
-                  >
-                    {busy === r.name ? '…' : 'Set'}
-                  </button>
-                </div>
-              )}
-              {/* Two different things, so two different buttons, and now two
-                  different actions. A name with no profile on disk is an assignee
-                  left behind by a task whose profile was deleted — there is
-                  nothing to delete, and hiding it is the ONLY safe operation:
-                  sending it to `kill` purged its tasks permanently while the
-                  button said "tanpa menghapus apa pun". */}
-              <div className="flex gap-2">
+      <button className="vp-btn vp-btn-rosy" disabled={!!busy} onClick={load}>
+        Segarkan
+      </button>
+
+      <div className="vp-sub">FILTER DIVISI</div>
+      <select
+        className="vp-input"
+        value={divFilter}
+        onChange={(e) => setDivFilter(e.target.value as 'all' | AgentDivision)}
+        title="Filter daftar agent per divisi"
+      >
+        <option value="all">Semua</option>
+        {DIVISION_OPTIONS.map(([v, label]) => (
+          <option key={v} value={v}>
+            {label}
+          </option>
+        ))}
+      </select>
+
+      <div className="vp-sub">DI KANTOR ({inOffice.length})</div>
+      <div className="flex flex-col gap-2">
+        {inOffice.map((r) => (
+          <div key={r.name} className="vp-agent-row">
+            <div className="vp-agent-meta">
+              <b>
+                {r.name}
+                {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
+              </b>
+              <i>{r.total} tugas</i>
+              {badges(r)}
+              {limits(r)}
+            </div>
+            {/* The profile's default model: what its workers and chats run.
+                Saving here writes `model.default` for that profile, so it
+                applies to every future spawn — not just one task. */}
+            {r.profile && (
+              <div className="vp-agent-model">
+                <ModelPicker
+                  value={pick[r.name] ?? r.model ?? ''}
+                  onChange={(model) => setPick((p) => ({ ...p, [r.name]: model }))}
+                  models={models}
+                  disabled={busy === r.name}
+                  emptyLabel="bawaan Hermes"
+                  title="Model bawaan profil ini"
+                />
                 <button
                   className="vp-btn"
+                  disabled={busy === r.name || (pick[r.name] ?? r.model ?? '') === (r.model ?? '')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void setModel(r.name, pick[r.name] ?? '')
+                  }}
+                >
+                  {busy === r.name ? '…' : 'Set'}
+                </button>
+              </div>
+            )}
+            {/* Two different things, so two different buttons, and now two
+                different actions. A name with no profile on disk is an assignee
+                left behind by a task whose profile was deleted — there is
+                nothing to delete, and hiding it is the ONLY safe operation:
+                sending it to `kill` purged its tasks permanently while the
+                button said "tanpa menghapus apa pun". */}
+            <div className="flex gap-2">
+              <button
+                className="vp-btn"
+                disabled={busy === r.name}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void act('hide', r.name)
+                }}
+                title="Keluarkan nama ini dari kantor tanpa menghapus apa pun"
+              >
+                {busy === r.name ? '…' : 'Sembunyikan'}
+              </button>
+              {r.profile && (
+                <button
+                  className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
                   disabled={busy === r.name}
                   onClick={(e) => {
                     e.stopPropagation()
-                    void act('hide', r.name)
+                    if (confirmKill !== r.name) {
+                      setConfirmKill(r.name)
+                      return
+                    }
+                    void act('kill', r.name)
                   }}
-                  title="Keluarkan nama ini dari kantor tanpa menghapus apa pun"
+                  title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
                 >
-                  {busy === r.name ? '…' : 'Sembunyikan'}
+                  {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
                 </button>
-                {r.profile && (
-                  <button
-                    className={`vp-btn vp-btn-danger ${confirmKill === r.name ? 'vp-btn-armed' : ''}`}
-                    disabled={busy === r.name}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (confirmKill !== r.name) {
-                        setConfirmKill(r.name)
-                        return
-                      }
-                      void act('kill', r.name)
-                    }}
-                    title="Menghapus profil ini permanen, termasuk sesi dan kuncinya"
-                  >
-                    {busy === r.name ? '…' : confirmKill === r.name ? 'Yakin hapus?' : 'Kill'}
-                  </button>
-                )}
-              </div>
+              )}
             </div>
-          ))}
-          {confirmKill && (
-            <div className="vp-cron-err">
-              Menghapus <b>{confirmKill}</b> permanen — profil, sesi, memori, kunci,
-              <b> dan {inOffice.find((x) => x.name === confirmKill)?.total ?? 0} tugasnya</b>.
-              Klik di tempat lain untuk batal.
-            </div>
-          )}
-          {!inOffice.length && <span className="vp-muted">kosong</span>}
-        </div>
-
-        {out.length > 0 && (
-          <>
-            <div className="vp-sub">DI LUAR ({out.length})</div>
-            <div className="flex flex-col gap-2">
-              {out.map((r) => (
-                <div key={r.name} className="vp-agent-row off">
-                  <div className="vp-agent-meta">
-                    <b>
-                      {r.name}
-                      {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
-                    </b>
-                    <i>
-                      {r.reason === 'hidden'
-                        ? 'disembunyikan'
-                        : r.reason === 'no_profile'
-                          ? 'tanpa profil di disk'
-                          : 'tanpa tugas'}
-                    </i>
-                    {badges(r)}
-                    {limits(r)}
-                  </div>
-                  <button
-                    className="vp-btn"
-                    disabled={busy === r.name}
-                    onClick={() => act('spawn', r.name)}
-                    title="Agent masuk lewat pintu utama dan berjalan ke mejanya"
-                  >
-                    {busy === r.name ? '…' : 'Spawn'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
+          </div>
+        ))}
+        {confirmKill && (
+          <div className="vp-cron-err">
+            Menghapus <b>{confirmKill}</b> permanen — profil, sesi, memori, kunci,
+            <b> dan {inOffice.find((x) => x.name === confirmKill)?.total ?? 0} tugasnya</b>.
+            Klik di tempat lain untuk batal.
+          </div>
         )}
+        {!inOffice.length && <span className="vp-muted">kosong</span>}
       </div>
-    </aside>
+
+      {out.length > 0 && (
+        <>
+          <div className="vp-sub">DI LUAR ({out.length})</div>
+          <div className="flex flex-col gap-2">
+            {out.map((r) => (
+              <div key={r.name} className="vp-agent-row off">
+                <div className="vp-agent-meta">
+                  <b>
+                    {r.name}
+                    {!r.profile && <span className="vp-tag-warn">tanpa profil</span>}
+                  </b>
+                  <i>
+                    {r.reason === 'hidden'
+                      ? 'disembunyikan'
+                      : r.reason === 'no_profile'
+                        ? 'tanpa profil di disk'
+                        : 'tanpa tugas'}
+                  </i>
+                  {badges(r)}
+                  {limits(r)}
+                </div>
+                <button
+                  className="vp-btn"
+                  disabled={busy === r.name}
+                  onClick={() => act('spawn', r.name)}
+                  title="Agent masuk lewat pintu utama dan berjalan ke mejanya"
+                >
+                  {busy === r.name ? '…' : 'Spawn'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </FullPanel>
   )
 }

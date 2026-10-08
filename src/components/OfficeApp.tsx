@@ -44,6 +44,8 @@ export default function OfficeApp() {
   const loadTasks = useOffice((s) => s.load)
 
   const sceneRef = useRef<OfficeScene | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLElement>(null)
   const [meetOpen, setMeetOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
   const [cronOpen, setCronOpen] = useState(false)
@@ -57,6 +59,18 @@ export default function OfficeApp() {
   const loadOffice = useOffice((s) => s.loadOffice)
 
   useEffect(() => startPolling(), [])
+
+  // Tinggi top bar TIDAK tetap: di layar sempit tombolnya pindah ke baris kedua, dan
+  // angka status berubah panjang. Diukur langsung lalu diberikan ke CSS, supaya
+  // kanvas dan panel samping mulai tepat di bawahnya alih-alih menebak 58px.
+  useEffect(() => {
+    const bar = barRef.current
+    const root = rootRef.current
+    if (!bar || !root) return
+    const ro = new ResizeObserver(() => root.style.setProperty('--vp-topbar-h', `${bar.offsetHeight}px`))
+    ro.observe(bar)
+    return () => ro.disconnect()
+  }, [])
 
   // request browser notification permission once, then alert on review/blocked
   const seen = useRef<Map<string, string>>(new Map())
@@ -101,31 +115,33 @@ export default function OfficeApp() {
   const pct = live.length ? Math.round((done / live.length) * 100) : 0
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-[#0f1418]">
-      {view === '3d' ? (
-        <Scene3D
-          onScene={(s) => (sceneRef.current = s)}
-          onDummy={(avatarId, division) => setSpawnSlot({ avatarId, division })}
-          onBoard={() => setBoardOpen(true)}
-          onName={() => setNameOpen(true)}
-        />
-      ) : view === 'sprite' ? (
-        <SpriteOffice onSelect={select} />
-      ) : (
-        <Kanban2D />
-      )}
+    <div ref={rootRef} className="relative h-dvh w-full overflow-hidden bg-[#0f1418]">
+      <main className="vp-stage">
+        {view === '3d' ? (
+          <Scene3D
+            onScene={(s) => (sceneRef.current = s)}
+            onDummy={(avatarId, division) => setSpawnSlot({ avatarId, division })}
+            onBoard={() => setBoardOpen(true)}
+            onName={() => setNameOpen(true)}
+          />
+        ) : view === 'sprite' ? (
+          <SpriteOffice onSelect={select} />
+        ) : (
+          <Kanban2D />
+        )}
+      </main>
 
       {/* ------------------------------------------------------- top bar */}
-      <header className="vp-topbar">
-        <div className="flex items-center gap-3">
+      <header ref={barRef} className="vp-topbar">
+        <div className="vp-topbar-brand flex items-center gap-3">
           <span className="vp-logo">Hermes Office</span>
           <span className={`vp-dot ${backendOnline ? 'ok' : 'bad'}`} />
-          <span className="vp-muted">
+          <span className="vp-muted vp-topbar-status">
             {backendOnline ? `${agents.length} agent · ${running} jalan · ${pct}% rilis` : 'backend offline'}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <nav className="vp-topbar-nav flex items-center gap-2" aria-label="Panel">
           <button className="vp-btn vp-btn-ghost" onClick={() => setNewTaskOpen(true)}>+ Tugas</button>
           <button className="vp-btn vp-btn-ghost" onClick={() => setMeetOpen(true)}>
             Ruang rapat{meeting && meeting.state === 'running' ? ' ●' : ''}
@@ -145,11 +161,13 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setChatOpen(true)}>
             Chat
           </button>
-          <div className={`vp-seg ${view === 'sprite' ? 'vp-sprite-toggle' : ''}`}>
-            <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
-            <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>Kanban</button>
-            <button className={view === 'sprite' ? 'on' : ''} onClick={() => setView('sprite')}>Sprite</button>
-          </div>
+        </nav>
+        {/* Saklar tampilan sengaja di luar <nav>: di HP baris tombol bisa digeser ke
+            samping, dan pilihan 3D/Kanban/Sprite tidak boleh ikut hilang dari layar. */}
+        <div className={`vp-seg vp-topbar-view ${view === 'sprite' ? 'vp-sprite-toggle' : ''}`}>
+          <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
+          <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>Kanban</button>
+          <button className={view === 'sprite' ? 'on' : ''} onClick={() => setView('sprite')}>Sprite</button>
         </div>
       </header>
 
@@ -162,7 +180,7 @@ export default function OfficeApp() {
           <aside className="vp-card-float">
             <div className="flex items-center justify-between">
               <b>{a.displayName}</b>
-              <button className="vp-x" onClick={() => select(null)}>×</button>
+              <button className="vp-x" onClick={() => select(null)} aria-label="Tutup">×</button>
             </div>
             <div className="vp-kv"><span>peran</span><b>{a.role}</b></div>
             <div className="vp-kv"><span>status</span><b>{a.status}</b></div>
@@ -203,7 +221,7 @@ export default function OfficeApp() {
       )}
 
       {error && (
-        <div className="vp-banner">
+        <div className="vp-banner" role="alert">
           {error}
         </div>
       )}

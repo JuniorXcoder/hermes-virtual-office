@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { fetchJson } from '@/lib/api'
+import FullPanel from './FullPanel'
 
 /**
  * Chat with agents — a WhatsApp-style list of conversations.
@@ -242,9 +243,14 @@ export default function ChatPanel({
   const chattable = new Set(profiles)
 
   return (
-    <aside className="vp-panel right-0 vp-chat">
-      <header className="vp-panel-head">
-        {openAgent ? (
+    <FullPanel
+      onClose={onClose}
+      label={openAgent ? `Chat dengan ${openAgent}` : 'Chat'}
+      tall
+      className="vp-chat"
+      bodyClassName="vp-pad flex flex-col gap-3 vp-chat-body"
+      title={
+        openAgent ? (
           <div className="vp-chat-head">
             <button className="vp-chat-back" onClick={() => setOpenAgent(null)} aria-label="Kembali">
               ←
@@ -258,149 +264,144 @@ export default function ChatPanel({
             </div>
           </div>
         ) : (
-          <h2>Chat</h2>
-        )}
-        <div className="flex items-center gap-2">
-          {!openAgent && (
-            <button className="vp-chip-btn" onClick={() => setCreating((v) => !v)}>
-              + Agent
-            </button>
-          )}
-          <button className="vp-x" onClick={onClose} aria-label="Tutup">
-            ×
+          'Chat'
+        )
+      }
+      actions={
+        !openAgent && (
+          <button className="vp-chip-btn" onClick={() => setCreating((v) => !v)}>
+            + Agent
           </button>
+        )
+      }
+    >
+      {err && <div className="vp-err">{err}</div>}
+
+      {creating && !openAgent && (
+        <div className="vp-chat-new">
+          <input
+            className="vp-input"
+            value={newName}
+            autoFocus
+            placeholder="nama agent (mis. riset, backend)"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void createAgent()
+            }}
+          />
+          <button className="vp-btn" disabled={createBusy || !newName.trim()} onClick={createAgent}>
+            {createBusy ? '…' : 'Buat'}
+          </button>
+          <div className="vp-note">
+            Agent = profil Hermes. Tiap agent punya memory sendiri, dan muncul di kantor
+            setelah dibuat.
+          </div>
         </div>
-      </header>
+      )}
 
-      <div className="vp-pad flex flex-col gap-3 vp-chat-body">
-        {err && <div className="vp-err">{err}</div>}
+      {!openAgent ? (
+        /* ------------------------------------------------- the chat list -- */
+        <>
+          {loading && <div className="vp-muted">memuat…</div>}
+          <div className="flex flex-col">
+            {rows.map((name) => {
+              const s = byAgent.get(name)
+              const canChat = chattable.has(name)
+              return (
+                <button
+                  key={name}
+                  className="vp-chat-row"
+                  onClick={() => setOpenAgent(name)}
+                  disabled={!canChat}
+                  title={canChat ? '' : 'belum punya profil'}
+                >
+                  <span
+                    className="vp-chat-av"
+                    style={{ background: `hsl(${hue(name)} 42% 32%)` }}
+                  >
+                    {initials(name)}
+                  </span>
+                  <span className="vp-chat-row-main">
+                    <span className="vp-chat-row-top">
+                      <b>{name}</b>
+                      <i>{s ? when(s.updatedAt) : ''}</i>
+                    </span>
+                    <span className="vp-chat-row-sub">
+                      {s ? s.title : canChat ? 'mulai percakapan' : 'belum punya profil'}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+            {!loading && !rows.length && (
+              <div className="vp-muted">
+                belum ada agent — klik <b>+ Agent</b> untuk membuat satu
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* -------------------------------------------------- the conversation -- */
+        <>
+          <div className="vp-chat-scroll" ref={scroller}>
+            {loading && <div className="vp-muted">memuat riwayat…</div>}
+            {!loading && !messages.length && (
+              <div className="vp-chat-empty">
+                Mulai percakapan dengan <b>{openAgent}</b>.
+                <br />
+                <span className="vp-muted">
+                  Pesan disimpan di memory agent ini dan tetap ada setelah aplikasi restart.
+                </span>
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`vp-msg ${m.role}`}>
+                <div className="vp-msg-body">{m.content}</div>
+                <div className="vp-msg-time">{clock(m.ts)}</div>
+              </div>
+            ))}
+            {busy && (
+              <div className="vp-msg assistant">
+                <div className="vp-msg-body vp-typing">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+            )}
+          </div>
 
-        {creating && !openAgent && (
-          <div className="vp-chat-new">
-            <input
+          <div className="vp-chat-input">
+            <textarea
               className="vp-input"
-              value={newName}
-              autoFocus
-              placeholder="nama agent (mis. riset, backend)"
-              onChange={(e) => setNewName(e.target.value)}
+              rows={1}
+              value={draft}
+              placeholder="Tulis pesan…"
+              onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void createAgent()
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void send()
+                }
               }}
             />
-            <button className="vp-btn" disabled={createBusy || !newName.trim()} onClick={createAgent}>
-              {createBusy ? '…' : 'Buat'}
+            <button
+              className="vp-chat-send"
+              disabled={busy || !draft.trim()}
+              onClick={send}
+              aria-label="Kirim"
+            >
+              ➤
             </button>
-            <div className="vp-note">
-              Agent = profil Hermes. Tiap agent punya memory sendiri, dan muncul di kantor
-              setelah dibuat.
-            </div>
           </div>
-        )}
 
-        {!openAgent ? (
-          /* ------------------------------------------------- the chat list -- */
-          <>
-            {loading && <div className="vp-muted">memuat…</div>}
-            <div className="flex flex-col">
-              {rows.map((name) => {
-                const s = byAgent.get(name)
-                const canChat = chattable.has(name)
-                return (
-                  <button
-                    key={name}
-                    className="vp-chat-row"
-                    onClick={() => setOpenAgent(name)}
-                    disabled={!canChat}
-                    title={canChat ? '' : 'belum punya profil'}
-                  >
-                    <span
-                      className="vp-chat-av"
-                      style={{ background: `hsl(${hue(name)} 42% 32%)` }}
-                    >
-                      {initials(name)}
-                    </span>
-                    <span className="vp-chat-row-main">
-                      <span className="vp-chat-row-top">
-                        <b>{name}</b>
-                        <i>{s ? when(s.updatedAt) : ''}</i>
-                      </span>
-                      <span className="vp-chat-row-sub">
-                        {s ? s.title : canChat ? 'mulai percakapan' : 'belum punya profil'}
-                      </span>
-                    </span>
-                  </button>
-                )
-              })}
-              {!loading && !rows.length && (
-                <div className="vp-muted">
-                  belum ada agent — klik <b>+ Agent</b> untuk membuat satu
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          /* -------------------------------------------------- the conversation -- */
-          <>
-            <div className="vp-chat-scroll" ref={scroller}>
-              {loading && <div className="vp-muted">memuat riwayat…</div>}
-              {!loading && !messages.length && (
-                <div className="vp-chat-empty">
-                  Mulai percakapan dengan <b>{openAgent}</b>.
-                  <br />
-                  <span className="vp-muted">
-                    Pesan disimpan di memory agent ini dan tetap ada setelah aplikasi restart.
-                  </span>
-                </div>
-              )}
-              {messages.map((m, i) => (
-                <div key={i} className={`vp-msg ${m.role}`}>
-                  <div className="vp-msg-body">{m.content}</div>
-                  <div className="vp-msg-time">{clock(m.ts)}</div>
-                </div>
-              ))}
-              {busy && (
-                <div className="vp-msg assistant">
-                  <div className="vp-msg-body vp-typing">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="vp-chat-input">
-              <textarea
-                className="vp-input"
-                rows={1}
-                value={draft}
-                placeholder="Tulis pesan…"
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    void send()
-                  }
-                }}
-              />
-              <button
-                className="vp-chat-send"
-                disabled={busy || !draft.trim()}
-                onClick={send}
-                aria-label="Kirim"
-              >
-                ➤
-              </button>
-            </div>
-
-            {session && (
-              <button className="vp-chat-reset" disabled={busy} onClick={resetThread}>
-                Hapus riwayat percakapan ini
-              </button>
-            )}
-          </>
-        )}
-      </div>
-    </aside>
+          {session && (
+            <button className="vp-chat-reset" disabled={busy} onClick={resetThread}>
+              Hapus riwayat percakapan ini
+            </button>
+          )}
+        </>
+      )}
+    </FullPanel>
   )
 }

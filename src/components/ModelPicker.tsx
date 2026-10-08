@@ -76,7 +76,12 @@ export default function ModelPicker({
   }
 
   function onKeyDown(event: React.KeyboardEvent) {
-    if (event.key === 'Escape') return setOpen(false)
+    if (event.key === 'Escape') {
+      // Menu yang terbuka "memakan" ESC ini; tanpa preventDefault panel di
+      // belakangnya ikut tertutup dan pilihan yang sedang diketik hilang.
+      if (open) event.preventDefault()
+      return setOpen(false)
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       if (!open) return setOpen(true)
