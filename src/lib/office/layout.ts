@@ -1353,8 +1353,13 @@ export const CEO_SUITE = {
   /** Jari-jari daun terbesar. 0.34 supaya tanaman di z -20.45 tidak menembus dinding utara. */
   plantR: 0.34,
   coffeeTable: { x: -25.9, z: -16.4, w: 1.2, d: 0.7, h: 0.4 },
-  /** Sofa 3-seat di dinding barat (menghadap timur): `len` sepanjang sofa, `depth` ke depan. */
-  sofa3: { x: -27.35, z: -16.6, facing: Math.PI / 2, len: 3.1, depth: 0.9 },
+  /**
+   * Sofa 3-seat di dinding barat (menghadap timur): `len` sepanjang sofa, `depth` ke depan.
+   * z -15.6 dipilih supaya sumbunya sejajar dengan TV (z -15.8) — jadi sofa-nya benar-benar
+   * menghadap layar, bukan menghadap dinding di sebelahnya. Rentangnya kini z -17.15..-14.05,
+   * dan meja sofa (z -16.4) tetap berada di depannya.
+   */
+  sofa3: { x: -27.35, z: -15.6, facing: Math.PI / 2, len: 3.1, depth: 0.9 },
   /** Sofa 1-seat di dinding selatan (menghadap utara), membentuk L dengan sofa 3-seat. */
   sofa1: { x: -25.6, z: -12.1, facing: Math.PI, len: 1.1, depth: 0.9 },
   /** TV di partisi timur (ke Rinjani), menghadap barat. `t` tebal di x, `len` di z. */
