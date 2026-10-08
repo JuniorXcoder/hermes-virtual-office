@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
-import { actOnJob, createJob, listJobs, listRuns, parseLimit, type JobAction } from '@/lib/hermes/cron'
+import { actOnJob, createJob, listJobs, listRuns, parseLimit, readJobList, type JobAction } from '@/lib/hermes/cron'
 import { cronPulse } from '@/lib/office/duty'
 
 export const dynamic = 'force-dynamic'
@@ -24,10 +24,17 @@ export async function GET(req: NextRequest) {
     // `cron runs` lewat CLI), karena dipoll tiap beberapa detik. Hasilnya TIDAK menyebut agent:
     // cron tidak punya pemilik di Hermes (lihat `cronPulse`).
     if (req.nextUrl.searchParams.get('pulse') === '1') {
-      return NextResponse.json({ pulse: cronPulse(await listJobs(), Date.now()) })
+      return NextResponse.json({ pulse: cronPulse((await readJobList()).jobs, Date.now()) })
     }
     if (id) {
-      const job = (await listJobs()).find((j) => j.id === id)
+      const readout = await readJobList()
+      if (readout.failure) {
+        return NextResponse.json(
+          { error: { code: 'cron_unreadable', message: readout.failure, status: 502 } },
+          { status: 502 },
+        )
+      }
+      const job = readout.jobs.find((j) => j.id === id)
       if (!job) {
         return NextResponse.json(
           { error: { code: 'invalid_request', message: `job "${id}" tidak ditemukan`, status: 404 } },
@@ -36,9 +43,15 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({ job, runs: await listRuns(id, limit) })
     }
+    const readout = await readJobList()
     return NextResponse.json({
-      jobs: await listJobs(),
+      jobs: readout.jobs,
       runs: await listRuns(undefined, limit),
+      // Diikuti pola `failure` di observability/approvals: bacanya yang gagal
+      // harus terlihat GAGAL — panel wajib menampilkannya, bukan "tidak ada job".
+      ...(readout.failure
+        ? { jobsFailure: readout.failure, jobsAgeSeconds: readout.ageSeconds }
+        : { jobsAgeSeconds: readout.ageSeconds }),
     })
   } catch (err) {
     return NextResponse.json(

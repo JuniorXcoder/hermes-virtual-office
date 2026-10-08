@@ -134,7 +134,7 @@ import { IDLE_SPOTS } from '../src/lib/office/layout'
 import { buildAvatar, FIST_FROM_ELBOW, FOREARM } from '../src/lib/office/avatar'
 import { ACTIVITIES, animate, type Activity } from '../src/lib/office/anim'
 import { followUpSection, matchOwner, parseActionItems } from '../src/lib/hermes/action-items'
-import { parseLimit, parseCronRuns } from '../src/lib/hermes/cron'
+import { parseLimit, parseCronRuns, readJobList } from '../src/lib/hermes/cron'
 import { hide, isHidden, show, visible, visibleNames } from '../src/lib/hermes/office-membership'
 import { listAgents, originMarker, parseOrigin, providersToModels } from '../src/lib/hermes/kanban'
 import { APPROVAL_STALE_SEC, isApprovalsStale, readApprovalQueue } from '../src/lib/hermes/approvals'
@@ -1767,6 +1767,62 @@ void (async () => {
       bad.length === 0,
       bad.map(([i]) => `limit=${String(i)}`).join(' | '),
     )
+  }
+
+  // HONEST-CRON-1: `listJobs()` used to swallow every read/parse error into `[]`,
+  // so a corrupt jobs.json looked exactly like "no jobs scheduled". `readJobList()`
+  // carries `failure` (+ `ageSeconds`) like observability/approvals — a failed
+  // read must look FAILED, not empty. Missing file is NOT a failure (genuinely
+  // nothing scheduled yet). Literal expectations on all three states.
+  {
+    const prevHome = process.env.HERMES_HOME
+    const home = mkdtempSync(join(tmpdir(), 'cron-honest-'))
+    const dir = join(home, 'cron')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'jobs.json')
+    process.env.HERMES_HOME = home
+    const problems: string[] = []
+    try {
+      // valid → job terbaca, tanpa failure
+      writeFileSync(file, JSON.stringify({ jobs: [{ id: 'j1', name: 'pagi', schedule: { kind: 'cron', expr: '0 9 * * *' }, enabled: true }] }))
+      const valid = await readJobList()
+      if (valid.jobs.length !== 1 || valid.jobs[0].id !== 'j1') problems.push(`valid: jobs=${JSON.stringify(valid.jobs.map((j) => j.id))}`)
+      if (valid.failure) problems.push(`valid: failure=${valid.failure}`)
+      // corrupt → kegagalan TERLIHAT, bukan []
+      writeFileSync(file, '{INI BUKAN JSON,,,')
+      const corrupt = await readJobList()
+      if (corrupt.jobs.length !== 0) problems.push(`corrupt: jobs=${corrupt.jobs.length}, want 0`)
+      if (!corrupt.failure || !/rusak|tak terbaca/i.test(corrupt.failure)) problems.push(`corrupt: failure=${JSON.stringify(corrupt.failure)}`)
+      // corrupt must be visibly different from empty — the whole point
+      if (JSON.stringify(corrupt.jobs) === JSON.stringify(valid.jobs)) problems.push('corrupt indistinguishable from valid')
+      // missing → kosong yang SAH, bukan failure
+      rmSync(file)
+      const missing = await readJobList()
+      if (missing.jobs.length !== 0) problems.push(`missing: jobs=${missing.jobs.length}, want 0`)
+      if (missing.failure) problems.push(`missing: failure=${missing.failure}`)
+      if (missing.ageSeconds !== -1) problems.push(`missing: ageSeconds=${missing.ageSeconds}, want -1`)
+    } finally {
+      if (prevHome === undefined) delete process.env.HERMES_HOME
+      else process.env.HERMES_HOME = prevHome
+      rmSync(home, { recursive: true, force: true })
+    }
+    check('honest-cron-1: valid reads, corrupt shows failure (not []), missing is empty-ok', problems.length === 0, problems.join(' | '))
+  }
+
+  // HONEST-CRON-1 (route+panel): the failure must SURFACE. The route answers
+  // `jobsFailure` next to `jobs` (not `[]` alone), and CronPanel renders the
+  // "tak terbaca" banner instead of "belum ada job terjadwal" when it is set.
+  {
+    const problems: string[] = []
+    const routeSrc = readFileSync(new URL('../src/app/api/hermes/cron/route.ts', import.meta.url), 'utf8')
+    if (!/jobsFailure/.test(routeSrc)) problems.push('route never emits jobsFailure')
+    if (!/cron_unreadable/.test(routeSrc)) problems.push('route never answers cron_unreadable for ?id= on corrupt read')
+    const panelSrc = readFileSync(new URL('../src/components/CronPanel.tsx', import.meta.url), 'utf8')
+    if (!/tak terbaca/i.test(panelSrc)) problems.push('panel has no "tak terbaca" banner')
+    if (!/jobsFailure/.test(panelSrc)) problems.push('panel never reads jobsFailure')
+    if (!/!jobsFailure/.test(panelSrc)) problems.push('panel still shows "belum ada job" even when the read failed')
+    check('honest-cron-1: route emits and panel displays the cron read failure', problems.length === 0, problems.join(' | '))
   }
 
   // The office hide list is membership only. A name with tasks but no profile

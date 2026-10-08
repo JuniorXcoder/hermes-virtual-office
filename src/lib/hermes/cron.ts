@@ -15,7 +15,7 @@
  * markers, or the CLI refuses to run from inside a worker.
  */
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -151,19 +151,70 @@ function hermesHome(): string {
 }
 
 /** Every scheduled job, newest first. Empty when the file does not exist yet. */
-export async function listJobs(): Promise<CronJob[]> {
+export type JobListReadout = {
+  jobs: CronJob[]
+  /**
+   * Diisi kalau `jobs.json` GAGAL dibaca/parse. Pemanggil wajib menampilkannya,
+   * bukan menampilkan daftar kosong — pola yang sama dengan `failure` di
+   * `observability.ts`/`approvals.ts`: pembacaan yang gagal harus terlihat
+   * GAGAL, bukan terlihat kosong. `jobs.json` yang belum ada (belum ada jadwal
+   * sama sekali) BUKAN kegagalan — itu daftar kosong yang sah, dan `failure`
+   * tetap kosong.
+   */
+  failure?: string
+  /** Umur `jobs.json` dalam detik saat dibaca (-1 kalau filenya tidak ada). */
+  ageSeconds: number
+}
+
+/**
+ * Every scheduled job, newest first, beserta penanda kegagalan baca.
+ *
+ * `failure` kosong = daftarnya benar-benar kosong. `failure` terisi = bacanya
+ * yang gagal (file rusak / tak bisa dibaca), JANGAN tampilkan "tidak ada job".
+ */
+export async function readJobList(): Promise<JobListReadout> {
+  const file = path.join(hermesHome(), 'cron', 'jobs.json')
+  let ageSeconds = -1
   try {
-    const raw = await readFile(path.join(hermesHome(), 'cron', 'jobs.json'), 'utf8')
+    ageSeconds = Math.max(0, Math.round((Date.now() - (await stat(file)).mtimeMs) / 1000))
+  } catch {
+    // File belum ada = belum ada jadwal; ageSeconds tetap -1, bukan failure.
+  }
+  try {
+    const raw = await readFile(file, 'utf8')
     const parsed = JSON.parse(raw) as { jobs?: RawJob[] }
     const jobs = (parsed.jobs ?? []).map(toJob)
     // Paused last, then by next run, so the things about to fire are at the top.
-    return jobs.sort((a, b) => {
+    jobs.sort((a, b) => {
       if (a.enabled !== b.enabled) return a.enabled ? -1 : 1
       return (a.nextRunAt ?? '~').localeCompare(b.nextRunAt ?? '~')
     })
-  } catch {
-    return []
+    return { jobs, ageSeconds }
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException
+    // File yang belum ada = operator memang belum menjadwalkan apa pun.
+    if (e.code === 'ENOENT') return { jobs: [], ageSeconds: -1 }
+    const msg = (e.message || 'gagal membaca jobs.json').trim().split('\n').slice(-1)[0]
+    const parse = e instanceof SyntaxError || /JSON/i.test(msg)
+    return {
+      jobs: [],
+      failure: parse ? `jobs.json rusak (bukan JSON valid): ${msg.slice(0, 200)}` : `jobs.json tak terbaca: ${msg.slice(0, 200)}`,
+      ageSeconds,
+    }
   }
+}
+
+/**
+ * Every scheduled job, newest first. Empty when the file does not exist yet.
+ *
+ * Dipertahankan untuk pemanggil yang hanya butuh daftar dan sudah menangani
+ * kegagalan lewat jalurnya sendiri — TAPI: daftar kosong dari sini AMBIGU
+ * (bisa berarti "belum ada jadwal", bisa berarti "bacanya gagal"). Pemanggil
+ * yang menampilkan ke operator WAJIB pakai `readJobList()` dan menampilkan
+ * `failure`-nya. Lihat `GET /api/hermes/cron` dan `CronPanel`.
+ */
+export async function listJobs(): Promise<CronJob[]> {
+  return (await readJobList()).jobs
 }
 
 export async function getJob(id: string): Promise<CronJob | null> {

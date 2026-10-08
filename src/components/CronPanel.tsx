@@ -78,6 +78,8 @@ export default function CronPanel({
 }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [runs, setRuns] = useState<Run[]>([])
+  /** jobs.json gagal dibaca/parse — tampilkan "tak terbaca", BUKAN "tidak ada job". */
+  const [jobsFailure, setJobsFailure] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -105,12 +107,16 @@ export default function CronPanel({
     setLoading(true)
     setErr(null)
     try {
-      const res = await fetchJson<{ jobs?: Job[]; runs?: Run[] }>('/api/hermes/cron', {
-        cache: 'no-store',
-      })
+      const res = await fetchJson<{ jobs?: Job[]; runs?: Run[]; jobsFailure?: string }>(
+        '/api/hermes/cron',
+        {
+          cache: 'no-store',
+        },
+      )
       if (!res.ok) throw new Error(res.error || 'gagal memuat cron')
       setJobs(res.data?.jobs || [])
       setRuns(res.data?.runs || [])
+      setJobsFailure(res.data?.jobsFailure || null)
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -264,6 +270,8 @@ export default function CronPanel({
       {err && <div className="vp-err">{err}</div>}
       {note && <div className="vp-ok">{note}</div>}
       {loading && <div className="vp-muted">memuat…</div>}
+      {/* jobs.json gagal dibaca = "tak terbaca", BUKAN "belum ada job" — pola A2aPanel. */}
+      {jobsFailure && <div className="vp-err">jadwal tak terbaca (bukan &quot;tidak ada job&quot;): {jobsFailure}</div>}
 
       {screen === 'list' ? (
         <>
@@ -350,7 +358,7 @@ export default function CronPanel({
                 </div>
               </div>
             ))}
-            {!jobs.length && <span className="vp-muted">belum ada job terjadwal</span>}
+            {!jobs.length && !jobsFailure && <span className="vp-muted">belum ada job terjadwal</span>}
           </div>
 
           {runs.length > 0 && (
