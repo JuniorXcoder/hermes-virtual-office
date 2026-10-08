@@ -182,6 +182,18 @@ kbd {
   align-items: baseline;
   font-size: 12.5px;
 }
+
+/* Textarea minimal 2 baris.
+ *
+ * Satu baris bikin kolom isian tidak terbaca sebagai tempat menulis panjang — operator
+ * mengira teksnya cuma muat sebaris. Aturannya ditaruh di CSS, bukan hanya di atribut
+ * `rows` tiap komponen, supaya textarea baru tidak bisa masuk dengan satu baris tanpa
+ * ketahuan. 18px = padding 8+8 dan border 1+1 dari `.vp-input`; satuan `lh` ikut ukuran
+ * font, jadi tetap benar saat font naik ke 16px di HP. Kalau `lh` tidak didukung, seluruh
+ * deklarasi ini dibuang browser dan tinggal `rows` yang berlaku — jatuhnya aman. */
+textarea {
+  min-height: calc(2lh + 18px);
+}
 .vp-kv span {
   color: var(--muted);
   min-width: 70px;

@@ -374,7 +374,7 @@ export default function ChatPanel({
           <div className="vp-chat-input">
             <textarea
               className="vp-input"
-              rows={1}
+              rows={2}
               value={draft}
               placeholder="Tulis pesan…"
               onChange={(e) => setDraft(e.target.value)}
