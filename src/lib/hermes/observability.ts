@@ -53,9 +53,9 @@ let priceCache: Map<string, Price> | null = null
 /**
  * Tabel harga, dibangun dari cache model.dev.
  *
- * Tiap model didaftarkan dengan BEBERAPA kunci (provider/model, model saja, id) supaya model
- * kita yang ditulis bermacam-macam — `naturaline/muse-spark-1.3`, `muse-spark-1.3`, dan
- * `ky/deepseek-ai/deepseek-v4.1-flash` — tetap ketemu. Pencocokan dilakukan dari segmen
+ * Tiap model didaftarkan dengan BEBERAPA kunci (provider/model, model saja, id) supaya
+ * penyebutan model yang berbeda-beda — `<reseller>/<model>`, `<model>` polos, dan
+ * `<vendor>/<model>` bertingkat — tetap ketemu. Pencocokan dilakukan dari segmen
  * BELAKANG, karena bagian depan itu nama reseller dan tidak menentukan tarif.
  */
 function loadPrices(): Map<string, Price> {
