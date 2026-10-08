@@ -168,13 +168,15 @@ export async function POST(req: NextRequest) {
     action !== 'hide' &&
     action !== 'kill' &&
     action !== 'create' &&
-    action !== 'set-model'
+    action !== 'set-model' &&
+    action !== 'serve' &&
+    action !== 'unserve'
   ) {
     return NextResponse.json(
       {
         error: {
           code: 'invalid_request',
-          message: "action must be 'spawn', 'hide', 'kill', 'create' or 'set-model'",
+          message: "action must be 'spawn', 'hide', 'kill', 'create', 'set-model', 'serve' or 'unserve'",
           status: 400,
         },
       },
@@ -190,7 +192,32 @@ export async function POST(req: NextRequest) {
 
   // Atas nama agent (TAHAP 5.4): bila `onBehalfOf` ada, batas izin per role dinilai DULU dan
   // penolakannya dicatat di audit. Tanpa `onBehalfOf` (operator lewat UI), tidak ada yang
-  // berubah.
+  // berubah. SELFREPAIR-1: serve/unserve operator-only (mengubah config gateway) —
+  // permintaan atas nama agent DITOLAK eksplisit, bukan dipetakan ke izin lain.
+  if (body?.onBehalfOf != null && (action === 'serve' || action === 'unserve')) {
+    const ob = body.onBehalfOf as { agent?: unknown; role?: unknown }
+    const agent = typeof ob?.agent === 'string' ? ob.agent.trim() : ''
+    denyAudit(
+      {
+        at: new Date().toISOString(),
+        action: `agent:${action}`,
+        agent: agent || '(tanpa nama)',
+        reason: `${action} "${name}" atas nama ${agent || '?'}`,
+        effect: `permintaan agent untuk ${action} profil "${name}"`,
+      },
+      `hanya operator yang boleh ${action === 'serve' ? 'mendaftarkan' : 'mencabut'} entri A2A — mengubah config gateway bukan wewenang agent`,
+    )
+    return NextResponse.json(
+      {
+        error: {
+          code: 'refused',
+          message: `hanya operator yang boleh ${action === 'serve' ? 'mendaftarkan' : 'mencabut'} entri A2A — mengubah config gateway bukan wewenang agent`,
+          status: 400,
+        },
+      },
+      { status: 400 },
+    )
+  }
   if (body?.onBehalfOf != null) {
     const ob = body.onBehalfOf as { agent?: unknown; role?: unknown }
     const kind: AgentActionKind =
@@ -218,6 +245,54 @@ export async function POST(req: NextRequest) {
 
   // The profile's default model: what its workers and chat turns run unless a task
   // pins its own (`hermes kanban set-model`).
+  // SELFREPAIR-1 Celah 1: `serve` / `unserve` — daftarkan/cabut entri A2A untuk
+  // profil yang sudah ada (memakai upsertServedAgent/removeServedAgent: backup
+  // dulu, sunting bedah, local:false). Jujur: daftar served dibaca SEKALI saat
+  // gateway boot — berlaku SETELAH restart, bukan langsung aktif.
+  if (action === 'serve' || action === 'unserve') {
+    try {
+      const profiles = await listProfiles()
+      if (!profiles.includes(name)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'invalid_request',
+              message: `profil "${name}" tidak dikenal — tidak ada profil di disk untuk ${action === 'serve' ? 'didaftarkan' : 'dicabut'}`,
+              status: 400,
+            },
+          },
+          { status: 400 },
+        )
+      }
+      if (action === 'serve') {
+        // Deskripsi dari entri served SEBELUMNYA bila ada (upsert menimpa).
+        // null = profil tanpa entri sebelumnya — fallback generik saja.
+        const prev = (await listServedAgents().catch(() => [])).find((s) => s.profile === name)
+        await upsertServedAgent({
+          slug: name,
+          description: prev?.description || `Hermes profile '${name}' exposed over A2A.`,
+          advertisedToolsets: prev?.advertised_toolsets ?? [],
+        })
+      } else {
+        await removeServedAgent(name)
+      }
+      return NextResponse.json({
+        success: true,
+        action,
+        name,
+        a2aNote:
+          action === 'serve'
+            ? 'Terdaftar. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.'
+            : 'Tercabut dari config. Berlaku setelah gateway di-restart — sampai itu, path A2A-nya masih dijawab.',
+        needsGatewayRestart: await readNeedsGatewayRestart(),
+      })
+    } catch (err) {
+      return NextResponse.json(
+        { error: { code: 'action_failed', message: (err as Error).message, status: 502 } },
+        { status: 502 },
+      )
+    }
+  }
   if (action === 'set-model') {
     const model = body?.model == null ? '' : String(body.model).trim()
     const provider = body?.provider == null ? null : String(body.provider).trim() || null

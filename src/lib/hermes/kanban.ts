@@ -546,6 +546,91 @@ export async function setProfileModel(
   }
 }
 
+/** Toolset CLI satu profil (`platform_toolsets.cli`). Null = kunci tak ada/tak terbaca
+ * (bedakan: [] = ada tapi kosong). A2A-CALL-1: profil tanpa `a2a` di sini bisa
+ * DIPANGGIL tapi tidak bisa MEMANGGIL. */
+export async function profileToolsets(name: string): Promise<string[] | null> {
+  try {
+    const raw = await hermesJson<{ cli?: unknown } | string[]>([
+      '-p',
+      name,
+      'config',
+      'get',
+      'platform_toolsets',
+      '--json',
+    ])
+    if (Array.isArray(raw)) return raw.map(String)
+    const cli = (raw as { cli?: unknown })?.cli
+    if (cli === undefined) return null
+    if (!Array.isArray(cli)) return null
+    return cli.map((t) => String(t))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Gabung murni: daftar lama + `a2a`, tanpa duplikat (banding case-insensitive,
+ * urutan pertama dipertahankan). Dipisah supaya selftest menguji tanpa CLI.
+ */
+export function mergeToolsetList(existing: string[] | null): { merged: string[]; added: boolean } {
+  const base = [...(existing ?? [])]
+  if (base.some((t) => String(t).trim().toLowerCase() === 'a2a')) {
+    return { merged: base, added: false }
+  }
+  return { merged: [...base, 'a2a'], added: true }
+}
+
+/**
+ * Pastikan profil punya toolset `a2a` (A2A-CALL-1 + SELFREPAIR-1).
+ *
+ * GABUNG, bukan timpa: toolset lama dipertahankan + `a2a` ditambah.
+ * Jalur resmi CLI (`hermes -p <nama> config set platform_toolsets.cli '<json>'`),
+ * lalu verifikasi baca-balik. Idempoten: sudah ada = {added:false}, tanpa tulis.
+ */
+export async function ensureA2aToolset(name: string): Promise<{ added: boolean; toolsets: string[] }> {
+  const before = await profileToolsets(name)
+  const { merged, added } = mergeToolsetList(before)
+  if (!added) return { added: false, toolsets: before ?? [] }
+  await hermesWrite(['-p', name, 'config', 'set', 'platform_toolsets.cli', JSON.stringify(merged)])
+  const after = await profileToolsets(name)
+  if (!after || !after.some((t) => t.trim().toLowerCase() === 'a2a')) {
+    throw new Error(`toolset a2a gagal terverifikasi di profil "${name}" — tulis tidak mendarat`)
+  }
+  return { added: true, toolsets: after }
+}
+
+/**
+ * Tambal definisi provider menggantung di scope profil (SELFREPAIR-1).
+ *
+ * Menyalin definisi `custom_providers` bernama `<nama>` dari config global ke
+ * scope profil — langkah yang SAMA dengan setProfileModel (MODEL-PROVIDER-1),
+ * tapi untuk profil yang providernya menggantung TANPA ganti model.
+ * Verifikasi baca-balik; throw jujur bila definisi tak dikenal di global.
+ */
+export async function ensureProviderDef(name: string, provider: string): Promise<{ copied: boolean }> {
+  const need = provider.trim().slice('custom:'.length).trim().toLowerCase()
+  const global = await kanbanConfig<RawProvider[]>('custom_providers').catch(
+    () => [] as RawProvider[],
+  )
+  const list = Array.isArray(global) ? global : []
+  const match = list.find((p) => String(p?.name || '').trim().toLowerCase() === need)
+  if (!match || !String(match.base_url || '').trim()) {
+    throw new Error(
+      `provider "${provider.trim()}" tidak dikenal — tidak ada definisi custom_providers bernama "${need}" di config global; profil "${name}" tidak diubah`,
+    )
+  }
+  await hermesWrite(['-p', name, 'config', 'set', 'custom_providers', JSON.stringify([match])])
+  const landed = await profileCustomProviders(name).catch(() => null)
+  const ok =
+    Array.isArray(landed) &&
+    landed.some((p) => String(p?.name || '').trim().toLowerCase() === need)
+  if (!ok) {
+    throw new Error(`definisi provider "${provider.trim()}" gagal terverifikasi di profil "${name}"`)
+  }
+  return { copied: true }
+}
+
 /** A TOP-LEVEL write: same cleanEnv contract, no `kanban` prefix. */
 async function hermesWrite(args: string[]): Promise<string> {
   readCache.clear()

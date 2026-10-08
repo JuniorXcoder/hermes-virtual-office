@@ -61,6 +61,8 @@ import {
   originVerdict,
   parseA2aPlatform,
   parseGatewayStart,
+  canCall,
+  fallthroughVerdict,
 } from '../src/lib/hermes/doctor'
 // MODEL-PROVIDER-1: pure pendamping klasifikasi provider menggantung —
 // "custom:<nama> tanpa definisi bernama itu di scope profil" = rusak.
@@ -161,7 +163,7 @@ import {
   stripTransportNoise,
 } from '../src/lib/hermes/meeting-a2a'
 import { parseSoulMarker, soulFor } from '../src/lib/hermes/soul'
-import { listServedAgents, setServedAgentsConfigPath, upsertServedAgent } from '../src/lib/hermes/a2a-served'
+import { listServedAgents, setServedAgentsConfigPath, upsertServedAgent, removeServedAgent } from '../src/lib/hermes/a2a-served'
 import * as THREE from 'three'
 
 let failures = 0
@@ -5480,6 +5482,218 @@ void (async () => {
     if (/\/usr\/local\/bin\/gw-restart/.test(docSrc)) problems.push('doctor menyebut path host-specific')
 
     check('spawn-a2a-1: spawn otomatis A2A + pop up restart + satu badan + tolak asing', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SELFREPAIR-1: APLIKASI MEMPERBAIKI KEADAAN RUSAKNYA SENDIRI.
+  //
+  // Pure dari SUMBER INDEPENDEN (bukan dari fungsi yang diuji) + kasus
+  // negatif (sehat = tak berubah) + round-trip nyata (rusak → perbaiki → sehat
+  // → idempoten) di tmp. Lima keluarga perbaikan:
+  // (a) staleServed: entri served tanpa profil → removeServedAgent (config tmp).
+  // (b) deadAvatar + dupAvatar: DB tmp — mayat dihapus, ganda digabung ke
+  //     kanonik `agent:<nama>` (bukan ke baris lain).
+  // (c) mergeToolsetList: GABUNG tanpa duplikat (bukan timpa); sudah ada = tak
+  //     berubah. canCall: ada=a2a true, tak ada=false, tak terbaca=null.
+  // (d) fallthroughVerdict: path asing dijawab ≠ "no agent is served" = fail.
+  // (e) route serve/unserve + selfrepair + UI: tombol + pratinjau + laporan +
+  //     doctor sesudah (baca source, bukan klaim).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // 1. Pure findDuplicateAvatars + pickCanonicalAvatar: ganda → kanonik menang.
+    const { findDuplicateAvatars, pickCanonicalAvatar, isLiveSlot, isRosterSlotId } = await import('../src/lib/hermes/selfrepair')
+    const { mergeToolsetList } = await import('../src/lib/hermes/kanban')
+    const dups = findDuplicateAvatars([
+      { avatarId: 'agent:budi', name: 'budi' },
+      { avatarId: 'dummy:tech:3', name: 'budi' },
+      { avatarId: 'agent:solo', name: 'solo' },
+    ])
+    if (dups.size !== 1 || !dups.has('budi')) problems.push('ganda budi tak terdeteksi')
+    if (dups.get('budi')?.length !== 2) problems.push('anggota ganda bukan 2')
+    // NEGATIF: semua tunggal → tak ada ganda.
+    const nodups = findDuplicateAvatars([
+      { avatarId: 'agent:a', name: 'a' },
+      { avatarId: 'agent:b', name: 'b' },
+    ])
+    if (nodups.size !== 0) problems.push('keadaan sehat malah dilaporkan ganda')
+    const pick = pickCanonicalAvatar('budi', ['dummy:tech:3', 'agent:budi'])
+    if (pick.kept !== 'agent:budi' || pick.dropped.length !== 1 || pick.dropped[0] !== 'dummy:tech:3') {
+      problems.push(`kanonik tak menang: ${JSON.stringify(pick)}`)
+    }
+    // NEGATIF: tanpa kanonik → baris pertama (stabil), bukan lempar.
+    const pick2 = pickCanonicalAvatar('x', ['dummy:a:1', 'dummy:a:2'])
+    if (pick2.kept !== 'dummy:a:1' || pick2.dropped.length !== 1) {
+      problems.push(`tanpa kanonik bukan baris-pertama: ${JSON.stringify(pick2)}`)
+    }
+
+    // 1b. Kursi roster hidup BUKAN mayat (bug nyata: seluruh kursi kosong
+    // kantor ikut disapu karena kind=dummy + spawned=false juga cocok slot).
+    const slot = { avatarId: 'dummy:tech:0', name: 'Dev Manager', kind: 'dummy', spawned: false }
+    if (!isLiveSlot(slot)) problems.push('kursi roster hidup dikira mayat')
+    if (!isRosterSlotId('dummy:lobby:reception')) problems.push('resepsionis bukan slot')
+    if (isRosterSlotId('dummy:tech:hantu')) problems.push('id non-roster dikira slot')
+    // Mayat asli: nama agent + id bukan pola roster → BUKAN slot hidup.
+    const corpse = { avatarId: 'dummy:tech:99-hantu', name: 'hantu', kind: 'dummy', spawned: false }
+    if (isLiveSlot(corpse)) problems.push('mayat dikira kursi hidup')
+    // NEGATIF: nama placeholder tapi id asing = tetap mayat (bukan slot).
+    const fake = { avatarId: 'slot-asing', name: 'Dev Manager', kind: 'dummy', spawned: false }
+    if (isLiveSlot(fake)) problems.push('id-asing nama-placeholder dikira slot hidup')
+
+    // 1c. strayProfileDir KETAT: `.deleted` (tombstone resmi Hermes) tak pernah
+    // direncanakan; yang berisi config.yaml tak direncanakan (unfixable).
+    // Baca source previewRepairs, bukan klaim.
+    const srSrcStrict = readFileSync(new URL('../src/lib/hermes/selfrepair.ts', import.meta.url), 'utf8')
+    if (!/\.deleted/.test(srSrcStrict)) problems.push('preview tanpa pengecualian .deleted')
+    if (!/masih berisi config\.yaml/.test(srSrcStrict)) problems.push('preview tanpa syarat config.yaml-ada = unfixable')
+
+    // 2. mergeToolsetList: GABUNG (lama dipertahankan), bukan timpa.
+    const m1 = mergeToolsetList(['browser', 'terminal'])
+    if (m1.merged.length !== 3 || !m1.merged.includes('a2a') || !m1.merged.includes('browser') || !m1.added) {
+      problems.push(`gabung menimpa/menghilangkan: ${JSON.stringify(m1)}`)
+    }
+    // NEGATIF: sudah ada (beda huruf) = tak berubah, tanpa tulis.
+    const m2 = mergeToolsetList(['browser', 'A2A'])
+    if (m2.added || m2.merged.length !== 2) problems.push(`sudah-ada malah ditambah: ${JSON.stringify(m2)}`)
+    const m3 = mergeToolsetList(null)
+    if (m3.merged.length !== 1 || m3.merged[0] !== 'a2a' || !m3.added) {
+      problems.push(`kunci-tak-ada bukan [a2a]: ${JSON.stringify(m3)}`)
+    }
+
+    // 3. canCall: true / false / null dibedakan (bukan dua nilai).
+    if (canCall(['a2a', 'browser']) !== true) problems.push('punya-a2a bukan true')
+    if (canCall(['browser']) !== false) problems.push('tanpa-a2a bukan false')
+    if (canCall([]) !== false) problems.push('daftar-kosong bukan false')
+    if (canCall(null) !== null) problems.push('tak-terbaca bukan null')
+    if (canCall([' A2A ']) !== true) problems.push('spasi/huruf-besar bukan true')
+
+    // 4. fallthroughVerdict: 3 cabang literal.
+    const ftOk = fallthroughVerdict(true, 'no agent is served at /zz-tidak-ada')
+    if (ftOk.status !== 'pass') problems.push('tolak-jujur bukan pass')
+    const ftBad = fallthroughVerdict(true, '{"result":"halo dari agent default"}')
+    if (ftBad.status !== 'fail' || !ftBad.detail.includes('DIJAWAB')) problems.push('dijawab-default bukan fail')
+    const ftHttp = fallthroughVerdict(false, '')
+    if (ftHttp.status !== 'pass') problems.push('tolak-HTTP bukan pass')
+
+    // 5. Round-trip served basi di config TMP (bukan config asli): tanam entri
+    // basi + cabut via removeServedAgent → hilang; cabut lagi = removed:false
+    // (idempoten). Penulis yang SAMA dipakai route unserve. Fixture TANPA blok
+    // agents (jalur sisip-baru, seperti a2a-3) — `agents: []` inline bukan
+    // bentuk yang ditulis reader/writer ini.
+    const servedTmp = join(tmpdir(), `served-selfrepair-${process.pid}.yaml`)
+    writeFileSync(servedTmp, 'platforms:\n  a2a:\n    enabled: true\n    port: 9900\n')
+    setServedAgentsConfigPath(servedTmp)
+    try {
+      await upsertServedAgent({ slug: 'hantu-selfrepair', description: 'profil yang sudah tiada', advertisedToolsets: [] })
+      const before = await listServedAgents()
+      if (!before.some((s) => s.profile === 'hantu-selfrepair')) problems.push('tanam entri basi gagal')
+      if (before.some((s) => s.local !== false)) problems.push('upsert menulis local selain false')
+      const r1 = await removeServedAgent('hantu-selfrepair')
+      if (!r1.removed) problems.push('cabut entri basi removed=false')
+      const after = await listServedAgents()
+      if (after.some((s) => s.profile === 'hantu-selfrepair')) problems.push('entri basi masih ada sesudah cabut')
+      // NEGATIF + idempoten: cabut yang sudah hilang = removed:false, bukan throw.
+      const r2 = await removeServedAgent('hantu-selfrepair')
+      if (r2.removed) problems.push('cabut-kedua removed=true (tak idempoten)')
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    } finally {
+      setServedAgentsConfigPath(null)
+      try { rmSync(servedTmp) } catch { /* not created */ }
+      for (const suffix of ['-wal', '-shm']) {
+        try { rmSync(servedTmp + suffix) } catch { /* not created */ }
+      }
+      for (const f of [servedTmp]) {
+        void f
+      }
+    }
+    // Backup config asli: round-trip di atas memakai path tmp — file asli tak
+    // boleh punya .bak baru dari selftest ini. (Dicek longgar: tak ada throw.)
+
+    // 6. Round-trip avatar mayat + ganda di DB TMP: tanam mayat + dobel, pakai
+    // logika yang SAMA dengan runRepairs (deleteAvatar + pickCanonicalAvatar),
+    // lalu sehat = tak berubah.
+    const avTmp = join(tmpdir(), `office-selfrepair-${process.pid}.db`)
+    process.env.OFFICE_DB_PATH = avTmp
+    try {
+      const db = await import('../src/lib/office/db')
+      const sr = await import('../src/lib/hermes/selfrepair')
+      db._resetOfficeDbForTest()
+      db.saveAvatars([
+        { avatarId: 'dummy:tech:9', name: 'hantu', division: 'tech', kind: 'dummy', x: 1, z: 1, level: 0, activity: 'typing', facing: 0, spawned: false, anchored: false },
+        { avatarId: 'agent:ganda', name: 'ganda', division: 'tech', kind: 'agent', x: 2, z: 2, level: 0, activity: 'idle', facing: 0, spawned: true, anchored: false },
+        { avatarId: 'dummy:tech:7', name: 'ganda', division: 'tech', kind: 'dummy', x: 5, z: 5, level: 0, activity: 'typing', facing: 0, spawned: false, anchored: false },
+      ])
+      // Mayat: hapus via deleteAvatar (penulis yang sama dipakai runRepairs).
+      if (!db.deleteAvatar('dummy:tech:9')) problems.push('hapus mayat gagal')
+      // Ganda: kanonik menang + adopsi posisi donor (pola runRepairs).
+      const rows = db.listAvatars().filter((r) => r.name === 'ganda')
+      const ids = rows.map((r) => r.avatarId)
+      if (ids.length !== 2) problems.push(`tanam ganda bukan 2 baris: ${ids.join(',')}`)
+      const { kept, dropped } = sr.pickCanonicalAvatar('ganda', ids)
+      if (kept !== 'agent:ganda') problems.push(`gabung tak sisakan kanonik: ${kept}`)
+      const donor = rows.find((r) => r.avatarId === dropped[0])
+      if (donor) {
+        db.officeDb().prepare(`UPDATE avatar_state SET x = ?, z = ?, level = ? WHERE avatar_id = ?`).run(donor.x, donor.z, donor.level, kept)
+      }
+      for (const d of dropped) db.deleteAvatar(d)
+      const rest = db.listAvatars().filter((r) => r.name === 'ganda')
+      if (rest.length !== 1 || rest[0].avatarId !== 'agent:ganda') problems.push(`sesudah gabung bukan 1 kanonik: ${JSON.stringify(rest)}`)
+      if (rest[0] && (rest[0].x !== 5 || rest[0].z !== 5)) problems.push(`kanonik tak adopsi posisi donor: ${JSON.stringify(rest[0])}`)
+      // NEGATIF: hapus yang sudah hilang = false (idempoten, bukan throw).
+      if (db.deleteAvatar('dummy:tech:9')) problems.push('hapus-kedua true (tak idempoten)')
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    } finally {
+      const { _resetOfficeDbForTest } = await import('../src/lib/office/db')
+      _resetOfficeDbForTest()
+      delete process.env.OFFICE_DB_PATH
+      for (const suffix of ['', '-wal', '-shm']) {
+        try { rmSync(avTmp + suffix) } catch { /* not created */ }
+      }
+    }
+
+    // 7. Route + UI dari SOURCE (bukan klaim): serve/unserve + selfrepair +
+    // tombol + pratinjau + laporan + doctor-sesudah.
+    const agSrc = readFileSync(new URL('../src/app/api/hermes/agents/route.ts', import.meta.url), 'utf8')
+    if (!/action === 'serve' \|\| action === 'unserve'/.test(agSrc)) problems.push('route tanpa cabang serve/unserve')
+    if (!/upsertServedAgent/.test(agSrc) || !/removeServedAgent/.test(agSrc)) {
+      problems.push('route serve/unserve tak memakai penulis yang sudah ada')
+    }
+    if (!/Berlaku setelah gateway di-restart/.test(agSrc)) problems.push('route serve tanpa kalimat berlaku-setelah-restart')
+    if (!/hanya operator yang boleh/.test(agSrc)) problems.push('route serve/unserve tanpa tolak-atas-nama-agent')
+    if (!/profil ".*" tidak dikenal/.test(agSrc)) problems.push('route serve tanpa tolak profil-tak-ada')
+    const srSrc = readFileSync(new URL('../src/app/api/hermes/selfrepair/route.ts', import.meta.url), 'utf8')
+    if (!/export\s+(async\s+)?function\s+GET\b/.test(srSrc)) problems.push('route selfrepair tanpa GET pratinjau')
+    if (!/export\s+(async\s+)?function\s+POST\b/.test(srSrc)) problems.push('route selfrepair tanpa POST jalankan')
+    if (!/assertLocalWriteRequest/.test(srSrc)) problems.push('route selfrepair POST tanpa guard tulis')
+    if (!/runDoctor/.test(srSrc)) problems.push('route selfrepair tak memeriksa-ulang doctor sesudah jalan')
+    if (!/previewRepairs/.test(srSrc) || !/runRepairs/.test(srSrc)) problems.push('route selfrepair tak memakai previewRepairs/runRepairs')
+    const aspSrc = readFileSync(new URL('../src/components/AgentSpawnPanel.tsx', import.meta.url), 'utf8')
+    if (!/daftarkan ke A2A/.test(aspSrc)) problems.push('panel agent tanpa tombol daftarkan-ke-A2A')
+    if (!/action, 'serve'/.test(aspSrc) && !/'serve', r\.name/.test(aspSrc)) problems.push('panel tak memanggil aksi serve')
+    if (!/a2a === 'unlisted'/.test(aspSrc)) problems.push('tombol serve tak dibatasi baris unlisted')
+    const dpSrc = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
+    if (!/pratinjau perbaikan/.test(dpSrc)) problems.push('panel doctor tanpa tombol pratinjau')
+    if (!/selfrepair-result/.test(dpSrc)) problems.push('panel doctor tanpa laporan hasil')
+    if (!/keadaan SESUDAH/.test(dpSrc)) problems.push('panel doctor tanpa sebut doctor-sesudah')
+    if (!/rows=\{2\}/.test(dpSrc)) problems.push('textarea doctor bukan rows=2')
+    // NEGATIF UI: tombol serve HANYA di cabang unlisted — serve tanpa syarat
+    // profil-ada akan 400 di server; pastikan cabang null (tanpa profil) tak
+    // ikut dapat tombol (pola: `r.profile` di syarat yang sama).
+    const badgeBlock = aspSrc.slice(aspSrc.indexOf('function a2aBadge'))
+    if (!/r\.profile/.test(badgeBlock)) problems.push('tombol serve tanpa syarat profil-ada')
+    // Doctor memakai pemeriksa yang SAMA (jangan logika kedua): canCall +
+    // classifyProviderScope + fallthroughVerdict di doctor.ts.
+    const docSrc = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+    if (!/canCall/.test(docSrc)) problems.push('doctor tak memakai canCall (logika kedua?)')
+    if (!/fallthroughVerdict/.test(docSrc)) problems.push('doctor tak memakai fallthroughVerdict')
+    if (!/id: 'caller'/.test(docSrc)) problems.push('doctor tanpa periksa caller (dipanggil-vs-memanggil)')
+    if (!/id: 'fallthrough'/.test(docSrc)) problems.push('doctor tanpa periksa fallthrough')
+    if (!/tidak bisa dipastikan/.test(docSrc)) problems.push('doctor tanpa cabang tidak-bisa-dipastikan')
+
+    check('selfrepair-1: sapu mayat/dobel/basi + serve/unserve + pratinjau + doctor-sesudah + idempoten', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

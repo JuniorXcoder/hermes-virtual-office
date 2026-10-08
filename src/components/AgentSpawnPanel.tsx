@@ -185,12 +185,12 @@ export default function AgentSpawnPanel({
     }
   }
 
-  async function act(action: 'spawn' | 'hide' | 'kill', name: string) {
+  async function act(action: 'spawn' | 'hide' | 'kill' | 'serve' | 'unserve', name: string) {
     setBusy(name)
     setErr(null)
     setNote(null)
     try {
-      const res = await fetchJson<{ purged?: number }>('/api/hermes/agents', {
+      const res = await fetchJson<{ purged?: number; a2aNote?: string | null; needsGatewayRestart?: boolean | null }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, name }),
@@ -206,6 +206,13 @@ export default function AgentSpawnPanel({
         )
       } else if (action === 'hide') {
         setNote(`"${name}" disembunyikan — tugasnya tetap di papan`)
+      } else if (action === 'serve') {
+        // SELFREPAIR-1 Celah 1: jujur — terdaftar, tapi BERLAKU SETELAH
+        // restart gateway (bukan langsung "siap").
+        setNote(`"${name}" ${d?.a2aNote ?? 'terdaftar. Berlaku setelah gateway di-restart.'}`)
+        if (d?.needsGatewayRestart != null) setNeedsGatewayRestart(d.needsGatewayRestart)
+      } else if (action === 'unserve') {
+        setNote(`"${name}" ${d?.a2aNote ?? 'tercabut dari config.'}`)
       }
       await load()
       onChanged()
@@ -337,6 +344,29 @@ export default function AgentSpawnPanel({
    */
   function a2aBadge(r: Row) {
     if (r.a2a !== 'served') {
+      // SELFREPAIR-1 Celah 1: agent `unlisted` (profil ada, belum didaftarkan)
+      // bisa didaftarkan dari UI — aksi `serve` + kalimat jujur (berlaku
+      // setelah restart). Profil tak ada (null) = tak ada tombol.
+      if (r.a2a === 'unlisted' && r.profile) {
+        return (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="vp-tag-warn" title="Tidak ada entri di platforms.a2a.agents">
+              ❌ Belum terdaftar A2A
+            </span>
+            <button
+              className="vp-chip-btn"
+              disabled={busy === r.name}
+              onClick={(e) => {
+                e.stopPropagation()
+                void act('serve', r.name)
+              }}
+              title="Daftarkan profil ini di platforms.a2a.agents (local:false). Berlaku setelah gateway di-restart."
+            >
+              {busy === r.name ? '…' : 'daftarkan ke A2A'}
+            </button>
+          </span>
+        )
+      }
       return (
         <span className="vp-tag-warn" title="Tidak ada entri di platforms.a2a.agents — nyalakan A2A untuk agent ini">
           ❌ Belum terdaftar A2A — nyalakan A2A untuk agent ini

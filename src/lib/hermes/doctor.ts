@@ -213,6 +213,44 @@ export function originVerdict(
   }
 }
 
+/**
+ * Kemampuan MEMANGGIL satu profil: `platform_toolsets.cli` memuat `a2a`.
+ * null = tak terbaca (bedakan dari false = terbaca tapi tak punya).
+ * Dipisah murni supaya selftest + SELFREPAIR-1 memakai logika yang SAMA
+ * (jangan bikin logika kedua).
+ */
+export function canCall(toolsets: string[] | null): boolean | null {
+  if (toolsets === null) return null
+  return toolsets.some((t) => String(t).trim().toLowerCase() === 'a2a')
+}
+
+/**
+ * Fallthrough A2A: path tak dikenal HARUS ditolak bernada "no agent is served".
+ * answered=true + bunyi itu = server menampung path asing ke agent default
+ * (bug fallthrough — tambalan Hermes bisa hilang saat update).
+ */
+export function fallthroughVerdict(httpOk: boolean, body: string): {
+  status: DoctorStatus
+  detail: string
+} {
+  if (!httpOk) {
+    return {
+      status: 'pass',
+      detail: 'path tak dikenal ditolak di level HTTP (tidak dijawab agent)',
+    }
+  }
+  if (/no agent is served at/i.test(body)) {
+    return {
+      status: 'pass',
+      detail: 'path tak dikenal ditolak jujur ("no agent is served") — tidak jatuh ke agent default',
+    }
+  }
+  return {
+    status: 'fail',
+    detail: `path tak dikenal DIJAWAB (fallthrough ke agent default?) — balasan: ${body.slice(0, 160)}`,
+  }
+}
+
 /* ---------------------------------------------------------------- live --- */
 
 /**
@@ -610,6 +648,144 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
   // 9. Origin boleh menulis.
   const v = originVerdict(opts.host, opts.origin, process.env.ALLOWED_ORIGINS || '')
   checks.push({ id: 'origin', label: 'Origin boleh menulis', status: v.status, detail: v.detail, fix: v.fix })
+
+  // 10. SELFREPAIR-1 + A2A-CALL-1: kemampuan MEMANGGIL per profil yang di-serve.
+  // "Di-serve" = bisa DIPANGGIL; toolset a2a = bisa MEMANGGIL. Dipanggil ya +
+  // memanggil tidak = keadaan rusak yang terlihat (rapat hanya jalan satu arah).
+  // canCall dipakai — logika yang SAMA dengan sapu SELFREPAIR-1.
+  if (!profiles) {
+    checks.push({
+      id: 'caller',
+      label: 'Agent bisa memanggil (toolset a2a)',
+      status: 'unknown',
+      detail: 'tidak bisa dipastikan — daftar profil gagal dibaca',
+      fix: '',
+    })
+  } else {
+    try {
+      const { profileToolsets } = await import('./kanban')
+      const served = await listServedAgents().catch(() => null)
+      if (served === null) {
+        checks.push({
+          id: 'caller',
+          label: 'Agent bisa memanggil (toolset a2a)',
+          status: 'unknown',
+          detail: 'tidak bisa dipastikan — daftar served tak terbaca',
+          fix: '',
+        })
+      } else {
+        const rows = await Promise.all(
+          served.map(async (s) => ({ s, tools: await profileToolsets(s.profile).catch(() => null) })),
+        )
+        const mute: string[] = []
+        const unreadable: string[] = []
+        for (const r of rows) {
+          const c = canCall(r.tools)
+          if (c === false) mute.push(r.s.profile)
+          else if (c === null) unreadable.push(r.s.profile)
+        }
+        if (mute.length) {
+          checks.push({
+            id: 'caller',
+            label: 'Agent bisa memanggil (toolset a2a)',
+            status: 'fail',
+            detail: 'dipanggil ya, memanggil tidak: ' + mute.join(', ') + ' — mereka bisa dihubungi tapi tidak bisa menghubungi siapa pun',
+            fix: 'tambah toolset a2a tiap profil itu (digabung, bukan ditimpa) — tekan "perbaiki" di panel Siap pakai (menyapu otomatis, idempoten)',
+          })
+        } else if (unreadable.length) {
+          checks.push({
+            id: 'caller',
+            label: 'Agent bisa memanggil (toolset a2a)',
+            status: 'unknown',
+            detail: `tidak bisa dipastikan — toolset tak terbaca untuk: ${unreadable.join(', ')}`,
+            fix: '',
+          })
+        } else if (!rows.length) {
+          checks.push({
+            id: 'caller',
+            label: 'Agent bisa memanggil (toolset a2a)',
+            status: 'unknown',
+            detail: 'tidak bisa dipastikan — belum ada agent yang di-serve untuk dinilai',
+            fix: '',
+          })
+        } else {
+          checks.push({
+            id: 'caller',
+            label: 'Agent bisa memanggil (toolset a2a)',
+            status: 'pass',
+            detail: `semua ${rows.length} agent yang di-serve punya toolset a2a (dipanggil + memanggil)`,
+            fix: '',
+          })
+        }
+      }
+    } catch (err) {
+      checks.push({
+        id: 'caller',
+        label: 'Agent bisa memanggil (toolset a2a)',
+        status: 'unknown',
+        detail: `tidak bisa dipastikan: ${(err as Error).message.slice(0, 200)}`,
+        fix: '',
+      })
+    }
+  }
+
+  // 11. SELFREPAIR-1: A2A menolak path yang tidak dikenal (bug fallthrough).
+  // Tambalan ada di sisi Hermes dan bisa hilang saat update — doctor memberi
+  // tahu supaya pengguna tidak menuduh proyek ini.
+  if (!a2aEnabled) {
+    checks.push({
+      id: 'fallthrough',
+      label: 'A2A menolak path tak dikenal',
+      status: 'unknown',
+      detail: 'tidak bisa dipastikan — platform A2A sendiri belum terverifikasi nyala',
+      fix: '',
+    })
+  } else {
+    try {
+      const { readFile } = await import('node:fs/promises')
+      const { hermesHome } = await import('./kanban')
+      const raw = await readFile(`${hermesHome()}/config.yaml`, 'utf8')
+      const m = /port:\s*(\d+)/.exec(raw)
+      const port = m ? Number(m[1]) : 9900
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 8000)
+      let httpOk = false
+      let body = ''
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/zz-tidak-ada-${Date.now()}`, {
+          method: 'POST',
+          signal: ctrl.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'doctor-fallthrough',
+            method: 'message/send',
+            params: { message: { role: 'user', parts: [{ text: 'ping' }] } },
+          }),
+        })
+        httpOk = res.ok
+        body = await res.text().catch(() => '')
+      } finally {
+        clearTimeout(timer)
+      }
+      const ft = fallthroughVerdict(httpOk, body)
+      checks.push({
+        id: 'fallthrough',
+        label: 'A2A menolak path tak dikenal',
+        status: ft.status,
+        detail: ft.detail,
+        fix: ft.status === 'fail' ? 'perbarui/tambal Hermes sisi server (fallthrough path tak dikenal ke agent default) lalu restart gateway' : '',
+      })
+    } catch (err) {
+      checks.push({
+        id: 'fallthrough',
+        label: 'A2A menolak path tak dikenal',
+        status: 'unknown',
+        detail: `tidak bisa dipastikan — probe gagal: ${(err as Error).message.slice(0, 200)}`,
+        fix: '',
+      })
+    }
+  }
 
   void taskCount
   return { readAt: new Date().toISOString(), hermesBin: HERMES_BIN, checks }
