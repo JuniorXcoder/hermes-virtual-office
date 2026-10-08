@@ -351,58 +351,30 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
   font: inherit;
   min-width: 220px;
 }
-/* The grid scrolls SIDEWAYS on a narrow window; each column scrolls VERTICALLY. */
+/* Kolomnya dari KanbanColumns (grid 7 kolom yang sama dengan view Kanban); wadah ini
+   hanya menggulir — ke samping di jendela sempit, ke bawah kalau kartunya banyak. */
 .vp-kanban-scroll {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(260px, 1fr));
-  gap: 10px;
   padding: 12px;
   overflow: auto;
   flex: 1;
   min-height: 0;
 }
-.vp-kanban-col {
-  background: #121b22;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+/* Kotak cari + catatan kebasian: sticky-left supaya tidak ikut tergeser saat grid
+   digulir ke samping. */
+.vp-kanban-tools {
+  position: sticky;
+  left: 0;
   display: flex;
-  flex-direction: column;
-  min-height: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
 }
-.vp-kanban-col-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.vp-kanban-col-head b { color: var(--text); }
-.vp-kanban-col-body {
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  min-height: 0;
-}
-.vp-kanban-card {
-  text-align: left;
-  background: #17222b;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 8px 9px;
-  cursor: pointer;
-  color: var(--text);
-  font: inherit;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.vp-kanban-card:hover { border-color: #3c5a4a; }
-.vp-kanban-card-title { font-size: 12.5px; line-height: 1.35; }
-.vp-kanban-card-meta { font-size: 10.5px; color: var(--muted); }
+.vp-kanban-tools .vp-sub { margin: 2px 0 0; }
+/* Papan (top bar): kanban di atas, lebar penuh; kolomnya butuh ±1050px, jadi panel
+   slate yang biasanya max-w-3xl dilebarkan dan kolom digulir ke samping di dalamnya. */
+.vp-full-slate.vp-board-wide { max-width: min(1400px, 96vw); }
+.vp-board-kanban { overflow-x: auto; padding-bottom: 6px; }
 
 /* ------------------------------------------------------------------- 2d -- */
 .vp-col {
@@ -712,8 +684,9 @@ button.vp-run:hover { border-left-color: #6f8fa3; background: #131c23; }
   }
   .vp-kanban-head { flex-wrap: wrap; padding-top: max(12px, env(safe-area-inset-top)); }
   .vp-kanban-search { margin-left: 0; min-width: 0; flex: 1 1 100%; order: 3; }
-  .vp-kanban-scroll { grid-template-columns: repeat(4, min(82vw, 300px)); scroll-snap-type: x mandatory; }
-  .vp-kanban-col { scroll-snap-align: start; }
+  .vp-kanban-scroll { scroll-snap-type: x mandatory; scroll-padding-inline: 12px; }
+  /* Papan: sama seperti view Kanban — satu kolom per layar, digeser per kolom. */
+  .vp-board-kanban { scroll-snap-type: x mandatory; }
 }
 
 /* iOS memperbesar halaman saat fokus ke input di bawah 16px dan tidak mengecilkannya

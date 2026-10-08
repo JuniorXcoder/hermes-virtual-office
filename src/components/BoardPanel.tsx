@@ -18,10 +18,17 @@
  *   2. YANG DIJELASKAN ADALAH AKIBATNYA, SEBELUM DIJALANKAN. "Kerja BARU berhenti; yang
  *      sedang jalan tidak dibunuh." Itu kalimat yang mencegah orang mengira tombolnya
  *      membunuh pekerjaan mereka, dan itu memang bedanya.
+ *
+ * Kolom kanban tetap tampil di ATAS, lewat KanbanColumns yang sama dengan view Kanban dan
+ * papan dinding 3D — pemilik aplikasi menekan "Papan" dan berharap melihat papan. Sumber
+ * datanya sengaja dua: kolom dari daftar task di store (yang juga dipakai dua tempat lain,
+ * jadi isinya tidak bisa beda), seksi di bawahnya dari /api/hermes/board.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import FullPanel from './FullPanel'
+import KanbanColumns from './KanbanColumns'
+import { useOffice } from '@/lib/store'
 
 type BlockReason = {
   kind: string
@@ -64,6 +71,7 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
   const [notice, setNotice] = useState<string | null>(null)
   const [actions, setActions] = useState<Record<string, ActionEffect>>({})
   const [audit, setAudit] = useState<AuditEntry[]>([])
+  const loadTasks = useOffice((s) => s.load)
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +136,7 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
       variant="slate"
       onClose={onClose}
       label="Papan"
+      className="vp-board-wide"
       title={
         <h2 className="text-lg font-semibold">
           Papan
@@ -135,11 +144,23 @@ export default function BoardPanel({ open, onClose }: { open: boolean; onClose: 
         </h2>
       }
       actions={
-        <button onClick={load} className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800">
+        // Kolom kanban dari store juga dibaca ulang: "muat ulang" yang hanya menyegarkan
+        // separuh layar akan membuat dua bagian panel menunjukkan waktu yang berbeda.
+        <button
+          onClick={() => {
+            void load()
+            void loadTasks()
+          }}
+          className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800"
+        >
           muat ulang
         </button>
       }
     >
+      {/* Klik kartu menutup panel: detail task tampil di bawah lapisan panel layar penuh. */}
+      <section className="vp-board-kanban mb-5">
+        <KanbanColumns closeAfterOpen={onClose} />
+      </section>
 
       {err && (
         <div className="mb-4 rounded border border-red-800 bg-red-950/50 p-3 text-sm text-red-300">
