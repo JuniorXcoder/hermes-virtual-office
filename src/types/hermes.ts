@@ -18,7 +18,7 @@ export type TaskStatus =
   | 'archived'
 /** Meeting modes: `simulasi` = LLM gateway voices everyone (labelled honestly),\n * `a2a` = real agents speak via the A2A protocol. `auto` = legacy alias of simulasi. */
 export type MeetingMode = 'auto' | 'simulasi' | 'a2a'
-export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle'
+export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle' | 'cancelled'
 
 /**
  * Where a task came from.
@@ -166,6 +166,14 @@ export type Meeting = {
   file?: string | null
   /** A2A context ids involved, for cross-checking in the A2A panel. */
   ctxIds?: string[]
+  /**
+   * Operator meminta berhenti. Runner TIDAK dibunuh di tengah giliran —
+   * flag ini dibaca di batas giliran, lalu rapat difinalisasi sebagai
+   * dibatalkan (state 'cancelled', arsip DIBATALKAN).
+   */
+  cancelRequested?: boolean
+  /** Rapat ini difinalisasi via pembatalan, bukan sampai selesai. */
+  cancelled?: boolean
 }
 
 /** A meeting transcript stored on disk (see lib/hermes/meeting.ts listArchived). */

@@ -69,6 +69,8 @@ type ArchivedMeeting = {
   turnCount: number
   preview: string
   archived: true
+  /** Rapat dibatalkan operator (arsip bertanda DIBATALKAN, bukan selesai). */
+  cancelled: boolean
   /** ctx-* A2A yang terlibat (rapat mode a2a); kosong untuk simulasi/arsip lama. */
   ctxIds: string[]
 }
@@ -99,6 +101,7 @@ function parseArchive(name: string, text: string): ArchivedMeeting | null {
     turnCount,
     preview: previewLine ? previewLine.slice(0, 160) : '',
     archived: true,
+    cancelled: /^- status: DIBATALKAN/m.test(text),
     ctxIds,
   }
 }
@@ -353,13 +356,21 @@ async function persist(meeting: Meeting): Promise<string | null> {
       meeting.mode === 'a2a'
         ? 'a2a (pernyataan dari agent nyata via protokol A2A)'
         : 'simulasi (yang bicara LLM gateway, BUKAN agent — perilaku lama)'
+    const doneCount = meeting.turns.filter((t) => t.kind !== 'minutes').length
+    // Kejujuran arsip (RAPAT-CANCEL-1): rapat yang dibatalkan operator menandai
+    // dirinya DIBATALKAN — bukan selesai. Giliran yang tak sempat jalan TIDAK
+    // dikarang dan TIDAK dihilangkan: catat berhenti di giliran ke berapa.
+    const statusLine = meeting.cancelled
+      ? `- status: DIBATALKAN — rapat dihentikan operator setelah ${doneCount} giliran berjalan; giliran berikutnya TIDAK dijalankan dan TIDAK dikarang`
+      : `- status: SELESAI — ${doneCount} giliran`
     const body = [
       `# ${meeting.topic}`,
       '',
       `- peserta: ${meeting.participants.join(', ')}`,
       `- pembawa acara: ${meeting.moderator}`,
       `- mode: ${meeting.mode} — ${modeLabel}`,
-      `- giliran: ${meeting.turns.filter((t) => t.kind !== 'minutes').length}`,
+      `- giliran: ${doneCount}`,
+      statusLine,
       `- ctx: ${(meeting.ctxIds ?? []).join(', ') || '(tidak ada — bukan rapat A2A)'}`,
       '',
       '## Transkrip',
@@ -402,6 +413,10 @@ async function runA2aOpening(meeting: Meeting): Promise<string[]> {
   const order = [meeting.moderator, ...meeting.participants.filter((p) => p !== meeting.moderator)]
   const points = new Map<string, string>()
   for (const speaker of order) {
+    // Batas aman (RAPAT-CANCEL-1): giliran yang sedang berjalan diselesaikan
+    // dulu (jangan bunuh fetch A2A di tengah), lalu berhenti SEBELUM giliran
+    // berikutnya dimulai — bukan di tengah tulis arsip.
+    if (meeting.cancelRequested) break
     meeting.currentSpeaker = speaker
     const prompt = buildOpeningPrompt({ speaker, topic: meeting.topic, participants: meeting.participants })
     try {
@@ -435,6 +450,7 @@ async function runA2aCross(meeting: Meeting, points: string[]): Promise<void> {
   const order = [meeting.moderator, ...meeting.participants.filter((p) => p !== meeting.moderator)]
   meeting.phase = 'round1'
   for (let i = 0; i < order.length; i++) {
+    if (meeting.cancelRequested) break
     if (meeting.turns.filter((t) => t.kind !== 'minutes').length >= MAX_TURNS) break
     const speaker = order[i]
     const next = order[(i + 1) % order.length]
@@ -459,6 +475,12 @@ async function runA2aCross(meeting: Meeting, points: string[]): Promise<void> {
 
 /** Notulen mode A2A: moderator (agent nyata, lewat A2A) menyusun dari transkrip. */
 async function runA2aMinutes(meeting: Meeting): Promise<void> {
+  // Batal di tengah = TIDAK ada notulen utuh. Jangan minta moderator menyusun
+  // kesimpulan dari rapat separuh — itu karangan berkedok notulen.
+  if (meeting.cancelRequested) {
+    await finalizeCancelled(meeting)
+    return
+  }
   meeting.phase = 'minutes'
   meeting.currentSpeaker = meeting.moderator
   try {
@@ -496,6 +518,10 @@ async function runA2aMinutes(meeting: Meeting): Promise<void> {
 async function runA2a(meeting: Meeting): Promise<void> {
   try {
     const points = await runA2aOpening(meeting)
+    if (meeting.cancelRequested) {
+      await finalizeCancelled(meeting)
+      return
+    }
     await runA2aCross(meeting, points)
     await runA2aMinutes(meeting)
   } catch (err) {
@@ -512,6 +538,70 @@ async function runA2a(meeting: Meeting): Promise<void> {
   } finally {
     busy = false
   }
+}
+
+/**
+ * Finalisasi pembatalan (RAPAT-CANCEL-1): dipanggil dari batas giliran, TIDAK
+ * pernah dari tengah giliran. Menulis arsip DIBATALKAN + catatan berhenti di
+ * giliran ke berapa, lalu melepas slot `busy` supaya rapat baru bisa dimulai.
+ *
+ * Idempoten: dipanggil dua kali = arsip yang sama (file sama, isi sama),
+ * tidak menimpa dengan karangan baru.
+ */
+async function finalizeCancelled(meeting: Meeting): Promise<void> {
+  if (meeting.state === 'cancelled' && meeting.file) return
+  const doneCount = meeting.turns.filter((t) => t.kind !== 'minutes').length
+  meeting.cancelled = true
+  meeting.minutes =
+    `## KEPUTUSAN\nRapat DIBATALKAN operator setelah ${doneCount} giliran berjalan — ` +
+    `bukan rapat selesai, tidak ada kesepakatan yang bisa dikutip dari sini.\n\n` +
+    `## TINDAK LANJUT\n- (tidak ada — rapat dibatalkan, giliran berikutnya tidak dijalankan)\n\n` +
+    `## RISIKO\n- Transkrip di atas HANYA berisi ${doneCount} giliran yang sempat berjalan; ` +
+    `jangan mengutip beyond itu.`
+  push(meeting, {
+    round: 0,
+    speaker: 'sistem',
+    kind: 'minutes',
+    text: 'Rapat dibatalkan — arsip bertanda DIBATALKAN.',
+    ts: Date.now(),
+  })
+  meeting.file = await persist(meeting)
+  meeting.state = 'cancelled'
+  meeting.currentSpeaker = null
+  meeting.phase = 'cancelled'
+}
+
+/**
+ * Minta rapat yang sedang berjalan berhenti di batas aman.
+ *
+ * Jujur tiga arah: tak ada rapat berjalan = `running: false` (bukan sukses
+ * palsu); rapat sudah selesai/batal = `already: true` idempoten; permintaan
+ * baru = flag dikibarkan, runner berhenti setelah giliran berjalan selesai.
+ *
+ * @returns `{ running: false }` tanpa rapat berjalan; `{ already: true }`
+ *   untuk double-cancel; `{ ok: true }` + finalisasi dilakukan runner ATAU
+ *   langsung bila rapat masih antre (belum ada giliran).
+ */
+export async function cancelMeeting(id?: string): Promise<
+  | { running: false }
+  | { already: true; meeting: Meeting }
+  | { ok: true; meeting: Meeting; waited: false }
+> {
+  const target = id
+    ? meetings.get(id) ?? null
+    : listMeetings().find((m) => m.state === 'running' || m.state === 'queued') ?? null
+  if (!target) return { running: false }
+  if (target.state === 'done' || target.state === 'cancelled' || target.state === 'error') {
+    return { already: true, meeting: target }
+  }
+  target.cancelRequested = true
+  // Masih antre (belum ada giliran, runner mungkin belum jalan): finalisasi
+  // langsung supaya operator tak menunggu runner yang tak kunjung mulai.
+  if (target.state === 'queued' && target.turns.length === 0) {
+    busy = false
+    await finalizeCancelled(target)
+  }
+  return { ok: true, meeting: target, waited: false }
 }
 
 /**
@@ -541,6 +631,7 @@ async function run(meeting: Meeting): Promise<void> {
     for (let round = 1; round <= rounds; round++) {
       meeting.phase = `round${round}`
       for (const speaker of speakers) {
+        if (meeting.cancelRequested) break
         if (meeting.turns.filter((t) => t.kind !== 'minutes').length >= MAX_TURNS) break
         meeting.currentSpeaker = speaker
         const ask =
@@ -554,8 +645,13 @@ async function run(meeting: Meeting): Promise<void> {
         push(meeting, { round, speaker, kind: 'speech', text: reply, ts: Date.now() })
       }
       if (meeting.turns.filter((t) => t.kind !== 'minutes').length >= MAX_TURNS) break
+      if (meeting.cancelRequested) break
     }
 
+    if (meeting.cancelRequested) {
+      await finalizeCancelled(meeting)
+      return
+    }
     meeting.phase = 'minutes'
     meeting.currentSpeaker = meeting.moderator
     const minutes = await complete(

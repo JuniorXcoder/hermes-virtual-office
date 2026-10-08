@@ -36,6 +36,7 @@ export default function MeetingPanel({
   const [moderator, setModerator] = useState('')
   const [meetingMode, setMeetingMode] = useState<'simulasi' | 'a2a'>('simulasi')
   const [busy, setBusy] = useState(false)
+  const [cancelBusy, setCancelBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   /**
@@ -149,6 +150,34 @@ export default function MeetingPanel({
   function closeCard() {
     setOpened(null)
     setArchive(null)
+  }
+
+  /**
+   * Batalkan rapat yang sedang berjalan (RAPAT-CANCEL-1). Tombolnya hanya
+   * dirender saat `live` — tak ada rapat berjalan = tak ada tombol, tak ada
+   * sukses palsu. Arsip DIBATALKAN ditulis runner di batas giliran; refresh
+   * berkala mengambil status terbaru.
+   */
+  async function cancel() {
+    if (!meeting) return
+    setCancelBusy(true)
+    setErr(null)
+    try {
+      const res = await fetchJson<{ already_cancelled?: boolean; cancel_requested?: boolean }>(
+        '/api/hermes/meeting/cancel',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: meeting.id }),
+        },
+      )
+      if (!res.ok) throw new Error(res.error || 'gagal membatalkan rapat')
+      await refresh()
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setCancelBusy(false)
+    }
   }
 
   function download(name: string, text: string) {
@@ -271,6 +300,16 @@ export default function MeetingPanel({
                   <span>giliran</span>
                   <b>{meeting.currentSpeaker || '—'}</b>
                 </div>
+
+                {live && (
+                  <button
+                    className="vp-btn vp-btn-warn"
+                    disabled={cancelBusy}
+                    onClick={cancel}
+                  >
+                    {cancelBusy ? 'Membatalkan…' : 'Batalkan rapat'}
+                  </button>
+                )}
 
                 <Collapsible
                   label="Transkrip"

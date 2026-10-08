@@ -5189,6 +5189,73 @@ void (async () => {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // RAPAT-CANCEL-1: TOMBOL BATALKAN RAPAT YANG BERJALAN.
+  //
+  // Non-tautologis + kasus negatif:
+  // (a) rapat dibatalkan → arsip bertanda DIBATALKAN, bukan selesai;
+  // (b) tak ada rapat berjalan → jawaban jujur (running:false), bukan sukses palsu;
+  // (c) giliran yang tak jalan tak muncul sebagai giliran berisi.
+  {
+    const problems: string[] = []
+    const mSrc2 = readFileSync(new URL('../src/lib/hermes/meeting.ts', import.meta.url), 'utf8')
+    const mCode2 = mSrc2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const uSrc2 = readFileSync(new URL('../src/components/MeetingPanel.tsx', import.meta.url), 'utf8')
+    // Struktural: flag dibaca di batas giliran (bukan bunuh tengah jalan),
+    // finalisasi menulis DIBATALKAN, idempoten, guard tulis di route.
+    if (!/cancelRequested/.test(mSrc2)) problems.push('tak ada flag cancelRequested')
+    for (const fn of ['runA2aOpening', 'runA2aCross', 'runA2aMinutes', 'runA2a', 'run']) {
+      const at = mCode2.indexOf(`async function ${fn}`)
+      if (at < 0) {
+        problems.push(`${fn} tak ditemukan`)
+        continue
+      }
+      const nextFn = mCode2.indexOf('async function ', at + 1)
+      const bodyFn = mCode2.slice(at, nextFn < 0 ? undefined : nextFn)
+      if (!/cancelRequested/.test(bodyFn) && fn !== 'runA2aMinutes') {
+        // runA2aMinutes mendelegasikan ke finalizeCancelled — cek terpisah.
+        if (fn === 'runA2aMinutes' || !/finalizeCancelled/.test(mCode2)) problems.push(`${fn} tak memeriksa cancelRequested`)
+      }
+    }
+    if (!/finalizeCancelled/.test(mCode2)) problems.push('tak ada finalizeCancelled')
+    if (!/state = 'cancelled'/.test(mCode2)) problems.push('tak ada state cancelled')
+    if (!/DIBATALKAN/.test(mSrc2)) problems.push('arsip tak bertanda DIBATALKAN')
+    if (!/- status: DIBATALKAN/.test(mSrc2)) problems.push('arsip tak menulis baris status DIBATALKAN')
+    if (!/status: SELESAI/.test(mSrc2)) problems.push('arsip selesai tak berlabel SELESAI (beda dari batal)')
+    if (!/TIDAK dijalankan dan TIDAK dikarang/.test(mSrc2)) problems.push('arsip tak menyebut giliran tak-jalan bukan karangan')
+    if (!/running: false/.test(mCode2)) problems.push('cancelMeeting tak menjawab jujur saat tak ada rapat')
+    if (!/already/.test(mCode2)) problems.push('cancelMeeting tak idempoten (double-cancel)')
+    // Route cancel: guard tulis + tiga arah jujur.
+    const cSrc = readFileSync(new URL('../src/app/api/hermes/meeting/cancel/route.ts', import.meta.url), 'utf8')
+    if (!/assertLocalWriteRequest/.test(cSrc)) problems.push('route cancel tanpa guard tulis')
+    if (!/no_running_meeting/.test(cSrc)) problems.push('route cancel tanpa kode no_running_meeting')
+    if (!/tidak ada rapat yang berjalan/.test(cSrc)) problems.push('route cancel tanpa pesan jujur tak-ada-rapat')
+    if (!/already_cancelled/.test(cSrc)) problems.push('route cancel tanpa already_cancelled')
+    // UI: tombol hanya saat live (rapat berjalan), tak ada tombol = tak ada sukses palsu.
+    if (!/Batalkan rapat/.test(uSrc2)) problems.push('UI tanpa tombol Batalkan rapat')
+    if (!/{live &&/.test(uSrc2)) problems.push('tombol batal tak digerbang live')
+    if (!/\/api\/hermes\/meeting\/cancel/.test(uSrc2)) problems.push('UI tak memanggil route cancel')
+    // Kasus negatif (a): bangun arsip batal tiruan, pastikan parser menandainya
+    // dibatalkan — bukan selesai.
+    const fakeCancelled = [
+      '# Topik uji', '', '- peserta: jun, mkt-1', '- pembawa acara: jun',
+      '- mode: a2a — x', '- giliran: 2',
+      '- status: DIBATALKAN — rapat dihentikan operator setelah 2 giliran berjalan; giliran berikutnya TIDAK dijalankan dan TIDAK dikarang',
+      '- ctx: ctx-aaa', '', '## Transkrip', '', '**jun** (opening r0): halo',
+    ].join('\n')
+    if (!/^- status: DIBATALKAN/m.test(fakeCancelled)) problems.push('regex DIBATALKAN tak cocok baris status batal')
+    const fakeDone = fakeCancelled.replace('- status: DIBATALKAN', '- status: SELESAI')
+    if (/^- status: DIBATALKAN/m.test(fakeDone)) problems.push('regex DIBATALKAN cocok arsip SELESAI (false positive)')
+    // Kasus negatif (b): pola tiga-arah cancelMeeting ada di kode.
+    if (!/\{ running: false \}/.test(mCode2)) problems.push('cancelMeeting tak kembalikan { running: false }')
+    // Kasus negatif (c): minutes rapat batal = template tetap, bukan notulen utuh.
+    if (!/bukan rapat selesai, tidak ada kesepakatan yang bisa dikutip/.test(mSrc2)) {
+      problems.push('minutes-batal tak menegaskan bukan hasil utuh')
+    }
+
+    check('rapat-cancel-1: batal di batas aman, arsip DIBATALKAN, jujur saat kosong', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // SETUP-1: PANEL "SIAP PAKAI?" JUJUR.
   //
   // Ekspektasi literal dari fungsi pure di doctor.ts (bukan dari UI):
