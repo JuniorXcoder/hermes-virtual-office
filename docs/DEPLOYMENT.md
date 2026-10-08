@@ -185,9 +185,12 @@ bawaan yang aman, bukan bug. Cek: `hermes config get platforms.a2a --json`.
 
 ### 7.2 Serve tiap agent yang mau bisa dipanggil
 
-Dari aplikasi: buka form **Agent**, nyalakan toggle **A2A** untuk profil itu.
-Aplikasi yang menulis `platforms.a2a.agents` di `~/.hermes/config.yaml`:
-backup dulu, sunting bedah, kunci lain utuh.
+Dari aplikasi: buka form **Agent** atau klik slot avatar kosong — pendaftaran A2A
+**otomatis nyala** (toggle default menyala; server juga mendaftarkan kecuali
+dimatikan eksplisit). Aplikasi yang menulis `platforms.a2a.agents` di
+`~/.hermes/config.yaml`: backup dulu, sunting bedah, kunci lain utuh, selalu
+`local: false`. Setelah pendaftaran sukses, aplikasi menampilkan pop up
+**"Silahkan restart server"** + tombol Restart sekarang.
 
 ### 7.3 `local: false` itu SYARAT, bukan pilihan
 
@@ -203,8 +206,12 @@ entri baru tersimpan tapi belum aktif. Ini penyebab paling umum "kok gak bisa
 dipanggil":
 
 ```bash
-systemctl --user restart hermes-gateway
+hermes gateway restart
 ```
+
+Tombol **Restart sekarang** di pop up memakai jalur resmi yang sama (route
+`/api/hermes/gateway-restart` hanya menjadwalkan; kalau unit host-nya tidak
+ada, route-nya bilang gagal + perintah manual — bukan sukses palsu).
 
 Panel "Siap pakai?" membandingkan mtime `config.yaml` dengan waktu start
 gateway dan bilang terus terang "Tersimpan, belum aktif — restart gateway"

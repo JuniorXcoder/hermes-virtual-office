@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
+  claimAvatar,
   getOfficeName,
   listAvatars,
   saveAvatars,
@@ -41,6 +42,7 @@ export async function GET() {
 type Body = {
   action?: string
   name?: string
+  avatarId?: string
   list?: AvatarWrite[]
   asker?: string
   responsible?: string
@@ -89,6 +91,28 @@ export async function POST(req: NextRequest) {
           .map(cleanAvatar)
           .filter((a): a is AvatarWrite => a !== null)
         return NextResponse.json({ saved: saveAvatars(list) })
+      }
+      case 'claimAvatar': {
+        // Klaim slot dummy untuk agent: SATU agent = SATU baris kanonik
+        // `agent:<nama>`. Baris kanonik yang sudah ada DIPINDAH ke posisi
+        // slot (bukan dibuatkan badan kedua) — itu yang dihapus `kill`.
+        const avatarId = String(body.avatarId ?? '')
+        const claimName = String(body.name ?? '').trim().toLowerCase()
+        if (!avatarId || !claimName) {
+          return NextResponse.json(
+            { error: { code: 'invalid_request', message: 'claimAvatar butuh avatarId + name', status: 400 } },
+            { status: 400 },
+          )
+        }
+        try {
+          const r = claimAvatar(avatarId, claimName)
+          return NextResponse.json({ claimed: true, avatarId: r.avatarId, moved: r.moved, slotRemoved: r.slotRemoved })
+        } catch (err) {
+          return NextResponse.json(
+            { error: { code: 'action_failed', message: (err as Error).message, status: 502 } },
+            { status: 502 },
+          )
+        }
       }
       default:
         return NextResponse.json(

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   createProfile,
   deleteProfile,
+  hermesHome,
   listAgents,
   listAssignees,
   listProfiles,
@@ -17,6 +18,8 @@ import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
 import { parseDomains, ownersForDomains } from '@/lib/hermes/a2a'
 import { listServedAgents, removeServedAgent, upsertServedAgent } from '@/lib/hermes/a2a-served'
+import { gatewayStartMs, needsRestart } from '@/lib/hermes/doctor'
+import { stat } from 'node:fs/promises'
 import { deleteAvatar } from '@/lib/office/db'
 import { readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
@@ -25,6 +28,20 @@ import { agentPermissionSummary, checkAgentAction, type AgentActionKind } from '
 import { denyAudit } from '@/lib/hermes/audit'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * SATU SUMBER KEBENARAN "butuh restart": mtime config.yaml vs start gateway —
+ * pembanding yang SAMA dipakai doctor (SETUP-1), pop up, dan checklist A2A
+ * Ready. null = tak bisa dipastikan (bukan "tidak butuh").
+ */
+async function readNeedsGatewayRestart(): Promise<boolean | null> {
+  try {
+    const mtime = (await stat(`${hermesHome()}/config.yaml`)).mtimeMs
+    return needsRestart(mtime, await gatewayStartMs())
+  } catch {
+    return null
+  }
+}
 
 /**
  * The spawn/hide/kill menu.
@@ -65,6 +82,10 @@ export async function GET() {
     const agentMeta = new Map(agents.map((a) => [a.name, a]))
     const served = await listServedAgents().catch(() => [])
     const servedByProfile = new Map(served.map((s) => [s.profile, s]))
+    // SATU SUMBER KEBENARAN "butuh restart" (lihat helper di atas): dipakai
+    // pop up + checklist + panel Sistem, jangan hitung ulang di klien.
+    let needsGatewayRestart: boolean | null = null
+    needsGatewayRestart = await readNeedsGatewayRestart()
     // Peta domain→pemilik untuk jawaban jujur "siapa pegang X".
     const servedDesc = new Map(served.map((s) => [s.profile, s.description]))
     const domainAgents = agents.map((a) => ({
@@ -113,6 +134,12 @@ export async function GET() {
         [...new Set(domainAgents.flatMap((a) => a.domains))],
         domainAgents,
       ),
+      /**
+       * Butuh restart gateway? boolean | null — SATU sumber kebenaran yang
+       * sama dengan doctor (mtime config vs start gateway). null = tak bisa
+       * dipastikan (UI tampilkan abu, bukan hijau).
+       */
+      needsGatewayRestart,
     })
   } catch (err) {
     return NextResponse.json(
@@ -232,9 +259,12 @@ export async function POST(req: NextRequest) {
     const advertisedToolsets = Array.isArray(body?.advertisedToolsets)
       ? (body.advertisedToolsets as unknown[]).map((t) => String(t ?? '').trim()).filter(Boolean)
       : []
-    // Toggle A2A: default MATI. Hidup = daftarkan served-agent (local:false).
-    // Mati = jangan sentuh config sama sekali.
-    const serveA2a = body?.serveA2a === true
+    // Toggle A2A: default NYALA (permintaan operator eksplisit: spawn dari mana
+    // pun harus langsung A2A). Mati hanya bila klien mengirim serveA2a:false
+    // eksplisit. Default di SISI SERVER supaya jalur baru (avatar, dst) yang
+    // lupa mengirim flag tidak mengulangi bug "kok gak masuk".
+    // Hidup = daftarkan served-agent (local:false). Mati = jangan sentuh config.
+    const serveA2a = body?.serveA2a !== false
     // Model pilihan operator saat membuat. Kosong = jangan sentuh config profil sama
     // sekali, supaya agent baru ikut bawaan Hermes, bukan dipaksa ke satu model.
     const model = body?.model == null ? '' : String(body.model).trim()
@@ -301,7 +331,10 @@ export async function POST(req: NextRequest) {
           /** Model yang diminta tapi gagal dipasang (profil tetap dibuat). */
           modelRequested: model || null,
           modelError,
-          /** Toggle A2A: null = mati (config tidak disentuh). */
+          /**
+           * Toggle A2A: null = Mati eksplisit (serveA2a:false — config tidak
+           * disentuh). true = terdaftar; false+gagal = pendaftaran gagal.
+           */
           a2aRegistered,
           a2aError,
           /**
@@ -312,6 +345,11 @@ export async function POST(req: NextRequest) {
             a2aRegistered === true
               ? 'Tersimpan. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.'
               : null,
+          /**
+           * Keadaan "butuh restart" SESUDAH tulis ini — SATU sumber kebenaran
+           * yang sama dengan doctor. Pop up memakainya: tidak menghitung ulang.
+           */
+          needsGatewayRestart: await readNeedsGatewayRestart(),
         },
         { status: 201 },
       )

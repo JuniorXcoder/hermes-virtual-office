@@ -508,7 +508,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
         label: 'Butuh restart gateway?',
         status: 'fail',
         detail: 'config.yaml lebih baru dari start gateway — entri served tersimpan tapi BELUM aktif',
-        fix: 'Tersimpan, belum aktif — restart gateway:\nsystemctl --user restart hermes-gateway',
+        fix: 'Tersimpan, belum aktif — restart gateway:\nhermes gateway restart',
       })
     } else {
       checks.push({

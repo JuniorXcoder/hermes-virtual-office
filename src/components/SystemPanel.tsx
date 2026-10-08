@@ -118,6 +118,12 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
   const [notice, setNotice] = useState<string | null>(null)
   const [appr, setAppr] = useState<Approvals | null>(null)
   const [apprErr, setApprErr] = useState<string | null>(null)
+  /**
+   * "Butuh restart gateway?" — SATU sumber kebenaran: dibaca dari
+   * /api/hermes/agents (pembanding mtime config vs start gateway yang SAMA
+   * dipakai doctor). Panel ini TIDAK menghitung ulang. null = tak pasti.
+   */
+  const [needsGatewayRestart, setNeedsGatewayRestart] = useState<boolean | null>(null)
   const work = useOffice((st) => st.work)
 
   const load = useCallback(async () => {
@@ -153,16 +159,33 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
     }
   }, [])
 
+  /**
+   * Keadaan restart: ikut poll yang sama, tapi dari SATU sumber kebenaran
+   * (/api/hermes/agents). Gagal dibaca = null (tak pasti), bukan hijau.
+   */
+  const loadRestart = useCallback(async () => {
+    try {
+      const res = await fetch('/api/hermes/agents', { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'gagal membaca keadaan restart')
+      setNeedsGatewayRestart(json?.needsGatewayRestart ?? null)
+    } catch {
+      setNeedsGatewayRestart(null)
+    }
+  }, [])
+
   useEffect(() => {
     if (!open) return
     load()
     loadApprovals()
+    loadRestart()
     const t = setInterval(() => {
       load()
       loadApprovals()
+      loadRestart()
     }, 30_000)
     return () => clearInterval(t)
-  }, [open, load, loadApprovals])
+  }, [open, load, loadApprovals, loadRestart])
 
   if (!open) return null
 
@@ -195,6 +218,7 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
             onClick={() => {
               load()
               loadApprovals()
+              loadRestart()
             }}
             disabled={busy} className="rounded border border-slate-600 px-2 py-1 hover:bg-slate-800">
             {busy ? '...' : 'muat ulang'}
@@ -214,6 +238,25 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
       )}
 
       {notice && <div className="mb-4 rounded border border-slate-600 bg-slate-800/60 p-2 text-xs">{notice}</div>}
+
+      {/* ---------- gateway ---------- */}
+      {/* "Butuh restart" dari SATU sumber kebenaran (bukan hitungan panel ini).
+          Kuning = tersimpan belum aktif; abu = tak bisa dipastikan. */}
+      <section className="mb-5">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Gateway</h3>
+        <div className="space-y-1 rounded border border-slate-700 bg-slate-800/50 p-2 text-xs">
+          <div>
+            restart gateway:{' '}
+            {needsGatewayRestart === true ? (
+              <span className="text-amber-300">butuh — config lebih baru dari start gateway (served tersimpan, BELUM aktif)</span>
+            ) : needsGatewayRestart === false ? (
+              <span className="text-emerald-300">tidak — served yang tersimpan sudah aktif</span>
+            ) : (
+              <span className="text-slate-500">tak pasti — start gateway tak terbaca</span>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* ---------- kerja di kantor ---------- */}
       {/* Bukti kenapa agent duduk di mejanya walau papan kosong. Cron ditulis sebagai KEBIJAKAN:

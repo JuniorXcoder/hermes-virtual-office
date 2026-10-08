@@ -62,6 +62,7 @@ import {
   parseA2aPlatform,
   parseGatewayStart,
 } from '../src/lib/hermes/doctor'
+import { localOriginAllowed } from '../src/lib/local-guard'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -5206,6 +5207,144 @@ void (async () => {
     if (!/TAK PASTI/.test(pSrc)) problems.push('UI tanpa cabang TAK PASTI')
 
     check('setup-1: doctor jujur — lulus/gagal/tak-pasti, basi ditandai, restart terdeteksi', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SPAWN-A2A-1: SPAWN OTOMATIS A2A + POP UP RESTART + SATU BADAN.
+  //
+  // Ekspektasi literal dari SUMBER INDEPENDEN (bukan dari fungsi yang diuji):
+  // - Route agents create: default serveA2a = NYALA — dibaca dari source route
+  //   (serveA2a !== false), bukan dengan memanggil route-nya.
+  // - claimAvatar (db.ts, DB tmp): klaim slot untuk agent yang SUDAH punya
+  //   baris kanonik TIDAK menambah baris (pindah + buang slot); klaim baru
+  //   memakai ulang baris slot jadi kanonik.
+  // - Route gateway-restart: guard tulis (localOriginAllowed — fungsi yang
+  //   SAMA dipakai route) menolak origin asing; source route memanggil
+  //   gw-restart.service dan menyebut perintah manual saat gagal.
+  // - UI: pop up RestartNotice menyebut "Silahkan restart server" + tidak
+  //   mengklaim aktif sebelum restart; toggle default checked di source panel.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // 1. Server default NYALA: source route harus `serveA2a !== false`
+    // (bukan `=== true` — itu bug "klik avatar mustahil A2A").
+    const routeSrc = readFileSync(new URL('../src/app/api/hermes/agents/route.ts', import.meta.url), 'utf8')
+    if (!/serveA2a\s*=\s*body\?\.serveA2a\s*!==\s*false/.test(routeSrc)) {
+      problems.push('route create tidak default-NYALA (serveA2a !== false hilang)')
+    }
+    // Balasan create membawa needsGatewayRestart (satu sumber kebenaran).
+    if (!/needsGatewayRestart:\s*await\s+readNeedsGatewayRestart\(\)/.test(routeSrc)) {
+      problems.push('balasan create tanpa needsGatewayRestart')
+    }
+    if (!/needsGatewayRestart,/.test(routeSrc) || !/readNeedsGatewayRestart\(\)/.test(routeSrc)) {
+      problems.push('GET agents tanpa needsGatewayRestart dari helper bersama')
+    }
+
+    // 2. claimAvatar: satu agent = satu baris (DB tmp, bukan DB asli).
+    const claimPath = join(tmpdir(), `office-claim-${process.pid}.db`)
+    process.env.OFFICE_DB_PATH = claimPath
+    try {
+      const db = await import('../src/lib/office/db')
+      db._resetOfficeDbForTest()
+      // Skenario Bug B operator: agent:mkt-1 sudah ada + slot dummy diklaim
+      // untuk nama yang SAMA → kembali ke 1 baris (kanonik pindah ke slot,
+      // slot dibuang), BUKAN 2 badan.
+      db.saveAvatars([
+        { avatarId: 'agent:mkt-1', name: 'mkt-1', division: 'growth', kind: 'agent', x: -24, z: -16, level: 1, activity: 'idle', facing: 0, spawned: true, anchored: false },
+        { avatarId: 'dummy:growth:5', name: 'Mkt Staff 2', division: 'growth', kind: 'dummy', x: 0, z: 9.3, level: 0, activity: 'typing', facing: 0, spawned: false, anchored: false },
+      ])
+      const r = db.claimAvatar('dummy:growth:5', 'mkt-1')
+      const after = db.listAvatars()
+      if (after.length !== 1) problems.push(`klaim agent-berada menambah baris (2→${after.length}, harus 1)`)
+      if (r.avatarId !== 'agent:mkt-1' || !r.moved || !r.slotRemoved) {
+        problems.push(`klaim tak pindah kanonik: ${JSON.stringify(r)}`)
+      }
+      const moved = after.find((a) => a.avatarId === 'agent:mkt-1')
+      if (!moved || moved.x !== 0 || moved.z !== 9.3) problems.push(`kanonik tak pindah ke slot: ${JSON.stringify(moved)}`)
+      if (after.some((a) => a.avatarId === 'dummy:growth:5')) problems.push('baris slot tidak dibuang')
+      // Klaim BARU: baris slot dipakai ulang jadi kanonik (jumlah tetap).
+      db.saveAvatars([
+        { avatarId: 'dummy:tech:1', name: 'Dev Staff 1', division: 'tech', kind: 'dummy', x: 1, z: 1, level: 0, activity: 'typing', facing: 0, spawned: false, anchored: false },
+      ])
+      const n0 = db.listAvatars().length
+      const r2 = db.claimAvatar('dummy:tech:1', 'dev-1')
+      const n1 = db.listAvatars().length
+      if (n1 !== n0) problems.push(`klaim baru menambah baris (${n0}→${n1})`)
+      if (r2.avatarId !== 'agent:dev-1' || r2.moved) problems.push(`klaim baru salah: ${JSON.stringify(r2)}`)
+      const canon = db.listAvatars().find((a) => a.avatarId === 'agent:dev-1')
+      if (!canon || canon.kind !== 'agent' || canon.name !== 'dev-1') problems.push(`kanonik baru salah: ${JSON.stringify(canon)}`)
+      // Slot tak ada = lempar (bukan diam).
+      try {
+        db.claimAvatar('dummy:tak-ada:9', 'x-1')
+        problems.push('klaim slot tak-ada tidak lempar')
+      } catch {
+        // diharapkan
+      }
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    } finally {
+      const { _resetOfficeDbForTest } = await import('../src/lib/office/db')
+      _resetOfficeDbForTest()
+      delete process.env.OFFICE_DB_PATH
+      for (const suffix of ['', '-wal', '-shm']) {
+        try { rmSync(claimPath + suffix) } catch { /* not created */ }
+      }
+    }
+
+    // Route restart: guard + unit + jujur-gagal (dari source, bukan klaim).
+    // Path biner host TIDAK boleh muncul di kode publik (alat satu host).
+    const grSrc = readFileSync(new URL('../src/app/api/hermes/gateway-restart/route.ts', import.meta.url), 'utf8')
+    if (!/assertLocalWriteRequest/.test(grSrc)) problems.push('route restart tanpa guard tulis')
+    if (!/gw-restart\.service/.test(grSrc)) problems.push('route restart tak memakai gw-restart.service')
+    if (!/scheduled:\s*false/.test(grSrc)) problems.push('route restart tak punya cabang gagal-jujur')
+    if (!/manual/.test(grSrc)) problems.push('route restart tak memberi perintah manual')
+    if (!/hermes gateway restart/.test(grSrc)) problems.push('route restart tanpa perintah portabel')
+    if (/\/usr\/local\/bin\//.test(grSrc)) problems.push('route restart menyebut path host-specific')
+    // Guard yang SAMA dipakai route harus menolak origin asing — literal.
+    process.env.ALLOWED_ORIGINS = 'kantor.example:3300'
+    if (localOriginAllowed('kantor.example:3300', 'http://jahat.example')) {
+      problems.push('origin asing LOLOS guard route restart')
+    }
+    if (!localOriginAllowed('kantor.example:3300', 'http://kantor.example:3300')) {
+      problems.push('origin sah DITOLAK guard route restart')
+    }
+    delete process.env.ALLOWED_ORIGINS
+    // needsRestart literal: config lebih baru = butuh; sama/lama = tidak.
+    const t0 = Date.parse('2026-10-08T22:44:31')
+    if (needsRestart(t0 + 1, t0) !== true) problems.push('config lebih baru tak butuh restart')
+    if (needsRestart(t0, t0) !== false) problems.push('config sama waktu malah butuh restart')
+    if (needsRestart(t0 - 1, t0) !== false) problems.push('config lama malah butuh restart')
+
+    // 4. UI: pop up jujur + tombol tak klaim aktif + toggle default nyala.
+    const rnSrc = readFileSync(new URL('../src/components/RestartNotice.tsx', import.meta.url), 'utf8')
+    if (!/Silahkan restart server/.test(rnSrc)) problems.push('pop up tanpa kalimat "Silahkan restart server"')
+    if (!/dibaca SEKALI saat gateway boot/.test(rnSrc)) problems.push('pop up tanpa kenapa (boot-sekali)')
+    if (!/BELUM bisa dipanggil/.test(rnSrc)) problems.push('pop up tanpa apa-yang-belum-bisa')
+    if (!/akan menolaknya/.test(rnSrc)) problems.push('pop up tanpa sebut rapat-a2a-menolak')
+    if (!/Restart sekarang/.test(rnSrc)) problems.push('pop up tanpa tombol restart')
+    if (!/gateway-restart/.test(rnSrc)) problems.push('tombol tak memakai route gateway-restart')
+    if (!/dijadwalkan/.test(rnSrc)) problems.push('tombol mengklaim selesai (harus "dijadwalkan")')
+    if (!/rows=\{2\}/.test(rnSrc)) problems.push('textarea manual bukan rows=2')
+    const aspSrc = readFileSync(new URL('../src/components/AgentSpawnPanel.tsx', import.meta.url), 'utf8')
+    if (!/useState\(true\)/.test(aspSrc)) problems.push('toggle A2A tidak default-nyala')
+    if (!/otomatis terdaftar A2A/.test(aspSrc)) problems.push('form tanpa teks akibat-otomatis')
+    if (!/RestartNotice/.test(aspSrc)) problems.push('panel agent tak merender pop up restart')
+    if (!/Terdaftar, belum aktif/.test(aspSrc) || !/A2A siap/.test(aspSrc) || !/Belum terdaftar A2A/.test(aspSrc)) {
+      problems.push('checklist 3-state tak lengkap')
+    }
+    const dsdSrc = readFileSync(new URL('../src/components/DummySpawnDialog.tsx', import.meta.url), 'utf8')
+    if (!/claimAvatar/.test(dsdSrc)) problems.push('dialog avatar tak memakai claimAvatar')
+    if (!/action: 'claimAvatar'/.test(dsdSrc)) problems.push('dialog avatar tak memanggil aksi claimAvatar')
+    if (/role: 'manager'/.test(dsdSrc)) problems.push('dialog avatar masih hardcode role manager')
+    if (!/roleForSlot/.test(dsdSrc)) problems.push('dialog avatar tanpa role-per-slot')
+    if (!/RestartNotice/.test(dsdSrc)) problems.push('dialog avatar tak menampilkan pop up restart')
+    // Doctor fix portabel (bukan path host-specific).
+    const docSrc = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+    if (!/hermes gateway restart/.test(docSrc)) problems.push('doctor tanpa perintah portabel')
+    if (/\/usr\/local\/bin\/gw-restart/.test(docSrc)) problems.push('doctor menyebut path host-specific')
+
+    check('spawn-a2a-1: spawn otomatis A2A + pop up restart + satu badan + tolak asing', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

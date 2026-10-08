@@ -7,6 +7,7 @@ import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { DIVISION_LABEL } from '@/types/hermes'
 import { ROLE_LABEL } from '@/lib/hermes/soul'
 import FullPanel from './FullPanel'
+import RestartNotice from './RestartNotice'
 
 /**
  * Spawn / hide / kill control.
@@ -80,10 +81,11 @@ export default function AgentSpawnPanel({
   const [newToolsets, setNewToolsets] = useState<string[]>([])
   const [toolsetCatalog, setToolsetCatalog] = useState<{ name: string; enabled: boolean }[]>([])
   /**
-   * Toggle A2A: default MATI. Hidup = daftarkan served-agent (local:false).
-   * Berlaku setelah gateway di-restart — form tidak janji "langsung aktif".
+   * Toggle A2A: default NYALA (permintaan operator: spawn dari mana pun harus
+   * langsung A2A). Hidup = daftarkan served-agent (local:false). Berlaku
+   * setelah gateway di-restart — form tidak janji "langsung aktif".
    */
-  const [newServeA2a, setNewServeA2a] = useState(false)
+  const [newServeA2a, setNewServeA2a] = useState(true)
   /** Domain yang tidak punya pemilik: dinyatakan apa adanya, bukan diarang. */
   const [domainOwners, setDomainOwners] = useState<Record<string, string | null>>({})
   /** Model untuk profil yang SEDANG dibuat; '' = bawaan Hermes. Terpisah dari `pick`
@@ -98,6 +100,13 @@ export default function AgentSpawnPanel({
   const [models, setModels] = useState<ModelChoice[]>([])
   /** name -> model being picked but not yet saved. */
   const [pick, setPick] = useState<Record<string, string>>({})
+  /**
+   * Keadaan "butuh restart" dari server (SATU sumber kebenaran — pembanding
+   * yang sama dipakai doctor). null = tak bisa dipastikan (tampil abu).
+   */
+  const [needsGatewayRestart, setNeedsGatewayRestart] = useState<boolean | null>(null)
+  /** Pop up "silahkan restart server" — tampil setelah pendaftaran A2A sukses. */
+  const [restartFor, setRestartFor] = useState<string | null>(null)
 
   // A click anywhere else cancels a pending delete.
   useEffect(() => {
@@ -111,13 +120,14 @@ export default function AgentSpawnPanel({
     setLoading(true)
     setErr(null)
     try {
-      const res = await fetchJson<{ available?: Row[]; permissions?: Permissions; domainOwners?: Record<string, string | null> }>('/api/hermes/agents', {
+      const res = await fetchJson<{ available?: Row[]; permissions?: Permissions; domainOwners?: Record<string, string | null>; needsGatewayRestart?: boolean | null }>('/api/hermes/agents', {
         cache: 'no-store',
       })
       if (!res.ok) throw new Error(res.error || 'gagal memuat daftar agent')
       setRows(res.data?.available || [])
       setPerms(res.data?.permissions || {})
       setDomainOwners(res.data?.domainOwners || {})
+      setNeedsGatewayRestart(res.data?.needsGatewayRestart ?? null)
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -224,6 +234,7 @@ export default function AgentSpawnPanel({
         a2aRegistered?: boolean | null
         a2aError?: string | null
         a2aNote?: string | null
+        needsGatewayRestart?: boolean | null
       }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,7 +258,7 @@ export default function AgentSpawnPanel({
       setNewSoul('')
       setNewDomains('')
       setNewToolsets([])
-      setNewServeA2a(false)
+      setNewServeA2a(true)
       setNewModel('')
       setSoulPreview(res.data.soulPreview ?? null)
       // Laporkan model dari BALASAN server, bukan dari pilihan di form: kalau set-model
@@ -262,8 +273,12 @@ export default function AgentSpawnPanel({
         ? `${res.data.a2aNote ?? 'Tersimpan. Berlaku setelah gateway di-restart.'} `
         : res.data.a2aRegistered === false
           ? `GAGAL didaftarkan A2A (${res.data.a2aError}) — profilnya ada tapi belum terdaftar. `
-          : ''
+          : 'A2A tidak didaftarkan (toggle mati) — profilnya ada tapi belum terdaftar. Nyalakan manual bila perlu. '
       setNote(`profil "${res.data.name}" dibuat, ${modelNote} — agent berjalan masuk lewat pintu utama. ${domNote}${a2aNote}`)
+      setNeedsGatewayRestart(res.data.needsGatewayRestart ?? null)
+      // Pendaftaran A2A sukses → pop up "silahkan restart server". Gagal =
+      // JANGAN tampilkan pop up sukses (catatan di atas sudah bilang gagal).
+      if (res.data.a2aRegistered === true) setRestartFor(res.data.name)
       await load()
       onChanged()
     } catch (e) {
@@ -306,16 +321,45 @@ export default function AgentSpawnPanel({
           </span>
         )}
         {r.soulExists === false && <span className="vp-tag-warn">tanpa soul</span>}
-        {r.a2a === 'served' && (
-          <span className="vp-chip" title="Terdaftar di platforms.a2a.agents — berlaku setelah gateway di-restart">
-            A2A terdaftar
-          </span>
-        )}
-        {r.a2a === 'unlisted' && (
-          <span className="vp-tag-warn" title="Profil ada tapi belum didaftarkan di platforms.a2a.agents">
-            belum terdaftar A2A
-          </span>
-        )}
+        {a2aBadge(r)}
+      </span>
+    )
+  }
+
+  /**
+   * Checklist "A2A Ready" per agent — tiga nilai jujur, SATU sumber kebenaran
+   * (entri served + needsGatewayRestart dari server, pembanding yang sama
+   * dipakai doctor):
+   * - ✅ A2A Ready: terdaftar DAN gateway sudah restart sesudahnya.
+   * - 🟡 Terdaftar, belum aktif: ada entri tapi config lebih baru dari start.
+   * - ❌ Belum terdaftar: tidak ada entri served.
+   * needsGatewayRestart null = tak bisa dipastikan → abu, bukan hijau.
+   */
+  function a2aBadge(r: Row) {
+    if (r.a2a !== 'served') {
+      return (
+        <span className="vp-tag-warn" title="Tidak ada entri di platforms.a2a.agents — nyalakan A2A untuk agent ini">
+          ❌ Belum terdaftar A2A — nyalakan A2A untuk agent ini
+        </span>
+      )
+    }
+    if (needsGatewayRestart === true) {
+      return (
+        <span className="vp-tag-warn" title="Ada di platforms.a2a.agents, tapi config.yaml lebih baru dari start gateway — daftar baru berlaku setelah restart">
+          🟡 Terdaftar, belum aktif — butuh restart gateway
+        </span>
+      )
+    }
+    if (needsGatewayRestart === false) {
+      return (
+        <span className="vp-chip" title="Terdaftar DAN gateway sudah restart sesudahnya — benar-benar bisa dipanggil">
+          ✅ A2A siap — agent ini bisa dipanggil sekarang
+        </span>
+      )
+    }
+    return (
+      <span className="vp-tag-warn" title="Terdaftar, tapi waktu start gateway tak terbaca — tidak bisa dipastikan sudah aktif">
+        A2A terdaftar (tak pasti aktif — start gateway tak terbaca)
       </span>
     )
   }
@@ -336,6 +380,7 @@ export default function AgentSpawnPanel({
 
   return (
     <FullPanel onClose={onClose} label="Agent" title="Agent" bodyClassName="vp-pad flex flex-col gap-3">
+      {restartFor && <RestartNotice agentName={restartFor} onClose={() => setRestartFor(null)} />}
       <div className="vp-kv">
         <span>di kantor</span>
         <b>{inOffice.length}</b>
@@ -344,6 +389,12 @@ export default function AgentSpawnPanel({
         <span>profil tersedia</span>
         <b>{rows.length}</b>
       </div>
+      {needsGatewayRestart === true && (
+        <div className="vp-err">
+          🟡 Config lebih baru dari start gateway — entri served tersimpan tapi BELUM aktif. Restart gateway untuk
+          mengaktifkannya.
+        </div>
+      )}
 
       {err && <div className="vp-err">{err}</div>}
       {note && <div className="vp-ok">{note}</div>}
@@ -459,9 +510,9 @@ export default function AgentSpawnPanel({
         {!toolsetCatalog.length && <span className="vp-muted">memuat daftar toolset…</span>}
       </div>
       {/*
-        Toggle A2A: default MATI. Hidup = tulis entri served-agent
-        (local:false, dijawab profil ini sendiri). BERLAKU SETELAH GATEWAY
-        DI-RESTART — form tidak menampilkan "aktif" sebelum itu.
+        Toggle A2A: default NYALA (permintaan operator). Hidup = tulis entri
+        served-agent (local:false, dijawab profil ini sendiri). BERLAKU SETELAH
+        GATEWAY DI-RESTART — form tidak menampilkan "aktif" sebelum itu.
       */}
       <label className="flex items-center gap-2" style={{ fontSize: 12 }}>
         <input
@@ -471,7 +522,7 @@ export default function AgentSpawnPanel({
           onChange={(e) => setNewServeA2a(e.target.checked)}
         />
         <span title="Daftarkan profil ini di platforms.a2a.agents (local:false). Berlaku setelah gateway di-restart.">
-          Bisa dihubungi agent lain (A2A) — tersimpan, berlaku setelah gateway di-restart
+          Bisa dihubungi agent lain (A2A) — otomatis terdaftar A2A; berlaku setelah gateway di-restart
         </span>
       </label>
       <button

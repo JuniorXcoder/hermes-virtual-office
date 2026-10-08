@@ -77,6 +77,17 @@ export function officeDb(): DatabaseSync {
   return d
 }
 
+/** Test-only: tutup handle DB dan lupakan — supaya selftest bisa memakai DB
+ *  tmp yang berbeda antar blok (modul ini singleton per proses). */
+export function _resetOfficeDbForTest(): void {
+  try {
+    db?.close()
+  } catch {
+    // belum pernah dibuka / sudah ditutup
+  }
+  db = null
+}
+
 const now = () => new Date().toISOString()
 
 /* ------------------------------------------------------------------ meta -- */
@@ -189,6 +200,45 @@ export function saveAvatars(list: AvatarWrite[]): number {
     throw e
   }
   return list.length
+}
+
+/**
+ * Klaim slot dummy untuk agent: jadikan baris kanonik `agent:<nama>`.
+ *
+ * Kenapa fungsi ini ada: klaim lama menulis ulang baris slot yang diklik TANPA
+ * memeriksa baris kanonik — agent yang sudah punya `agent:<nama>` dapat BADAN
+ * KEDUA di dua tempat, dan `kill` (yang menghapus `agent:<nama>`) tidak
+ * menemukannya. Satu agent = satu baris, SELALU `agent:<nama>`.
+ *
+ * - Baris kanonik sudah ada → pindahkan ke posisi slot, buang baris slot.
+ * - Belum ada → pakai ulang baris slot: ganti id jadi kanonik, kind agent.
+ * Mengembalikan apa yang terjadi, apa adanya.
+ */
+export function claimAvatar(
+  avatarId: string,
+  name: string,
+): { avatarId: string; moved: boolean; slotRemoved: boolean } {
+  const clean = name.trim().toLowerCase()
+  const canonical = `agent:${clean}`
+  const d = officeDb()
+  const slot = d.prepare(`SELECT * FROM avatar_state WHERE avatar_id = ?`).get(avatarId) as AvatarRow | undefined
+  if (!slot) throw new Error(`slot \"${avatarId}\" tidak ada di kantor`)
+  const existing = d.prepare(`SELECT avatar_id FROM avatar_state WHERE avatar_id = ?`).get(canonical) as
+    | { avatar_id: string }
+    | undefined
+  const ts = now()
+  if (existing) {
+    // Pindahkan badan kanonik ke posisi slot, lalu buang baris slotnya.
+    d.prepare(
+      `UPDATE avatar_state SET x = ?, z = ?, level = ?, facing = ?, division = ?, updated_at = ? WHERE avatar_id = ?`,
+    ).run(slot.x, slot.z, slot.level, slot.facing, slot.division, ts, canonical)
+    d.prepare(`DELETE FROM avatar_state WHERE avatar_id = ?`).run(avatarId)
+    return { avatarId: canonical, moved: true, slotRemoved: true }
+  }
+  d.prepare(
+    `UPDATE avatar_state SET avatar_id = ?, name = ?, division = ?, kind = 'agent', spawned = 1, updated_at = ? WHERE avatar_id = ?`,
+  ).run(canonical, clean, slot.division, ts, avatarId)
+  return { avatarId: canonical, moved: false, slotRemoved: false }
 }
 
 /* ---------------------------------------------------------------- seeding -- */
