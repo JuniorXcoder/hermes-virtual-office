@@ -15,6 +15,16 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Meeting, MeetingMode, MeetingTurn } from '@/types/hermes'
+import {
+  buildCrossPrompt,
+  buildMinutesPrompt,
+  buildOpeningPrompt,
+  failedTurnText,
+  missingServed,
+  normalizeMeetingMode,
+  sendA2a,
+} from './meeting-a2a'
+import { listServedAgents } from './a2a-served'
 
 const MAX_TURNS = Number(process.env.MAX_MEETING_TURNS || 10)
 const MAX_PARTICIPANTS = 4
@@ -42,6 +52,10 @@ let busy = false
  * the header fields are read by prefix, the transcript by its `**speaker**` lines,
  * and anything unrecognised is ignored rather than throwing. A hand-edited file
  * therefore degrades to fewer fields instead of breaking the list.
+ *
+ * Mode jujur (RAPAT-A2A-1): arsip menyimpan mode (`simulasi`/`a2a`) supaya rapat
+ * lama bisa dibedakan — simulasi = LLM gateway yang bicara, a2a = agent nyata.
+ * File lama tanpa baris mode terbaca sebagai 'auto' (tak diketahui, era teater).
  */
 type ArchivedMeeting = {
   id: string
@@ -54,6 +68,8 @@ type ArchivedMeeting = {
   turnCount: number
   preview: string
   archived: true
+  /** ctx-* A2A yang terlibat (rapat mode a2a); kosong untuk simulasi/arsip lama. */
+  ctxIds: string[]
 }
 
 let archiveCache: ArchivedMeeting[] | null = null
@@ -67,6 +83,9 @@ function parseArchive(name: string, text: string): ArchivedMeeting | null {
   }
   const turnCount = Number(field('giliran')) || 0
   const previewLine = lines.find((l) => l.startsWith('**') && l.includes('): '))
+  // ctx A2A: satu atau beberapa `ctx-*` dipisah koma (rapat mode a2a).
+  const ctxRaw = field('ctx')
+  const ctxIds = ctxRaw ? ctxRaw.split(',').map((x) => x.trim()).filter((x) => x.startsWith('ctx-')) : []
   return {
     // <date>-<id>.md
     id: name.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, ''),
@@ -79,8 +98,11 @@ function parseArchive(name: string, text: string): ArchivedMeeting | null {
     turnCount,
     preview: previewLine ? previewLine.slice(0, 160) : '',
     archived: true,
+    ctxIds,
   }
 }
+
+export type ArchivedMeetingWithCtx = ArchivedMeeting & { ctxIds: string[] }
 
 /** Archived meetings on disk, newest first. Cached after the first read. */
 export async function listArchived(): Promise<ArchivedMeeting[]> {
@@ -324,19 +346,31 @@ async function persist(meeting: Meeting): Promise<string | null> {
     await mkdir(dir, { recursive: true })
     const stamp = new Date(meeting.turns[0]?.ts || Date.now()).toISOString().slice(0, 10)
     const file = path.join(dir, `${stamp}-${meeting.id}.md`)
+    // Mode jujur: `simulasi` = yang bicara LLM gateway (bukan agent),
+    // `a2a` = agent nyata via A2A. ctx menempel supaya bisa diperiksa di panel A2A.
+    const modeLabel =
+      meeting.mode === 'a2a'
+        ? 'a2a (pernyataan dari agent nyata via protokol A2A)'
+        : 'simulasi (yang bicara LLM gateway, BUKAN agent — perilaku lama)'
     const body = [
       `# ${meeting.topic}`,
       '',
       `- peserta: ${meeting.participants.join(', ')}`,
       `- pembawa acara: ${meeting.moderator}`,
-      `- mode: ${meeting.mode}`,
+      `- mode: ${meeting.mode} — ${modeLabel}`,
       `- giliran: ${meeting.turns.filter((t) => t.kind !== 'minutes').length}`,
+      `- ctx: ${(meeting.ctxIds ?? []).join(', ') || '(tidak ada — bukan rapat A2A)'}`,
       '',
       '## Transkrip',
       '',
       ...meeting.turns
         .filter((t) => t.kind !== 'minutes')
-        .map((t) => `**${t.speaker}** (${t.kind} r${t.round}): ${t.text}`),
+        .map((t) => {
+          // Giliran gagal dicatat apa adanya + ctx bila ada — jejak A2A utuh.
+          const fail = t.kind === 'failed' ? ' [GAGAL — bukan karangan LLM]' : ''
+          const ctx = t.ctx ? ` [${t.ctx}]` : ''
+          return `**${t.speaker}** (${t.kind} r${t.round})${fail}${ctx}: ${t.text}`
+        }),
       '',
       meeting.minutes,
       '',
@@ -351,6 +385,132 @@ async function persist(meeting: Meeting): Promise<string | null> {
 
 function push(meeting: Meeting, turn: MeetingTurn) {
   meeting.turns.push(turn)
+}
+
+const A2A_URL = (process.env.A2A_BASE_URL || 'http://127.0.0.1:9900').replace(/\/$/, '')
+const A2A_TURN_TIMEOUT_MS = Number(process.env.MEETING_A2A_TIMEOUT_MS || 280_000)
+
+/**
+ * Ronde pembuka mode A2A: kantor memanggil tiap peserta lewat A2A (URL /slug)
+ * dengan topik rapat; pernyataan pembuka dicatat verbatim + ctx-nya.
+ * Gagal = giliran 'failed' + sebab, BUKAN karangan.
+ */
+async function runA2aOpening(meeting: Meeting): Promise<string[]> {
+  meeting.phase = 'opening'
+  meeting.currentSpeaker = meeting.moderator
+  const order = [meeting.moderator, ...meeting.participants.filter((p) => p !== meeting.moderator)]
+  const points = new Map<string, string>()
+  for (const speaker of order) {
+    meeting.currentSpeaker = speaker
+    const prompt = buildOpeningPrompt({ speaker, topic: meeting.topic, participants: meeting.participants })
+    try {
+      const { text, ctx } = await sendA2a(A2A_URL, speaker, prompt, A2A_TURN_TIMEOUT_MS)
+      push(meeting, { round: 0, speaker, kind: 'opening', text, ts: Date.now(), ctx })
+      if (ctx) meeting.ctxIds!.push(ctx)
+      points.set(speaker, text)
+    } catch (err) {
+      push(meeting, {
+        round: 0,
+        speaker,
+        kind: 'failed',
+        text: failedTurnText((err as Error).message),
+        ts: Date.now(),
+      })
+    }
+  }
+  return order.map((s) => points.get(s) ?? '').filter(Boolean)
+}
+
+/**
+ * Ronde silang mode A2A: kantor meminta pembicara S (lewat A2A) mengirim
+ * poinnya ke peserta berikutnya T memakai `a2a_call` milik S sendiri, lalu
+ * S melaporkan balasan T verbatim. Tiap giliran silang = hop agent→agent
+ * nyata, bukan kantor yang memerantarai. Gagal di titik mana pun (S tak bisa
+ * dihubungi, S gagal memanggil T, balasan tak terbaca) = 'failed' + sebab.
+ */
+async function runA2aCross(meeting: Meeting, points: string[]): Promise<void> {
+  const turns = meeting.turns.filter((t) => t.kind !== 'minutes').length
+  if (turns >= MAX_TURNS) return
+  const order = [meeting.moderator, ...meeting.participants.filter((p) => p !== meeting.moderator)]
+  meeting.phase = 'round1'
+  for (let i = 0; i < order.length; i++) {
+    if (meeting.turns.filter((t) => t.kind !== 'minutes').length >= MAX_TURNS) break
+    const speaker = order[i]
+    const next = order[(i + 1) % order.length]
+    const point = points[i] || '(pernyataan pembuka tak tersedia — sampaikan posisimu sendiri)'
+    meeting.currentSpeaker = speaker
+    const prompt = buildCrossPrompt({ speaker, next, topic: meeting.topic, point })
+    try {
+      const { text, ctx } = await sendA2a(A2A_URL, speaker, prompt, A2A_TURN_TIMEOUT_MS)
+      push(meeting, { round: 1, speaker, kind: 'speech', text, ts: Date.now(), ctx })
+      if (ctx) meeting.ctxIds!.push(ctx)
+    } catch (err) {
+      push(meeting, {
+        round: 1,
+        speaker,
+        kind: 'failed',
+        text: failedTurnText((err as Error).message),
+        ts: Date.now(),
+      })
+    }
+  }
+}
+
+/** Notulen mode A2A: moderator (agent nyata, lewat A2A) menyusun dari transkrip. */
+async function runA2aMinutes(meeting: Meeting): Promise<void> {
+  meeting.phase = 'minutes'
+  meeting.currentSpeaker = meeting.moderator
+  try {
+    const { text } = await sendA2a(
+      A2A_URL,
+      meeting.moderator,
+      buildMinutesPrompt({
+        moderator: meeting.moderator,
+        topic: meeting.topic,
+        transcript: transcript(meeting),
+      }),
+      A2A_TURN_TIMEOUT_MS,
+    )
+    meeting.minutes = text
+  } catch (err) {
+    meeting.minutes = `## KEPUTUSAN\nBelum ada kesepakatan final — notulen A2A gagal disusun: ${(err as Error).message}\n\n## TINDAK LANJUT\n- (tidak ada — notulen gagal)\n\n## RISIKO\n- Notulen disusun moderator gagal; baca transkrip mentah di atas.`
+  }
+  push(meeting, {
+    round: 2,
+    speaker: meeting.moderator,
+    kind: 'minutes',
+    text: 'Notulen tersimpan.',
+    ts: Date.now(),
+  })
+  meeting.file = await persist(meeting)
+  meeting.state = 'done'
+  meeting.currentSpeaker = null
+  meeting.phase = 'done'
+}
+
+/**
+ * Rapat mode A2A: ronde pembuka (kantor→tiap peserta) + ronde silang
+ * (S→T via a2a_call milik S) + notulen oleh moderator via A2A.
+ */
+async function runA2a(meeting: Meeting): Promise<void> {
+  try {
+    const points = await runA2aOpening(meeting)
+    await runA2aCross(meeting, points)
+    await runA2aMinutes(meeting)
+  } catch (err) {
+    meeting.state = 'error'
+    meeting.phase = 'error'
+    meeting.currentSpeaker = null
+    meeting.turns.push({
+      round: 0,
+      speaker: 'sistem',
+      kind: 'speech',
+      text: `Rapat gagal: ${(err as Error).message}`,
+      ts: Date.now(),
+    })
+  } finally {
+    busy = false
+  }
 }
 
 /**
@@ -444,22 +604,37 @@ export async function startMeeting(input: {
   const moderator =
     input.moderator && participants.includes(input.moderator) ? input.moderator : participants[0]
 
+  // Mode jujur: 'a2a' = agent nyata via A2A, selainnya = simulasi LLM
+  // (perilaku lama) dengan label terus terang di arsip.
+  const mode: MeetingMode = normalizeMeetingMode(input.mode)
+
+  if (mode === 'a2a') {
+    // Cabang tolak: peserta bukan agent A2A → rapat TIDAK DIMULAI, sebut siapa.
+    const served = await listServedAgents().catch(() => [])
+    const missing = missingServed(participants, served)
+    if (missing.length) {
+      const { formatReject } = await import('./meeting-a2a')
+      throw new Error(formatReject(missing))
+    }
+  }
+
   const meeting: Meeting = {
     id: newId(),
     topic,
     participants,
     moderator,
-    mode: input.mode || 'auto',
+    mode,
     state: 'queued',
     phase: 'menunggu',
     currentSpeaker: null,
     turns: [],
     minutes: '',
     file: null,
+    ctxIds: [],
   }
   meetings.set(meeting.id, meeting)
   busy = true
-  void run(meeting)
+  void (mode === 'a2a' ? runA2a(meeting) : run(meeting))
   return meeting
 }
 

@@ -34,6 +34,7 @@ export default function MeetingPanel({
   const [topic, setTopic] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [moderator, setModerator] = useState('')
+  const [meetingMode, setMeetingMode] = useState<'simulasi' | 'a2a'>('simulasi')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -111,7 +112,7 @@ export default function MeetingPanel({
       const res = await fetchJson('/api/hermes/meeting', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, participants: picked, moderator }),
+        body: JSON.stringify({ topic, participants: picked, moderator, mode: meetingMode }),
       })
       if (!res.ok) throw new Error(res.error || 'gagal memulai rapat')
       await refresh()
@@ -252,6 +253,14 @@ export default function MeetingPanel({
                   <b>
                     {meeting.state} · {meeting.phase}
                     {live && <span className="vp-live"> ●</span>}
+                  </b>
+                </div>
+                <div className="vp-kv">
+                  <span>mode</span>
+                  <b>
+                    {meeting.mode === 'a2a'
+                      ? 'A2A — pernyataan dari agent nyata via A2A'
+                      : 'simulasi — yang bicara LLM gateway, BUKAN agent'}
                   </b>
                 </div>
                 <div className="vp-kv">
@@ -400,6 +409,34 @@ export default function MeetingPanel({
               </option>
             ))}
           </select>
+
+          <label className="vp-sub">MODE RAPAT</label>
+          <div className="flex flex-col gap-2">
+            <label className="vp-kv">
+              <input
+                type="radio"
+                name="meeting-mode"
+                checked={meetingMode === 'simulasi'}
+                onChange={() => setMeetingMode('simulasi')}
+              />
+              <span>
+                <b>Simulasi</b> — yang bicara LLM gateway, <b>bukan</b> agent. Perilaku lama,
+                labelnya jujur.
+              </span>
+            </label>
+            <label className="vp-kv">
+              <input
+                type="radio"
+                name="meeting-mode"
+                checked={meetingMode === 'a2a'}
+                onChange={() => setMeetingMode('a2a')}
+              />
+              <span>
+                <b>A2A</b> — yang bicara agent nyata via protokol A2A (butuh toggle A2A tiap
+                peserta + restart gateway setelah perubahan).
+              </span>
+            </label>
+          </div>
 
           <button
             className="vp-btn"

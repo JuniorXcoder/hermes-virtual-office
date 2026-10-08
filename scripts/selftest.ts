@@ -136,6 +136,18 @@ import { wrapBubble } from '../src/components/SpriteOffice'
 import { filterModels } from '../src/components/ModelPicker'
 import { officeChatArgs, sendChatMessage } from '../src/lib/hermes/chat'
 import { parseDomains, ownerForDomain, ownersForDomains, buildServedAgentEntry } from '../src/lib/hermes/a2a'
+import {
+  a2aEndpoint,
+  buildCrossPrompt,
+  buildMinutesPrompt,
+  buildOpeningPrompt,
+  failedTurnText,
+  formatReject,
+  missingServed,
+  normalizeMeetingMode,
+  parseSendResult,
+  stripTransportNoise,
+} from '../src/lib/hermes/meeting-a2a'
 import { parseSoulMarker, soulFor } from '../src/lib/hermes/soul'
 import { listServedAgents, setServedAgentsConfigPath, upsertServedAgent } from '../src/lib/hermes/a2a-served'
 import * as THREE from 'three'
@@ -4908,6 +4920,131 @@ void (async () => {
     }
 
     check('a2a-4: real a2a transcript parsed honestly, caller walks to peer desk', problems.length === 0, problems.join(' | '))
+  }
+
+  // RAPAT-A2A-1: rapat beneran agent-to-agent — cabang tolak, giliran gagal,
+  // mode tersimpan. Pure-function + structural, bukan tautologi: tiap check
+  // punya kasus positif DAN negatif literal.
+  {
+    const problems: string[] = []
+
+    // 1. normalizeMeetingMode: hanya 'a2a' → a2a; sisanya simulasi (perilaku lama jujur).
+    if (normalizeMeetingMode('a2a') !== 'a2a') problems.push('a2a tak jadi a2a')
+    for (const raw of ['auto', 'simulasi', '', undefined, null, 'A2A']) {
+      if (normalizeMeetingMode(raw) !== 'simulasi') problems.push(`${JSON.stringify(raw)} tak jadi simulasi`)
+    }
+
+    // 2. missingServed: cocok via profile ATAU slug, case-insensitive; dummy ketahuan.
+    const served = [
+      { profile: 'jun', slug: 'jun' },
+      { profile: 'budi', slug: 'budi' },
+    ]
+    if (missingServed(['jun', 'budi'], served).length !== 0) problems.push('yang served malah missing')
+    if (missingServed(['JUN', 'Budi'], served).length !== 0) problems.push('cocok huruf-besar gagal')
+    const miss = missingServed(['jun', 'dummy-x'], served)
+    if (miss.length !== 1 || miss[0] !== 'dummy-x') problems.push(`dummy tak ketahuan: ${JSON.stringify(miss)}`)
+
+    // 3. formatReject: menyebut SIAPA + langkah (toggle + restart). Pesan umum = FAIL.
+    const rej = formatReject(['dummy-x'])
+    if (!rej.includes('dummy-x')) problems.push('tolak tak menyebut siapa')
+    if (!rej.toLowerCase().includes('toggle a2a')) problems.push('tolak tak menyebut toggle')
+    if (!rej.toLowerCase().includes('restart gateway')) problems.push('tolak tak menyebut restart')
+
+    // 4. failedTurnText: ada sebab + penegasan bukan karangan.
+    const ft = failedTurnText('HTTP 404 dari /dummy-x')
+    if (!ft.includes('HTTP 404') || !/GAGAL/i.test(ft)) problems.push('gagal tanpa sebab')
+    if (!/bukan karangan/i.test(ft)) problems.push('gagal tanpa penegasan bukan-karangan')
+
+    // 5. Prompt builder: opening menyebut topik+peserta; cross memaksa a2a_call + verbatim.
+    const op = buildOpeningPrompt({ speaker: 'jun', topic: 'rencana rilis', participants: ['jun', 'budi'] })
+    if (!op.includes('rencana rilis') || !op.includes('budi')) problems.push('opening tanpa topik/peserta')
+    if (!/90 kata/.test(op)) problems.push('opening tanpa batas kata')
+    const cx = buildCrossPrompt({ speaker: 'jun', next: 'budi', topic: 'rencana rilis', point: 'poin X' })
+    if (!cx.includes('a2a_call') || !cx.includes('budi')) problems.push('cross tanpa a2a_call/next')
+    if (!/apa adanya/i.test(cx)) problems.push('cross tanpa tuntutan verbatim')
+    if (!/GAGAL/.test(cx)) problems.push('cross tanpa instruksi gagal-jujur')
+    const mn = buildMinutesPrompt({ moderator: 'jun', topic: 'rencana rilis', transcript: 'T' })
+    for (const h of ['## KEPUTUSAN', '## TINDAK LANJUT', '## RISIKO']) {
+      if (!mn.includes(h)) problems.push(`notulen tanpa ${h}`)
+    }
+    if (!/jangan mengarang/i.test(mn)) problems.push('notulen tanpa larangan karang')
+
+    // 6. stripTransportNoise: buang baris `Warning:` transport, suara agent utuh.
+    const noisy = 'Warning: Unknown toolsets: a2a\nSaya Jun, CEO di sini.'
+    const clean = stripTransportNoise(noisy)
+    if (clean.includes('Warning:')) problems.push('noise tak dibuang')
+    if (!clean.includes('Saya Jun')) problems.push('suara agent ikut terbuang')
+    if (stripTransportNoise('  warning: x  \nisi') !== 'isi') problems.push('noise case-indent gagal')
+
+    // 7. parseSendResult: teks dari status.message, cadangan artifacts, ctx dibaca;
+    //    error/aneh/kosong = throw (pemanggil catat GAGAL, bukan karang).
+    const good = parseSendResult({
+      result: {
+        contextId: 'ctx-abc123',
+        status: { message: { parts: [{ text: 'Warning: Unknown toolsets: a2a\nHalo rapat.' }] } },
+      },
+    })
+    if (good.text !== 'Halo rapat.') problems.push(`teks salah: ${JSON.stringify(good.text)}`)
+    if (good.ctx !== 'ctx-abc123') problems.push('ctx tak terbaca')
+    const fb = parseSendResult({
+      result: {
+        status: { message: { parts: [] } },
+        artifacts: [{ parts: [{ text: 'Dari artifacts.' }] }],
+      },
+    })
+    if (fb.text !== 'Dari artifacts.' || fb.ctx !== null) problems.push('fallback artifacts salah')
+    for (const bad of [
+      { error: { code: -32000, message: 'boom' } },
+      { result: { status: { message: { parts: [{ text: '   ' }] } } } },
+      { nope: true },
+      null,
+    ]) {
+      try {
+        parseSendResult(bad)
+        problems.push(`input buruk tak throw: ${JSON.stringify(bad)?.slice(0, 60)}`)
+      } catch {
+        // harus throw — pemanggil mencatat GAGAL
+      }
+    }
+
+    // 8. a2aEndpoint: URL /slug bersih (slash ganda tak ada).
+    if (a2aEndpoint('http://127.0.0.1:9900/', 'Budi') !== 'http://127.0.0.1:9900/budi') {
+      problems.push(`endpoint salah: ${a2aEndpoint('http://127.0.0.1:9900/', 'Budi')}`)
+    }
+
+    // 9. Struktural (bukan tautologi — pola literal yang WAJIB ada di kode):
+    const mSrc = readFileSync(new URL('../src/lib/hermes/meeting.ts', import.meta.url), 'utf8')
+    const mCode = mSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    // startMeeting menolak peserta non-served SEBELUM rapat dibuat.
+    if (!/missingServed\(participants/.test(mCode)) problems.push('startMeeting tak panggil missingServed')
+    // runA2a tidak boleh memanggil complete() — kalau ada, karangan bisa menyelinap.
+    const a2aFns = ['runA2aOpening', 'runA2aCross', 'runA2aMinutes', 'runA2a']
+    for (const fn of a2aFns) {
+      const at = mCode.indexOf(`async function ${fn}`)
+      const nextFn = mCode.indexOf('async function ', at + 1)
+      const bodyFn = mCode.slice(at, nextFn < 0 ? undefined : nextFn)
+      if (/[^a-zA-Z]complete\(/.test(bodyFn)) problems.push(`${fn} memanggil complete() — karangan bisa menyelinap`)
+    }
+    if (!/kind: 'failed'/.test(mCode)) problems.push('tak ada giliran failed di meeting.ts')
+    if (!/ctxIds/.test(mCode)) problems.push('ctx tak disimpan di meeting.ts')
+    if (!/- ctx:/.test(mCode)) problems.push('arsip tak menulis baris ctx')
+    // parseArchive membaca balik mode + ctx.
+    if (!/field\('ctx'\)/.test(mCode)) problems.push('parseArchive tak membaca ctx')
+    // Route: served-A2A ikut dikenal (rapat A2A), dummy tetap ditolak,
+    // dan nama dicocokkan case-insensitive.
+    const rSrc = readFileSync(new URL('../src/app/api/hermes/meeting/route.ts', import.meta.url), 'utf8')
+    if (!/body\?\.mode === 'a2a' \? 'a2a' : 'simulasi'/.test(rSrc)) {
+      problems.push('route tak memetakan mode a2a/simulasi')
+    }
+    if (/mode ini belum didukung/.test(rSrc)) problems.push('route masih menolak mode non-auto')
+    if (!/listServedAgents/.test(rSrc)) problems.push('route tak mengenal served-A2A')
+    // UI: pemilih mode + label jujur.
+    const uSrc = readFileSync(new URL('../src/components/MeetingPanel.tsx', import.meta.url), 'utf8')
+    if (!/MODE RAPAT/.test(uSrc)) problems.push('UI tanpa pemilih mode')
+    if (!/BUKAN agent/.test(uSrc)) problems.push('UI tanpa label simulasi-jujur')
+    if (!/mode: meetingMode/.test(uSrc)) problems.push('UI tak mengirim mode')
+
+    check('rapat-a2a-1: tolak jujur, gagal bukan karangan, mode tersimpan', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

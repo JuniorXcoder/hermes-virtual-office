@@ -16,8 +16,8 @@ export type TaskStatus =
   | 'blocked'
   | 'done'
   | 'archived'
-/** Only one mode is implemented; the meeting route rejects anything else. */
-export type MeetingMode = 'auto'
+/** Meeting modes: `simulasi` = LLM gateway voices everyone (labelled honestly),\n * `a2a` = real agents speak via the A2A protocol. `auto` = legacy alias of simulasi. */
+export type MeetingMode = 'auto' | 'simulasi' | 'a2a'
 export type MeetingState = 'queued' | 'running' | 'done' | 'error' | 'idle'
 
 /**
@@ -145,9 +145,11 @@ export type AgentStatus =
 export type MeetingTurn = {
   round: number
   speaker: string
-  kind: 'opening' | 'speech' | 'minutes'
+  kind: 'opening' | 'speech' | 'minutes' | 'failed'
   text: string
   ts: number
+  /** A2A context id, when this turn came from a real agent call. */
+  ctx?: string | null
 }
 
 export type Meeting = {
@@ -162,6 +164,8 @@ export type Meeting = {
   turns: MeetingTurn[]
   minutes: string
   file?: string | null
+  /** A2A context ids involved, for cross-checking in the A2A panel. */
+  ctxIds?: string[]
 }
 
 /** A meeting transcript stored on disk (see lib/hermes/meeting.ts listArchived). */
@@ -178,6 +182,8 @@ export type ArchivedMeeting = {
   /** First transcript line, for the list. */
   preview: string
   archived: true
+  /** ctx-* A2A yang terlibat (rapat mode a2a); kosong untuk simulasi/arsip lama. */
+  ctxIds?: string[]
 }
 
 /**

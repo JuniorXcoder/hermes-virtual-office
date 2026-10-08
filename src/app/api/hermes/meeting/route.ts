@@ -8,6 +8,7 @@ import {
   startMeeting,
 } from '@/lib/hermes/meeting'
 import { listAgents, listTasks } from '@/lib/hermes/kanban'
+import { listServedAgents } from '@/lib/hermes/a2a-served'
 import { visibleNames } from '@/lib/hermes/office-membership'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 
@@ -56,24 +57,49 @@ export async function GET(req: NextRequest) {
  *
  * Participants are validated against the live agent list so a stale name from an
  * old page cannot start a meeting with a non-existent agent.
+ *
+ * Modes (RAPAT-A2A-1): `a2a` = real agents via the A2A protocol (rejects when a
+ * participant is not served, naming who + the fix); anything else = `simulasi`,
+ * the old LLM-voices-everyone behavior, labelled honestly in the archive.
  */
 export async function POST(req: NextRequest) {
   const denied = assertLocalWriteRequest(req)
   if (denied) return denied
   const body = await req.json().catch(() => ({}))
-  if (body?.mode && body.mode !== 'auto') {
-    return NextResponse.json(
-      { error: { code: 'invalid_request', message: 'mode ini belum didukung; gunakan auto', status: 400 } },
-      { status: 400 },
-    )
-  }
+  const mode = body?.mode === 'a2a' ? 'a2a' : 'simulasi'
   try {
     const tasks = await listTasks()
-    const known = new Set(visibleNames((await listAgents(tasks)).map((a) => a.name)))
-    const participants = (Array.isArray(body?.participants) ? body.participants : [])
+    const agentList = await listAgents(tasks)
+    // Nama dikenal = profil ada di office ATAU terdaftar served-A2A. Peserta
+    // rapat A2A (budi/sari/tono) tidak selalu punya agent di lantai kantor,
+    // tapi mereka agent A2A nyata — menolak mereka di sini = cabang tolak
+    // startMeeting tak pernah tercapai. Dummy tetap ditolak di sini.
+    const served = await listServedAgents().catch(() => [])
+    const servedNames = new Set(served.flatMap((s) => [s.profile.toLowerCase(), s.slug.toLowerCase()]))
+    const known = new Set([
+      ...visibleNames(agentList.map((a) => a.name)),
+      ...servedNames,
+    ])
+    const rawPicked: string[] = (Array.isArray(body?.participants) ? body.participants : [])
       .map((p: unknown) => String(p))
-      .filter((p: string) => known.has(p))
-    if (participants.length < 2) {
+    const unknown = rawPicked.filter((p: string) => !known.has(p.toLowerCase()))
+    const knownPicked = [...new Set(rawPicked.filter((p: string) => known.has(p.toLowerCase())))]
+    // Jujur duluan: nama tak dikenal disebut persis (cabang tolak rapat A2A
+    // harus bisa menyebut SIAPA, bukan "pilih yang dikenal").
+    if (unknown.length) {
+      const { formatReject } = await import('@/lib/hermes/meeting-a2a')
+      return NextResponse.json(
+        {
+          error: {
+            code: 'invalid_request',
+            message: mode === 'a2a' ? formatReject([...new Set(unknown)]) : `peserta tak dikenal: ${[...new Set(unknown)].join(', ')}`,
+            status: 400,
+          },
+        },
+        { status: 400 },
+      )
+    }
+    if (knownPicked.length < 2) {
       return NextResponse.json(
         {
           error: {
@@ -87,9 +113,9 @@ export async function POST(req: NextRequest) {
     }
     const meeting = await startMeeting({
       topic: String(body?.topic || ''),
-      participants,
+      participants: knownPicked.slice(0, 4),
       moderator: body?.moderator ? String(body.moderator) : undefined,
-      mode: body?.mode,
+      mode,
     })
     return NextResponse.json({ meeting })
   } catch (err) {
