@@ -5122,6 +5122,16 @@ void (async () => {
       },
     })
     if (fb.text !== 'Dari artifacts.' || fb.ctx !== null) problems.push('fallback artifacts salah')
+    // Regresi duplikasi (rapat m1791480637485): message + artifacts berisi teks
+    // SAMA → hasil harus sekali, bukan digabung dua kali.
+    const dup = parseSendResult({
+      result: {
+        contextId: 'ctx-dup1',
+        status: { message: { parts: [{ text: 'Suara agent sekali.' }] } },
+        artifacts: [{ parts: [{ text: 'Suara agent sekali.' }] }],
+      },
+    })
+    if (dup.text !== 'Suara agent sekali.') problems.push(`duplikat message+artifacts: ${JSON.stringify(dup.text)}`)
     for (const bad of [
       { error: { code: -32000, message: 'boom' } },
       { result: { status: { message: { parts: [{ text: '   ' }] } } } },

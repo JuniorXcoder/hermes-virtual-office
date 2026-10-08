@@ -163,7 +163,12 @@ export function parseSendResult(json: unknown): A2aTurnOk {
     return out
   }
   const primary = partsOf(doc.result?.status?.message?.parts)
-  const fallback = (doc.result?.artifacts ?? []).flatMap((a) => partsOf(a?.parts))
+  // Artifacts hanya cadangan bila message kosong: server mengirim teks yang
+  // SAMA di keduanya, jadi gabung keduanya = suara agent tampil 2x
+  // (terbukti di rapat m1791480637485 — tiap giliran duplikat verbatim).
+  const fallback = primary.length
+    ? []
+    : (doc.result?.artifacts ?? []).flatMap((a) => partsOf(a?.parts))
   const text = stripTransportNoise([...primary, ...fallback].join('\n').trim()).slice(0, 4000)
   if (!text) throw new Error('balasan A2A kosong / tak terbaca (bukan format message/send)')
   const ctx = typeof doc.result?.contextId === 'string' ? doc.result.contextId : null
