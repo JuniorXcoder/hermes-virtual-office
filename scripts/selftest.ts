@@ -5204,7 +5204,7 @@ void (async () => {
     // finalisasi menulis DIBATALKAN, idempoten, guard tulis di route.
     if (!/cancelRequested/.test(mSrc2)) problems.push('tak ada flag cancelRequested')
     for (const fn of ['runA2aOpening', 'runA2aCross', 'runA2aMinutes', 'runA2a', 'run']) {
-      const at = mCode2.indexOf(`async function ${fn}`)
+      const at = mCode2.indexOf(`async function ${fn}(`)
       if (at < 0) {
         problems.push(`${fn} tak ditemukan`)
         continue
@@ -5250,6 +5250,25 @@ void (async () => {
     // Kasus negatif (c): minutes rapat batal = template tetap, bukan notulen utuh.
     if (!/bukan rapat selesai, tidak ada kesepakatan yang bisa dikutip/.test(mSrc2)) {
       problems.push('minutes-batal tak menegaskan bukan hasil utuh')
+    }
+    // Regresi race (bukti runtime 2026-10-09): cancel yang tiba saat runner
+    // masih 'queued' memfinalisasi duluan dengan hitungan 0, lalu giliran
+    // pertama mendarat belakangan — arsip bilang "0 giliran" padahal 1 jalan.
+    // runA2a WAJIB menandai state running sinkron SEBELUM await pertama.
+    {
+      const at = mCode2.indexOf('async function runA2a(')
+      const nx = mCode2.indexOf('async function ', at + 1)
+      const bodyA2a = at < 0 ? '' : mCode2.slice(at, nx < 0 ? undefined : nx)
+      const awaitAt = bodyA2a.indexOf('await')
+      const runAt = bodyA2a.indexOf(`state = 'running'`)
+      if (at < 0 || runAt < 0 || (awaitAt >= 0 && runAt > awaitAt)) {
+        problems.push('runA2a tak tandai running sebelum await pertama (race finalisasi-0)')
+      }
+    }
+    // Finalisasi langsung dari cancelMeeting HANYA untuk antrean kosong —
+    // rapat yang sudah running difinalisasi runner di batas giliran.
+    if (!/state === 'queued' && target\.turns\.length === 0/.test(mCode2)) {
+      problems.push('cancelMeeting bisa finalisasi langsung rapat yang sudah jalan')
     }
 
     check('rapat-cancel-1: batal di batas aman, arsip DIBATALKAN, jujur saat kosong', problems.length === 0, problems.join(' | '))

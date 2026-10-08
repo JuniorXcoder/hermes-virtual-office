@@ -516,6 +516,10 @@ async function runA2aMinutes(meeting: Meeting): Promise<void> {
  * (S→T via a2a_call milik S) + notulen oleh moderator via A2A.
  */
 async function runA2a(meeting: Meeting): Promise<void> {
+  // Langsung tandai running (sinkron sebelum await pertama) supaya cancel yang
+  // datang via HTTP selalu melihat state running — bukan queued — dan hanya
+  // mengibarkan flag, bukan memfinalisasi duluan dengan hitungan 0.
+  meeting.state = 'running'
   try {
     const points = await runA2aOpening(meeting)
     if (meeting.cancelRequested) {
