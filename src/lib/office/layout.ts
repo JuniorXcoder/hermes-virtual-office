@@ -1320,6 +1320,53 @@ export function insideCeoRoom(x: number, z: number, pad = 0): boolean {
   return x > r.x1 - pad && x < r.x2 + pad && z > r.z1 - pad && z < r.z2 + pad
 }
 
+/**
+ * Isi RUANG CEO (level 1), dari gambar bertanda yang dikirim pemilik aplikasi.
+ *
+ * Satu tabel dipakai tiga tempat — mesh di `build.ts`, FOOTPRINTS (tabrakan) dan IDLE_SPOTS
+ * (anchor duduk) — karena dulu ketiganya menulis `roomCentre('ceo') ± angka` sendiri-sendiri,
+ * dan begitu satu dipindah, agent duduk di udara di tempat sofa lama.
+ *
+ * Ruangnya x -27.85..-19.30, z -20.85..-11.65 (permukaan dalam; -11.5 adalah garis tengah
+ * dinding selatan). PINTU di dinding selatan x -22.2..-19.8, jadi pojok tenggara dan jalur
+ * pintu→tengah sengaja kosong. `facing` memakai konvensi badan: 0 = selatan (+z),
+ * π/2 = timur, π = utara, -π/2 = barat; mesh kursi diputar `facing + π` (sandaran di lokal +z).
+ */
+export const CEO_SUITE = {
+  /** Meja eksekutif — acuan "belakang meja" untuk kursi bos. w di x, d di z. */
+  desk: { x: -23.6, z: -17.7, w: 2.4, d: 1.1, h: 0.74 },
+  /** Kursi bos: membelakangi dinding utara, menghadap pintu di selatan. */
+  bossChair: { x: -23.6, z: -19.1, facing: 0, w: 0.72, d: 0.72 },
+  /** Dua kursi tamu di seberang meja, menghadap kursi bos. */
+  guestChairs: [
+    { x: -24.45, z: -16.35, facing: Math.PI },
+    { x: -22.75, z: -16.35, facing: Math.PI },
+  ],
+  guestChair: { w: 0.62, d: 0.6 },
+  /** Empat tanaman sudut. Sudut tenggara kosong karena di situ pintu. */
+  plants: [
+    { x: -27.3, z: -20.45 },
+    { x: -19.8, z: -20.45 },
+    { x: -27.3, z: -12.3 },
+    { x: -19.75, z: -13.4 },
+  ],
+  /** Jari-jari daun terbesar. 0.34 supaya tanaman di z -20.45 tidak menembus dinding utara. */
+  plantR: 0.34,
+  coffeeTable: { x: -25.9, z: -16.4, w: 1.2, d: 0.7, h: 0.4 },
+  /** Sofa 3-seat di dinding barat (menghadap timur): `len` sepanjang sofa, `depth` ke depan. */
+  sofa3: { x: -27.35, z: -16.6, facing: Math.PI / 2, len: 3.1, depth: 0.9 },
+  /** Sofa 1-seat di dinding selatan (menghadap utara), membentuk L dengan sofa 3-seat. */
+  sofa1: { x: -25.6, z: -12.1, facing: Math.PI, len: 1.1, depth: 0.9 },
+  /** TV di partisi timur (ke Rinjani), menghadap barat. `t` tebal di x, `len` di z. */
+  tv: { x: -19.36, z: -15.8, t: 0.12, len: 1.8, y0: 1.0, y1: 2.1 },
+  /**
+   * Papan tulis di dinding utara, menghadap selatan. Gambar meminta pusat z -20.78, tapi
+   * dengan tebal 0.16 sisi belakangnya jadi -20.86 — 1 cm di dalam dinding. Digeser ke
+   * -20.76 supaya punggungnya rata di permukaan dinding (-20.84), bukan tertanam.
+   */
+  whiteboard: { x: -24.6, z: -20.76, len: 3.4, t: 0.16, y0: 0.6, y1: 2.1 },
+} as const
+
 /* ------------------------------------------------------------- footprints -- */
 
 export type Footprint = {
@@ -1625,9 +1672,48 @@ export const FOOTPRINTS: Footprint[] = [
   ),
 
   /* ------------------------------------------------------------ ceo suite -- */
-  fp('ceo-desk', roomCentre('ceo').x, roomCentre('ceo').z - 1.5, 1.1, 0.6, 0.75, 'desk', 1),
-  fp('ceo-chair', roomCentre('ceo').x, roomCentre('ceo').z - 0.4, 0.32, 0.32, 0.5, 'seat', 1),
-  fp('ceo-sofa', roomCentre('ceo').x, roomCentre('ceo').z + 2.6, 1.3, 0.5, 0.85, 'seat', 1),
+  // Semua dari CEO_SUITE, tabel yang sama yang dibaca mesh-nya — supaya agent tidak
+  // berjalan menembus sofa, TV, atau papan tulis yang terlihat.
+  fp('ceo-desk', CEO_SUITE.desk.x, CEO_SUITE.desk.z, CEO_SUITE.desk.w / 2, CEO_SUITE.desk.d / 2, 0.75, 'desk', 1),
+  fp(
+    'ceo-chair',
+    CEO_SUITE.bossChair.x,
+    CEO_SUITE.bossChair.z,
+    CEO_SUITE.bossChair.w / 2,
+    CEO_SUITE.bossChair.d / 2,
+    0.5,
+    'seat',
+    1,
+  ),
+  ...CEO_SUITE.guestChairs.map((g, i) =>
+    fp(`ceo-guest-${i}`, g.x, g.z, CEO_SUITE.guestChair.w / 2, CEO_SUITE.guestChair.d / 2, 0.5, 'seat', 1),
+  ),
+  fp(
+    'ceo-coffee-table',
+    CEO_SUITE.coffeeTable.x,
+    CEO_SUITE.coffeeTable.z,
+    CEO_SUITE.coffeeTable.w / 2,
+    CEO_SUITE.coffeeTable.d / 2,
+    CEO_SUITE.coffeeTable.h,
+    'desk',
+    1,
+  ),
+  // sofa 3-seat berdiri memanjang di z (menempel dinding barat), jadi hw = dalam, hd = panjang
+  fp('ceo-sofa', CEO_SUITE.sofa3.x, CEO_SUITE.sofa3.z, CEO_SUITE.sofa3.depth / 2, CEO_SUITE.sofa3.len / 2, 0.85, 'seat', 1),
+  // sofa 1-seat memanjang di x (menempel dinding selatan)
+  fp('ceo-sofa-1', CEO_SUITE.sofa1.x, CEO_SUITE.sofa1.z, CEO_SUITE.sofa1.len / 2, CEO_SUITE.sofa1.depth / 2, 0.85, 'seat', 1),
+  fp('ceo-tv', CEO_SUITE.tv.x, CEO_SUITE.tv.z, CEO_SUITE.tv.t / 2, CEO_SUITE.tv.len / 2, CEO_SUITE.tv.y1, 'prop', 1),
+  fp(
+    'ceo-whiteboard',
+    CEO_SUITE.whiteboard.x,
+    CEO_SUITE.whiteboard.z,
+    CEO_SUITE.whiteboard.len / 2,
+    CEO_SUITE.whiteboard.t / 2,
+    CEO_SUITE.whiteboard.y1,
+    'prop',
+    1,
+  ),
+  ...CEO_SUITE.plants.map((p, i) => fp(`ceo-plant-${i}`, p.x, p.z, 0.3, 0.3, 1.4, 'prop', 1)),
 ]
 
 /* ------------------------------------------------------------------ spots -- */
@@ -1913,8 +1999,29 @@ export const IDLE_SPOTS: IdleSpot[] = [
   // The CEO suite: the chair at the desk and the sofa facing the window. Both were
   // furniture an idle body could see but never use — the coverage assert in the
   // self-test compares every enjoyable seat against this list.
-  { x: roomCentre('ceo').x, z: roomCentre('ceo').z - 0.4, act: 'idle', seated: true, face: 0, level: 1 },
-  { x: roomCentre('ceo').x, z: roomCentre('ceo').z + 2.6, act: 'idle', seated: true, face: Math.PI, level: 1 },
+  //
+  // Dibaca dari CEO_SUITE, bukan ditulis ulang: anchor yang tertinggal saat sofa dipindah
+  // membuat agent duduk di udara. `face` = `facing` furniturnya — kursi bos menghadap pintu
+  // (0), kursi tamu menghadap kursi bos (π), sofa 3-seat menghadap timur (π/2), sofa 1-seat
+  // menghadap utara (π). Sofa 3-seat punya tiga dudukan, jadi tiga anchor sepanjang z.
+  { x: CEO_SUITE.bossChair.x, z: CEO_SUITE.bossChair.z, act: 'idle', seated: true, face: CEO_SUITE.bossChair.facing, level: 1 },
+  ...CEO_SUITE.guestChairs.map((g) => ({
+    x: g.x,
+    z: g.z,
+    act: 'idle' as const,
+    seated: true,
+    face: g.facing,
+    level: 1 as const,
+  })),
+  ...[-1, 0, 1].map((k) => ({
+    x: CEO_SUITE.sofa3.x,
+    z: CEO_SUITE.sofa3.z + k * (CEO_SUITE.sofa3.len / 3),
+    act: 'idle' as const,
+    seated: true,
+    face: CEO_SUITE.sofa3.facing,
+    level: 1 as const,
+  })),
+  { x: CEO_SUITE.sofa1.x, z: CEO_SUITE.sofa1.z, act: 'idle', seated: true, face: CEO_SUITE.sofa1.facing, level: 1 },
 ]
 
 /*

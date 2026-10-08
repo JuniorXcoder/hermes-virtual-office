@@ -4362,6 +4362,161 @@ void (async () => {
     void doneTask
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // RUANG CEO DITATA SESUAI GAMBAR BERTANDA PEMILIK APLIKASI.
+  //
+  // Diukur dari scene yang DIBANGUN (matrixWorld lewat Box3/getWorldPosition), bukan dari
+  // CEO_SUITE: kalau test membaca tabel yang sama dengan mesh-nya, salah putar 180° tetap
+  // hijau. Arah hadap kursi dihitung dari letak SANDARAN terhadap pusat kursi — depan adalah
+  // arah menjauhi sandaran — jadi rotasi yang keliru langsung terlihat.
+  //
+  // Batas ruang dan pintu dibaca dari ROOMS (permukaan dalam dinding selatan = z2 - WALL_T/2,
+  // karena z2 adalah garis tengah dinding). Stub `document` dipasang oleh check handrail di atas.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    try {
+      const room = roomById('ceo')
+      if (!room || !room.door) throw new Error('ruang ceo atau pintunya hilang dari ROOMS')
+      const X1 = room.x1
+      const X2 = room.x2
+      const Z1 = room.z1
+      const Z2 = room.z2 - WALL_T / 2
+      const doorX1 = room.door.x - room.door.hw
+      const doorX2 = room.door.x + room.door.hw
+      const scene = new THREE.Scene()
+      buildOffice(scene, 12)
+      scene.updateMatrixWorld(true)
+      const suite = scene.getObjectByName('ceo-suite')
+      if (!suite) throw new Error("grup 'ceo-suite' tidak dibangun")
+      const want = [
+        'ceo-desk', 'ceo-boss-chair', 'ceo-guest-chair-0', 'ceo-guest-chair-1',
+        'ceo-sofa-3', 'ceo-sofa-1', 'ceo-coffee-table', 'ceo-tv', 'ceo-whiteboard',
+        'ceo-plant-0', 'ceo-plant-1', 'ceo-plant-2', 'ceo-plant-3',
+      ]
+      const piece = (n: string) => suite.getObjectByName(n)
+      for (const n of want) if (!piece(n)) problems.push(`${n} tidak ada di scene`)
+      const bb = (o: THREE.Object3D) => new THREE.Box3().setFromObject(o, true)
+      const f2 = (v: number) => v.toFixed(2)
+      // depan sebuah kursi/sofa = dari sandaran ke pusatnya, di bidang lantai
+      const front = (n: string) => {
+        const o = piece(n)
+        const back = o?.getObjectByName('backrest')
+        if (!o || !back) return null
+        const c = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld)
+        const b = new THREE.Vector3().setFromMatrixPosition(back.matrixWorld)
+        const dx = c.x - b.x
+        const dz = c.z - b.z
+        const len = Math.hypot(dx, dz)
+        return { x: c.x, z: c.z, fx: dx / len, fz: dz / len }
+      }
+      const deskO = piece('ceo-desk')
+      const boss = front('ceo-boss-chair')
+      if (deskO && boss) {
+        const d = bb(deskO)
+        // 1. kursi bos di sisi meja yang jauh dari pintu (utara), menghadap pintu
+        if (!(boss.z < d.min.z)) {
+          problems.push(`kursi bos di z ${f2(boss.z)}, bukan di belakang meja (sisi utara meja z ${f2(d.min.z)})`)
+        }
+        const tx = room.door.x - boss.x
+        const tz = room.z2 - boss.z
+        const toDoor = (boss.fx * tx + boss.fz * tz) / Math.hypot(tx, tz)
+        if (boss.fz < 0.9 || toDoor < 0.8) {
+          problems.push(
+            `kursi bos menghadap (${f2(boss.fx)}, ${f2(boss.fz)}), bukan ke selatan/pintu (dot ke pintu ${f2(toDoor)})`,
+          )
+        }
+        // 2. kursi tamu di sisi dekat pintu, menghadap berlawanan dengan kursi bos (ke meja)
+        for (const n of ['ceo-guest-chair-0', 'ceo-guest-chair-1']) {
+          const g = front(n)
+          if (!g) {
+            problems.push(`${n} tidak punya sandaran yang bisa diukur`)
+            continue
+          }
+          if (!(g.z > d.max.z)) {
+            problems.push(`${n} di z ${f2(g.z)}, bukan di seberang meja (sisi selatan meja z ${f2(d.max.z)})`)
+          }
+          const opp = g.fx * boss.fx + g.fz * boss.fz
+          if (opp > -0.9) problems.push(`${n} tidak berhadapan dengan kursi bos (dot ${f2(opp)}, harus ≈ -1)`)
+          const cx = (d.min.x + d.max.x) / 2 - g.x
+          const cz = (d.min.z + d.max.z) / 2 - g.z
+          const toDesk = (g.fx * cx + g.fz * cz) / Math.hypot(cx, cz)
+          if (toDesk < 0.7) problems.push(`${n} tidak menghadap meja (dot ${f2(toDesk)})`)
+        }
+      } else {
+        problems.push('meja atau kursi bos (dengan sandarannya) tidak bisa diukur')
+      }
+      // sofa juga harus membelakangi dindingnya sendiri, menghadap ke dalam ruang
+      for (const [n, ex, ez] of [
+        ['ceo-sofa-3', 1, 0],
+        ['ceo-sofa-1', 0, -1],
+      ] as const) {
+        const s = front(n)
+        if (!s) problems.push(`${n} tidak punya sandaran yang bisa diukur`)
+        else if (s.fx * ex + s.fz * ez < 0.9) {
+          problems.push(`${n} menghadap (${f2(s.fx)}, ${f2(s.fz)}), harus (${ex}, ${ez})`)
+        }
+      }
+      // 3. bukaan pintu bebas: tidak ada mesh APA PUN di zona 1.2 m di dalam pintu (ruang
+      //    bebas standar di depan pintu), setinggi orang, dan tidak ada footprint level 1 yang
+      //    memotongnya. Bukan 1.5 m: tanaman di (-19.75, -13.40) yang diminta pemilik berada
+      //    1.45 m dari pintu di tepi timurnya — antara tepi pintu dan dinding timur hanya
+      //    0.5 m, jadi tanaman itu pasti segaris x dengan pintu. Rute di bawah membuktikan
+      //    jalannya tetap terbuka.
+      const CLEAR = 1.2
+      const zone = new THREE.Box3(
+        new THREE.Vector3(doorX1, LEVEL_H + 0.05, Z2 - CLEAR),
+        new THREE.Vector3(doorX2, LEVEL_H + 2.0, Z2 - 0.01),
+      )
+      scene.traverse((o) => {
+        const m = o as THREE.Mesh
+        if (!m.isMesh || !m.geometry) return
+        const b = bb(m)
+        if (!isFinite(b.min.x) || !b.intersectsBox(zone)) return
+        let top: THREE.Object3D = m
+        while (top.parent && top.parent !== suite && top.parent !== scene) top = top.parent
+        const who = top.name || m.name || m.geometry.type
+        problems.push(
+          `${who} menutup pintu: x ${f2(b.min.x)}..${f2(b.max.x)}, z ${f2(b.min.z)}..${f2(b.max.z)}, y ${f2(b.min.y)}..${f2(b.max.y)}`,
+        )
+      })
+      for (const f of FOOTPRINTS) {
+        if (f.level !== 1 || f.kind === 'wall' || f.h <= 0) continue
+        if (f.x + f.hw > doorX1 && f.x - f.hw < doorX2 && f.z + f.hd > Z2 - CLEAR && f.z - f.hd < Z2) {
+          problems.push(`footprint ${f.id} memotong jalur pintu (x ${f2(f.x - f.hw)}..${f2(f.x + f.hw)}, z ${f2(f.z - f.hd)}..${f2(f.z + f.hd)})`)
+        }
+      }
+      // ...dan orang benar-benar bisa jalan dari koridor lewat pintu ke tengah ruang
+      const legs = routeBetween({ x: room.door.x, z: room.z2 + 1, level: 1 }, { x: -23.6, z: -14.6, level: 1 })
+      if (!legs.length) problems.push('tidak ada rute dari koridor lewat pintu ke tengah ruang CEO')
+      // 4. tidak menembus dinding: SELURUH ukuran tiap barang (bukan cuma pusatnya) di dalam ruang
+      const E = 0.005
+      for (const n of want) {
+        const o = piece(n)
+        if (!o) continue
+        const b = bb(o)
+        if (b.min.x < X1 - E || b.max.x > X2 + E || b.min.z < Z1 - E || b.max.z > Z2 + E) {
+          problems.push(
+            `${n} keluar ruang: x ${f2(b.min.x)}..${f2(b.max.x)} (batas ${X1}..${X2}), ` +
+              `z ${f2(b.min.z)}..${f2(b.max.z)} (batas ${Z1}..${f2(Z2)})`,
+          )
+        }
+      }
+      for (const f of FOOTPRINTS.filter((x) => x.id.startsWith('ceo-'))) {
+        if (f.x - f.hw < X1 - E || f.x + f.hw > X2 + E || f.z - f.hd < Z1 - E || f.z + f.hd > Z2 + E) {
+          problems.push(`footprint ${f.id} keluar ruang: x ${f2(f.x - f.hw)}..${f2(f.x + f.hw)}, z ${f2(f.z - f.hd)}..${f2(f.z + f.hd)}`)
+        }
+      }
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    }
+    check(
+      'the CEO suite matches the marked plan: boss chair behind the desk facing the door, guests opposite, door clear, nothing through a wall',
+      problems.length === 0,
+      problems.join(' | '),
+    )
+  }
+
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {

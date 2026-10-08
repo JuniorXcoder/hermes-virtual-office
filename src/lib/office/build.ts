@@ -29,6 +29,7 @@ import {
   diningChairFacing,
   BOARD_COLUMNS,
   CEILING_Y,
+  CEO_SUITE,
   CONFERENCE,
   DESKS,
   DESK_CHAIR,
@@ -86,7 +87,6 @@ import {
   WALL_T,
   paletteFor,
   roomById,
-  roomCentre,
   type Palette,
 } from './layout'
 import { HEALTH_COLOR, type Health } from './health'
@@ -2226,56 +2226,231 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
   }
 
   /* ------------------------------------------------------------ CEO suite -- */
+  // Semua posisi dari CEO_SUITE (layout.ts), tabel yang sama yang dipakai FOOTPRINTS dan
+  // anchor duduk — supaya yang terlihat, yang ditabrak, dan tempat duduk tidak bisa pisah.
+  // Setiap barang punya `name` sendiri di dalam grup 'ceo-suite' karena self-test mengukur
+  // mesh-nya langsung (sisi meja, arah hadap, pintu tidak tertutup, tidak menembus dinding).
   {
-    const c = roomCentre('ceo')
+    const S = CEO_SUITE
     const y = LEVEL_H
-    // desk: a wide executive top with a return
-    const desk = new THREE.Mesh(rbox(2.2, 0.07, 1.2, 0.04), woodMat)
-    desk.position.set(c.x, y + 0.74, c.z - 1.5)
-    desk.castShadow = true
-    group.add(desk)
-    for (const [lx, lz] of [
-      [-0.95, -0.5],
-      [0.95, -0.5],
-      [-0.95, 0.5],
-      [0.95, 0.5],
-    ] as const) {
-      const leg = box(0.1, 0.72, 0.1, 0x8a6a44, { rough: 0.6 })
-      leg.position.set(c.x + lx, y + 0.36, c.z - 1.5 + lz)
-      group.add(leg)
+    const suite = new THREE.Group()
+    suite.name = 'ceo-suite'
+    group.add(suite)
+    const leather = stdMat(0x2b2522, { rough: 0.55 })
+    const chrome = stdMat(0x9aa0a6, { metal: 0.85, rough: 0.3 })
+    const fabric = stdMat(0x83a7cc, { rough: 0.95 })
+    const guestFabric = stdMat(0xb59a7a, { rough: 0.8 })
+
+    // Meja eksekutif: daun kayu di atas dua kabinet, dan panel penutup di sisi TAMU (+z,
+    // arah pintu) — tamu melihat panel, bos punya ruang kaki di sisi utara.
+    const desk = new THREE.Group()
+    desk.name = 'ceo-desk'
+    desk.position.set(S.desk.x, y, S.desk.z)
+    const top = new THREE.Mesh(rbox(S.desk.w, 0.06, S.desk.d, 0.03), woodMat)
+    top.position.y = S.desk.h - 0.03
+    top.castShadow = true
+    desk.add(top)
+    for (const sx of [-1, 1]) {
+      const ped = new THREE.Mesh(rbox(0.5, S.desk.h - 0.06, S.desk.d - 0.12, 0.02), panelMat)
+      ped.position.set(sx * (S.desk.w / 2 - 0.32), (S.desk.h - 0.06) / 2, 0)
+      desk.add(ped)
     }
-    // chair
-    const chair = new THREE.Group()
-    chair.position.set(c.x, y, c.z - 0.4)
-    const seat = new THREE.Mesh(rbox(0.56, 0.1, 0.54, 0.04), stdMat(0x3f4a52, { rough: 0.8 }))
-    seat.position.y = 0.5
-    chair.add(seat)
-    const backr = new THREE.Mesh(rbox(0.54, 0.62, 0.1, 0.04), stdMat(0x3f4a52, { rough: 0.8 }))
-    backr.position.set(0, 0.85, 0.28)
-    chair.add(backr)
-    const post = cyl(0.05, 0.05, 0.42, 0x8a8f95, 10, 0.6)
-    post.position.y = 0.26
-    chair.add(post)
-    group.add(chair)
-    // guest sofa facing the desk
-    const sofa = new THREE.Group()
-    sofa.position.set(c.x, y, c.z + 2.6)
-    const sseat = new THREE.Mesh(rbox(2.2, 0.34, 0.9, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
-    sseat.position.y = 0.28
-    sofa.add(sseat)
-    const sback = new THREE.Mesh(rbox(2.2, 0.5, 0.24, 0.06), stdMat(0x83a7cc, { rough: 0.95 }))
-    sback.position.set(0, 0.6, 0.36)
-    sofa.add(sback)
-    group.add(sofa)
-    // a plant and a floor lamp, so the suite reads as a room not an office box
-    const pot = cyl(0.26, 0.2, 0.5, 0xa8674a, 14)
-    pot.position.set(c.x + 2.6, y + 0.25, c.z - 2.4)
-    group.add(pot)
-    for (let i = 0; i < 3; i++) {
-      const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42 - i * 0.09, 0), stdMat(0x4f8b55, { rough: 0.9 }))
-      bush.position.set(c.x + 2.6, y + 0.72 + i * 0.34, c.z - 2.4)
-      bush.scale.set(1, 0.8, 1)
-      group.add(bush)
+    const modesty = new THREE.Mesh(rbox(S.desk.w - 1.2, 0.46, 0.04, 0.01), panelMat)
+    modesty.position.set(0, S.desk.h - 0.3, S.desk.d / 2 - 0.08)
+    desk.add(modesty)
+    // monitor menghadap kursi bos (layar ke -z)
+    const mon = box(0.62, 0.36, 0.03, 0x1b1d20, { rough: 0.4 })
+    mon.position.set(0, S.desk.h + 0.3, 0.18)
+    desk.add(mon)
+    const monStand = box(0.04, 0.12, 0.04, 0x1b1d20)
+    monStand.position.set(0, S.desk.h + 0.06, 0.2)
+    desk.add(monStand)
+    suite.add(desk)
+
+    // Kursi bos: alas lima jari beroda, sandaran tinggi + sandaran kepala, sandaran tangan.
+    // Sandaran di lokal +z, jadi `facing + π` membuatnya menghadap `facing` (pola kursi rapat).
+    {
+      const ch = new THREE.Group()
+      ch.name = 'ceo-boss-chair'
+      ch.position.set(S.bossChair.x, y, S.bossChair.z)
+      ch.rotation.y = S.bossChair.facing + Math.PI
+      for (let k = 0; k < 5; k++) {
+        const a = (k / 5) * Math.PI * 2
+        const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.3), chrome)
+        spoke.rotation.y = a
+        spoke.position.set(Math.sin(a) * 0.15, 0.08, Math.cos(a) * 0.15)
+        ch.add(spoke)
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.04, 10), leather)
+        wheel.rotation.z = Math.PI / 2
+        wheel.position.set(Math.sin(a) * 0.29, 0.035, Math.cos(a) * 0.29)
+        ch.add(wheel)
+      }
+      const gas = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 10), chrome)
+      gas.position.y = 0.25
+      ch.add(gas)
+      const seat = new THREE.Mesh(rbox(0.56, 0.1, 0.54, 0.04), leather)
+      seat.position.set(0, 0.455, -0.02)
+      seat.castShadow = true
+      ch.add(seat)
+      const back = new THREE.Mesh(rbox(0.56, 0.78, 0.1, 0.04), leather)
+      back.name = 'backrest'
+      back.position.set(0, 0.92, 0.26)
+      back.rotation.x = 0.08 // sedikit rebah ke belakang
+      back.castShadow = true
+      ch.add(back)
+      const head = new THREE.Mesh(rbox(0.4, 0.18, 0.1, 0.04), leather)
+      head.position.set(0, 1.4, 0.3)
+      ch.add(head)
+      for (const sx of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.2, 0.04), chrome)
+        post.position.set(sx * 0.3, 0.6, 0)
+        ch.add(post)
+        const pad = new THREE.Mesh(rbox(0.07, 0.04, 0.36, 0.015), leather)
+        pad.position.set(sx * 0.3, 0.72, -0.02)
+        ch.add(pad)
+      }
+      suite.add(ch)
+    }
+
+    // Kursi tamu: empat kaki, berlengan, lebih sederhana dari kursi bos — beda pangkat terlihat.
+    for (const [i, g] of S.guestChairs.entries()) {
+      const ch = new THREE.Group()
+      ch.name = `ceo-guest-chair-${i}`
+      ch.position.set(g.x, y, g.z)
+      ch.rotation.y = g.facing + Math.PI
+      const seat = new THREE.Mesh(rbox(0.52, 0.09, 0.5, 0.03), guestFabric)
+      seat.position.y = 0.46
+      ch.add(seat)
+      const back = new THREE.Mesh(rbox(0.52, 0.42, 0.07, 0.03), guestFabric)
+      back.name = 'backrest'
+      back.position.set(0, 0.74, 0.24)
+      ch.add(back)
+      for (const [lx, lz] of [
+        [-0.22, -0.2],
+        [0.22, -0.2],
+        [-0.22, 0.2],
+        [0.22, 0.2],
+      ] as const) {
+        const leg = box(0.04, 0.42, 0.04, 0x4a3a2c, { rough: 0.6 })
+        leg.position.set(lx, 0.21, lz)
+        ch.add(leg)
+      }
+      for (const sx of [-1, 1]) {
+        const arm = new THREE.Mesh(rbox(0.06, 0.05, 0.46, 0.02), guestFabric)
+        arm.position.set(sx * 0.28, 0.66, 0.02)
+        ch.add(arm)
+        const post = box(0.04, 0.16, 0.04, 0x4a3a2c)
+        post.position.set(sx * 0.28, 0.56, -0.16)
+        ch.add(post)
+      }
+      suite.add(ch)
+    }
+
+    // Sofa: panjang di lokal x, sandaran di lokal +z — diputar `facing + π` seperti kursi.
+    const sofa = (name: string, s: { x: number; z: number; facing: number; len: number; depth: number }) => {
+      const g = new THREE.Group()
+      g.name = name
+      g.position.set(s.x, y, s.z)
+      g.rotation.y = s.facing + Math.PI
+      const base = new THREE.Mesh(rbox(s.len, 0.24, s.depth, 0.05), fabric)
+      base.position.y = 0.16
+      g.add(base)
+      // bantal duduk: atasnya 0.45, tinggi duduk sofa (SEATS.sofa)
+      const cushion = new THREE.Mesh(rbox(s.len - 0.28, 0.17, s.depth - 0.26, 0.05), fabric)
+      cushion.position.set(0, 0.365, -0.1)
+      g.add(cushion)
+      const back = new THREE.Mesh(rbox(s.len, 0.5, 0.22, 0.06), fabric)
+      back.name = 'backrest'
+      back.position.set(0, 0.53, s.depth / 2 - 0.11)
+      back.castShadow = true
+      g.add(back)
+      for (const sx of [-1, 1]) {
+        const arm = new THREE.Mesh(rbox(0.14, 0.34, s.depth, 0.05), fabric)
+        arm.position.set(sx * (s.len / 2 - 0.07), 0.45, 0)
+        g.add(arm)
+      }
+      suite.add(g)
+    }
+    sofa('ceo-sofa-3', S.sofa3)
+    sofa('ceo-sofa-1', S.sofa1)
+
+    // Coffee table: daun marmer, rak bawah, empat kaki.
+    {
+      const t = S.coffeeTable
+      const g = new THREE.Group()
+      g.name = 'ceo-coffee-table'
+      g.position.set(t.x, y, t.z)
+      const tt = new THREE.Mesh(rbox(t.w, 0.05, t.d, 0.02), marbleMat)
+      tt.position.y = t.h - 0.025
+      tt.castShadow = true
+      g.add(tt)
+      const shelf = box(t.w - 0.1, 0.03, t.d - 0.1, 0x4a3a2c, { rough: 0.6 })
+      shelf.position.y = 0.12
+      g.add(shelf)
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const leg = box(0.05, t.h - 0.05, 0.05, 0x2b2522, { rough: 0.5 })
+          leg.position.set(sx * (t.w / 2 - 0.06), (t.h - 0.05) / 2, sz * (t.d / 2 - 0.06))
+          g.add(leg)
+        }
+      }
+      suite.add(g)
+    }
+
+    // TV di partisi timur: bingkai gelap setebal `t`, layar sedikit lebih terang di muka
+    // baratnya, supaya terbaca sebagai layar dan bukan balok hitam.
+    {
+      const tv = S.tv
+      const g = new THREE.Group()
+      g.name = 'ceo-tv'
+      g.position.set(tv.x, y + (tv.y0 + tv.y1) / 2, tv.z)
+      const frame = box(tv.t, tv.y1 - tv.y0, tv.len, 0x16181b, { rough: 0.4, metal: 0.3 })
+      g.add(frame)
+      const screen = box(0.01, tv.y1 - tv.y0 - 0.08, tv.len - 0.08, 0x1f3242, {
+        rough: 0.2,
+        emissive: 0x0d1c28,
+        ei: 0.5,
+      })
+      screen.position.x = -tv.t / 2 - 0.004
+      g.add(screen)
+      suite.add(g)
+    }
+
+    // Papan tulis di dinding utara, tepat di belakang kursi bos, menghadap selatan.
+    // Sengaja TIDAK memakai nama/userData papan kanban: itu satu-satunya papan yang bisa diklik.
+    {
+      const wb = S.whiteboard
+      const g = new THREE.Group()
+      g.name = 'ceo-whiteboard'
+      g.position.set(wb.x, y + (wb.y0 + wb.y1) / 2, wb.z)
+      const frame = box(wb.len, wb.y1 - wb.y0, wb.t, 0xb8bec4, { metal: 0.6, rough: 0.35 })
+      g.add(frame)
+      const surface = box(wb.len - 0.1, wb.y1 - wb.y0 - 0.1, 0.01, 0xf7f8f6, { rough: 0.3 })
+      surface.position.z = wb.t / 2 + 0.005
+      g.add(surface)
+      const tray = box(0.9, 0.04, 0.08, 0xb8bec4, { metal: 0.6, rough: 0.35 })
+      tray.position.set(0, -(wb.y1 - wb.y0) / 2 + 0.02, wb.t / 2 + 0.04)
+      g.add(tray)
+      suite.add(g)
+    }
+
+    // Tanaman sudut. Daun paling lebar = S.plantR, supaya yang di dekat dinding utara tidak
+    // menembusnya.
+    for (const [i, p] of S.plants.entries()) {
+      const g = new THREE.Group()
+      g.name = `ceo-plant-${i}`
+      g.position.set(p.x, y, p.z)
+      const pot = cyl(0.22, 0.17, 0.45, 0xa8674a, 14)
+      pot.position.y = 0.225
+      g.add(pot)
+      for (let k = 0; k < 3; k++) {
+        const r = S.plantR - k * 0.07
+        const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), stdMat(0x4f8b55, { rough: 0.9 }))
+        bush.position.y = 0.7 + k * 0.3
+        bush.scale.set(1, 0.8, 1)
+        g.add(bush)
+      }
+      suite.add(g)
     }
   }
 
