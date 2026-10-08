@@ -387,6 +387,9 @@ console.log('geometry')
     'src/app/api/hermes/agents/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/cron/route.ts': ['GET', 'POST'],
     'src/app/api/hermes/cron/actions/route.ts': ['GET'],
+    'src/app/api/hermes/tasks/evidence/route.ts': ['POST'],
+    'src/app/api/hermes/tasks/verification/route.ts': ['POST'],
+    'src/app/api/hermes/tasks/[id]/verification/route.ts': ['GET'],
   }
   const missing: string[] = []
   for (const [file, methods] of Object.entries(routes)) {
@@ -395,6 +398,13 @@ console.log('geometry')
       if (!new RegExp(`export\\s+(async\\s+)?function\\s+${m}\\b`).test(src)) {
         missing.push(`${file} lacks ${m}`)
       }
+    }
+    // Penjaga ERROR SERAGAM: tiap GET/POST yang memanggil CLI/filesystem harus
+    // menangkap error jadi JSON { error }, bukan 500 tanpa badan. Pernah: dua
+    // route actions tanpa try/catch — CLI mati = 500 kosong, panel blank.
+    // GET murni baca-proses (control, office) dikecualikan: tidak ada yang melempar.
+    if (!/control\/route\.ts$|\/office\/route\.ts$/.test(file)) {
+      if (!/try\s*\{/.test(src)) missing.push(`${file} has no try/catch — CLI/filesystem error escapes as an empty 500`)
     }
   }
   check('every API route keeps the methods the UI calls', missing.length === 0, missing.join(' | '))
@@ -3806,6 +3816,19 @@ void (async () => {
       { kind: 'blocked', payload: { kind: 'capability', reason: 'kedua' } },
     ])
     if (twice?.reason !== 'kedua') problems.push('sebab blokir yang dipakai bukan yang TERAKHIR')
+    // Blokir yang SUDAH DIBUKA bukan keadaan: `unblocked` setelah `blocked`
+    // berarti readBlock = null (pernah: task yang sudah dibuka tetap tampil
+    // menunggu manusia di papan + avatar tampil 'blocked' selamanya).
+    const opened = readBlock([
+      { kind: 'blocked', payload: { kind: 'needs_input', reason: 'tunggu manusia' } },
+      { kind: 'unblocked', payload: {} },
+    ])
+    if (opened !== null) problems.push('blokir yang sudah dibuka masih terbaca sebagai menunggu manusia')
+    // Kasus negatif: blokir MURNI tanpa unblocked tetap terbaca.
+    const still = readBlock([
+      { kind: 'blocked', payload: { kind: 'needs_input', reason: 'tunggu manusia' } },
+    ])
+    if (still?.reason !== 'tunggu manusia') problems.push('blokir murni tanpa unblocked malah TIDAK terbaca')
 
     // ── izin aksi ──
     if (checkAction({ action: 'pauseAll' }).allowed) {

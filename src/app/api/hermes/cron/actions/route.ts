@@ -25,6 +25,9 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // getJob/listAgents/listTasks melempar saat CLI mati — tanpa try/catch route
+  // menjawab 500 tanpa badan (bukan error JSON seragam seperti route lain).
+  try {
   const job = await getJob(from)
   if (!job) {
     return NextResponse.json(
@@ -56,4 +59,10 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ job: { id: job.id, name: job.name }, items, roster })
+  } catch (err) {
+    return NextResponse.json(
+      { error: { code: 'cron_actions_failed', message: (err as Error).message, status: 502 } },
+      { status: 502 },
+    )
+  }
 }

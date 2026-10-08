@@ -27,6 +27,9 @@ export async function GET(req: NextRequest) {
   }
 
   // A live meeting or an archived transcript — both are legitimate sources.
+  // Dibungkus try/catch: listAgents/listTasks/readArchived melempar saat CLI
+  // mati, dan tanpa ini route menjawab 500 tanpa badan (bukan error JSON).
+  try {
   const live = listMeetings().find((m) => m.id === from)
   let minutes = live?.minutes || ''
   let topic = live?.topic || ''
@@ -64,4 +67,10 @@ export async function GET(req: NextRequest) {
     })),
     roster,
   })
+  } catch (err) {
+    return NextResponse.json(
+      { error: { code: 'meeting_actions_failed', message: (err as Error).message, status: 502 } },
+      { status: 502 },
+    )
+  }
 }

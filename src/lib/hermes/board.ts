@@ -100,6 +100,9 @@ export function readBlock(
 ): BlockReason | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
+    // Event yang LEBIH BARU membatalkan blokir lama: `unblocked` setelah `blocked`
+    // berarti blokirnya sudah dibuka — blokir lama itu basi, bukan keadaan sekarang.
+    if (e.kind === 'unblocked') return null
     if (e.kind !== 'blocked') continue
     const p = (e.payload || {}) as { reason?: unknown; kind?: unknown; recurrences?: unknown }
     const raw = String(p.kind ?? '')
