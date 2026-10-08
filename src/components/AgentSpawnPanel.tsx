@@ -60,6 +60,9 @@ export default function AgentSpawnPanel({
   const [newRole, setNewRole] = useState<AgentRole>('backend')
   const [newDivision, setNewDivision] = useState<AgentDivision>('tech')
   const [newSoul, setNewSoul] = useState('')
+  /** Model untuk profil yang SEDANG dibuat; '' = bawaan Hermes. Terpisah dari `pick`
+   *  (ganti model profil yang sudah ada) supaya dua alur itu tidak saling menimpa. */
+  const [newModel, setNewModel] = useState('')
   const [soulPreview, setSoulPreview] = useState<string | null>(null)
   const [divFilter, setDivFilter] = useState<'all' | AgentDivision>('all')
   const [creating, setCreating] = useState(false)
@@ -172,7 +175,13 @@ export default function AgentSpawnPanel({
     setNote(null)
     setSoulPreview(null)
     try {
-      const res = await fetchJson<{ name: string; soulPreview?: string }>('/api/hermes/agents', {
+      const hit = models.find((m) => m.model === newModel)
+      const res = await fetchJson<{
+        name: string
+        soulPreview?: string
+        model?: string | null
+        modelError?: string | null
+      }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -182,14 +191,24 @@ export default function AgentSpawnPanel({
           role: newRole,
           division: newDivision,
           soul: newSoul.trim(),
+          model: newModel || undefined,
+          provider: newModel ? hit?.provider : undefined,
         }),
       })
       if (!res.ok || !res.data) throw new Error(res.error || 'gagal membuat profil')
       setNewName('')
       setNewDesc('')
       setNewSoul('')
+      setNewModel('')
       setSoulPreview(res.data.soulPreview ?? null)
-      setNote(`profil "${res.data.name}" dibuat — agent berjalan masuk lewat pintu utama`)
+      // Laporkan model dari BALASAN server, bukan dari pilihan di form: kalau set-model
+      // gagal, operator harus tahu agent ini jalan dengan bawaan Hermes.
+      const modelNote = res.data.model
+        ? `model ${res.data.model}`
+        : res.data.modelError
+          ? `model GAGAL diset (${res.data.modelError}) — sementara pakai bawaan Hermes`
+          : 'model bawaan Hermes'
+      setNote(`profil "${res.data.name}" dibuat, ${modelNote} — agent berjalan masuk lewat pintu utama`)
       await load()
       onChanged()
     } catch (e) {
@@ -314,6 +333,14 @@ export default function AgentSpawnPanel({
         onChange={(e) => setNewSoul(e.target.value)}
         placeholder="cth: Budi adalah CEO visioner — ambil keputusan akhir, bagi tugas ke tiap divisi, jaga visi perusahaan. Gaya: tegas, ringkas, eksekusi langsung. (opsional)"
         rows={3}
+      />
+      <ModelPicker
+        value={newModel}
+        onChange={setNewModel}
+        models={models}
+        disabled={creating}
+        emptyLabel="bawaan Hermes"
+        title="Model untuk agent baru ini (kosong = bawaan Hermes)"
       />
       <button
         className="vp-btn"

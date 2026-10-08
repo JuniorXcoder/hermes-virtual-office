@@ -190,6 +190,10 @@ export async function POST(req: NextRequest) {
       typeof body?.division === 'string' && body.division.trim() ? body.division.trim() : undefined
     ) as AgentDivision | undefined
     const soul = typeof body?.soul === 'string' ? body.soul : ''
+    // Model pilihan operator saat membuat. Kosong = jangan sentuh config profil sama
+    // sekali, supaya agent baru ikut bawaan Hermes, bukan dipaksa ke satu model.
+    const model = body?.model == null ? '' : String(body.model).trim()
+    const provider = body?.provider == null ? null : String(body.provider).trim() || null
     try {
       const created = await createProfile(name, {
         description: String(body?.description || ''),
@@ -197,6 +201,23 @@ export async function POST(req: NextRequest) {
         division,
         soul,
       })
+      // Diset SETELAH profil ada (createProfile yang gagal sudah lempar ke catch di bawah,
+      // jadi tidak ada model yang tertulis untuk profil yang tidak jadi). Kalau langkah ini
+      // gagal, profilnya tetap sudah ada — membatalkan create demi model justru membuang
+      // kerja operator. Maka balasannya tetap 201, tapi jujur: model tidak terpasang dan
+      // agent berjalan dengan bawaan Hermes sampai di-set ulang dari panel Agent.
+      let modelApplied: string | null = null
+      let providerApplied: string | null = null
+      let modelError: string | null = null
+      if (model) {
+        try {
+          await setProfileModel(created.name, model, provider)
+          modelApplied = model
+          providerApplied = provider
+        } catch (err) {
+          modelError = (err as Error).message
+        }
+      }
       // A brand-new profile carries no kill-list entry, so it appears on the next
       // poll — no need to touch membership.
       return NextResponse.json(
@@ -209,6 +230,12 @@ export async function POST(req: NextRequest) {
           division: created.division,
           /** Preview soul yang tertulis (template atau prompt Jun). */
           soulPreview: soul.trim() || soulFor(created.role, created.name, created.division),
+          /** Model yang BENAR-BENAR terpasang; null = bawaan Hermes. */
+          model: modelApplied,
+          provider: providerApplied,
+          /** Model yang diminta tapi gagal dipasang (profil tetap dibuat). */
+          modelRequested: model || null,
+          modelError,
         },
         { status: 201 },
       )

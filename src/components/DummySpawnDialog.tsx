@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useOffice } from '@/lib/store'
+import { fetchJson } from '@/lib/api'
+import ModelPicker, { type ModelChoice } from './ModelPicker'
 import { DIVISION_LABEL, type AgentDivision } from '@/types/hermes'
 
 /**
@@ -29,10 +31,30 @@ export default function DummySpawnDialog({
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelChoice[]>([])
+  /** '' = bawaan Hermes: tidak memilih berarti tidak memaksa model apa pun. */
+  const [model, setModel] = useState('')
+  /** Laporan hasil spawn. Dialog sengaja TIDAK langsung tertutup supaya operator
+   *  melihat model yang benar-benar dipakai, bukan sekadar avatar yang berubah. */
+  const [done, setDone] = useState<string | null>(null)
+
+  // Katalog model = config Hermes, bukan daftar hardcode; dimuat sekali per dialog.
+  useEffect(() => {
+    let alive = true
+    fetchJson<{ models?: ModelChoice[] }>('/api/hermes/models', { cache: 'no-store' }).then((res) => {
+      if (alive && res.ok) setModels(res.data?.models || [])
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // Default the name to a free profile in this division, so the common case is
   // one click.
   useEffect(() => {
+    // Setelah spawn, loadOffice() memperbarui `agents`; tanpa penjaga ini nama di
+    // field melompat ke slot bebas berikutnya tepat saat laporan ditampilkan.
+    if (done) return
     const taken = new Set(agents.map((a) => a.name))
     const base = division === 'tech' ? 'dev' : division === 'growth' ? 'mkt' : 'content'
     for (let i = 1; i < 50; i++) {
@@ -42,9 +64,10 @@ export default function DummySpawnDialog({
         return
       }
     }
-  }, [agents, division])
+  }, [agents, division, done])
 
   async function spawn() {
+    if (done) return
     const clean = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-')
     if (!clean) {
       setNote('Nama agent wajib diisi.')
@@ -56,9 +79,20 @@ export default function DummySpawnDialog({
       const res = await fetch('/api/hermes/agents', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'create', name: clean, division, role: 'manager' }),
+        body: JSON.stringify({
+          action: 'create',
+          name: clean,
+          division,
+          role: 'manager',
+          model: model || undefined,
+          provider: model ? models.find((m) => m.model === model)?.provider : undefined,
+        }),
       })
-      const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } }
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: { message?: string }
+        model?: string | null
+        modelError?: string | null
+      }
       if (!res.ok) {
         setNote(body?.error?.message || 'gagal membuat profile')
         setBusy(false)
@@ -75,7 +109,15 @@ export default function DummySpawnDialog({
         }),
       })
       await loadOffice()
-      onClose()
+      // Dari balasan server, bukan dari pilihan form: set-model bisa gagal walau
+      // profilnya sudah jadi.
+      setDone(
+        body.model
+          ? `Agent "${clean}" di-spawn dengan model ${body.model}.`
+          : body.modelError
+            ? `Agent "${clean}" di-spawn, tapi model GAGAL diset (${body.modelError}) — sementara pakai bawaan Hermes. Ganti lewat panel Agent.`
+            : `Agent "${clean}" di-spawn dengan model bawaan Hermes.`,
+      )
     } catch (e) {
       setNote((e as Error).message)
     } finally {
@@ -97,21 +139,42 @@ export default function DummySpawnDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="dev-1"
+            disabled={busy || !!done}
             autoFocus
             onKeyDown={(e) => {
               if (e.key === 'Enter') void spawn()
             }}
           />
         </label>
+        <label className="vp-field">
+          <span>Model AI</span>
+          <ModelPicker
+            value={model}
+            onChange={setModel}
+            models={models}
+            disabled={busy || !!done}
+            emptyLabel="bawaan Hermes"
+            title="Model untuk agent ini (kosong = bawaan Hermes)"
+          />
+        </label>
         <p className="vp-muted">Divisi: {DIVISION_LABEL[division]}</p>
         {note && <p className="vp-error">{note}</p>}
+        {done && <div className="vp-ok">{done}</div>}
         <div className="vp-modal-actions">
-          <button className="vp-btn" onClick={onClose} disabled={busy}>
-            Batal
-          </button>
-          <button className="vp-btn primary" onClick={() => void spawn()} disabled={busy}>
-            {busy ? 'Membuat…' : 'Spawn agent'}
-          </button>
+          {done ? (
+            <button className="vp-btn primary" onClick={onClose} autoFocus>
+              Tutup
+            </button>
+          ) : (
+            <>
+              <button className="vp-btn" onClick={onClose} disabled={busy}>
+                Batal
+              </button>
+              <button className="vp-btn primary" onClick={() => void spawn()} disabled={busy}>
+                {busy ? 'Membuat…' : 'Spawn agent'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
