@@ -10,13 +10,21 @@
  */
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { DIVISION_LABEL } from '@/types/hermes'
+import { parseDomains } from './a2a'
 
-export const SOUL_MARKER_RE = /<!--\s*office:\s*role=([a-z-]+)\s+division=(exec|tech|growth|content)\s*-->/i
+export const SOUL_MARKER_RE =
+  /<!--\s*office:\s*role=([a-z-]+)\s+division=(exec|tech|growth|content)(?:\s+domains=([a-z0-9-,]*))?\s*-->/i
 
-export function parseSoulMarker(soul: string): { role?: AgentRole; division?: AgentDivision } {
+export function parseSoulMarker(soul: string): { role?: AgentRole; division?: AgentDivision; domains?: string[] } {
   const m = SOUL_MARKER_RE.exec(soul)
   if (!m) return {}
-  return { role: m[1] as AgentRole, division: m[2] as AgentDivision }
+  const out: { role?: AgentRole; division?: AgentDivision; domains?: string[] } = {
+    role: m[1] as AgentRole,
+    division: m[2] as AgentDivision,
+  }
+  // Grup ketiga opsional: marker lama tanpa domains tetap terbaca.
+  if (m[3] !== undefined) out.domains = parseDomains(m[3])
+  return out
 }
 
 export const ROLE_LABEL: Record<AgentRole, string> = {
@@ -52,11 +60,18 @@ const ROLE_JOB: Record<AgentRole, string> = {
 /**
  * Bangun isi SOUL.md untuk satu agent. Balikkan juga marker-nya supaya
  * tertulis di file (mesin baca) sekaligus terbaca manusia.
+ *
+ * `domains`: daftar keahlian ternormalisasi (dipakai office untuk pemetaan
+ * domain→pemilik; TIDAK diumumkan ke A2A — lihat lib/hermes/a2a.ts).
  */
-export function soulFor(role: AgentRole, name: string, division: AgentDivision): string {
+export function soulFor(role: AgentRole, name: string, division: AgentDivision, domains?: string[]): string {
   const job = ROLE_JOB[role] ?? ROLE_JOB.backend
   const roleLabel = ROLE_LABEL[role] ?? role
   const divLabel = DIVISION_LABEL[division]
+  const marker =
+    domains && domains.length
+      ? `<!-- office: role=${role} division=${division} domains=${domains.join(',')} -->`
+      : `<!-- office: role=${role} division=${division} -->`
   const lines = [
     `# ${name} — ${roleLabel}`,
     ``,
@@ -69,7 +84,7 @@ export function soulFor(role: AgentRole, name: string, division: AgentDivision):
     `- Gagal? Diagnosa → perbaiki → ulangi. Lapor jujur + next step.`,
     `- Bahasa: Indonesia, ringkas. Proses > sekadar hasil.`,
     ``,
-    `<!-- office: role=${role} division=${division} -->`,
+    marker,
   ]
   return lines.join('\n')
 }

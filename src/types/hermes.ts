@@ -90,6 +90,11 @@ export type Agent = {
   division: AgentDivision | null
   /** True when the profile has its own SOUL.md on disk. */
   soulExists?: boolean
+  /**
+   * Keahlian/domain dari marker SOUL.md (dipakai office untuk pemetaan
+   * domain→pemilik; TIDAK diumumkan ke A2A).
+   */
+  domains?: string[]
   /** Desk slot, or null when the agent has no station. */
   deskIndex: number | null
   status: AgentStatus

@@ -15,6 +15,8 @@ import { BUILTIN_HIDDEN, hiddenNames, isHidden, hide, show } from '@/lib/hermes/
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
+import { parseDomains, ownersForDomains } from '@/lib/hermes/a2a'
+import { listServedAgents, upsertServedAgent } from '@/lib/hermes/a2a-served'
 import { blockedAssigneesFor } from '@/lib/hermes/approvals'
 import { agentPermissionSummary, checkAgentAction, type AgentActionKind } from '@/lib/hermes/control'
 import { denyAudit } from '@/lib/hermes/audit'
@@ -56,8 +58,17 @@ export async function GET() {
         profiles.includes(name) ? (await profileModel(name)).model : null,
       ),
     )
-    // role/division/soul dari listAgents (baca SOUL.md + fallback keyword).
+    // role/division/soul/domains dari listAgents (baca SOUL.md + fallback keyword).
     const agentMeta = new Map(agents.map((a) => [a.name, a]))
+    const served = await listServedAgents().catch(() => [])
+    const servedByProfile = new Map(served.map((s) => [s.profile, s]))
+    // Peta domain→pemilik untuk jawaban jujur "siapa pegang X".
+    const servedDesc = new Map(served.map((s) => [s.profile, s.description]))
+    const domainAgents = agents.map((a) => ({
+      name: a.name,
+      domains: a.domains ?? [],
+      description: servedDesc.get(a.name) ?? null,
+    }))
     return NextResponse.json({
       available: roster.map((name, i) => ({
         name,
@@ -71,6 +82,14 @@ export async function GET() {
         role: agentMeta.get(name)?.role ?? null,
         division: agentMeta.get(name)?.division ?? null,
         soulExists: agentMeta.get(name)?.soulExists ?? false,
+        /** Keahlian/domain (dari marker SOUL.md; dipakai office, bukan A2A). */
+        domains: agentMeta.get(name)?.domains ?? [],
+        /**
+         * Status A2A jujur: 'served' = terdaftar di platforms.a2a.agents,
+         * 'unlisted' = profil ada tapi belum didaftarkan. Bukan "aktif" —
+         * daftarnya baru berlaku setelah gateway di-restart.
+         */
+        a2a: servedByProfile.has(name) ? 'served' : profiles.includes(name) ? 'unlisted' : null,
         /** Why it is absent, when it is. */
         reason: inOffice.has(name)
           ? null
@@ -83,6 +102,14 @@ export async function GET() {
       hidden: hiddenNames(),
       /** Batas izin per role (TAHAP 5.4), dari tabel tunggal di control.ts. */
       permissions: agentPermissionSummary(),
+      /**
+       * Pemetaan domain→pemilik (dipakai office, bukan A2A). Domain tanpa
+       * pemilik bernilai null — TAMPILKAN apa adanya, jangan mengarang.
+       */
+      domainOwners: ownersForDomains(
+        [...new Set(domainAgents.flatMap((a) => a.domains))],
+        domainAgents,
+      ),
     })
   } catch (err) {
     return NextResponse.json(
@@ -190,6 +217,21 @@ export async function POST(req: NextRequest) {
       typeof body?.division === 'string' && body.division.trim() ? body.division.trim() : undefined
     ) as AgentDivision | undefined
     const soul = typeof body?.soul === 'string' ? body.soul : ''
+    // Keahlian/domain: freetext koma dari form → ternormalisasi di createProfile.
+    // Disimpan di marker SOUL.md (dipakai office), TIDAK diumumkan ke A2A.
+    const domains = Array.isArray(body?.domains)
+      ? (body.domains as unknown[]).map((d) => String(d ?? '')).filter((d) => d.trim())
+      : typeof body?.domains === 'string'
+        ? [body.domains]
+        : []
+    // Toolset yang diumumkan di agent card: HARUS nama toolset nyata Hermes
+    // (bukan tag bebas — card hanya bisa berisi itu). Kosong = semua toolset.
+    const advertisedToolsets = Array.isArray(body?.advertisedToolsets)
+      ? (body.advertisedToolsets as unknown[]).map((t) => String(t ?? '').trim()).filter(Boolean)
+      : []
+    // Toggle A2A: default MATI. Hidup = daftarkan served-agent (local:false).
+    // Mati = jangan sentuh config sama sekali.
+    const serveA2a = body?.serveA2a === true
     // Model pilihan operator saat membuat. Kosong = jangan sentuh config profil sama
     // sekali, supaya agent baru ikut bawaan Hermes, bukan dipaksa ke satu model.
     const model = body?.model == null ? '' : String(body.model).trim()
@@ -200,6 +242,7 @@ export async function POST(req: NextRequest) {
         role,
         division,
         soul,
+        domains,
       })
       // Diset SETELAH profil ada (createProfile yang gagal sudah lempar ke catch di bawah,
       // jadi tidak ada model yang tertulis untuk profil yang tidak jadi). Kalau langkah ini
@@ -220,6 +263,24 @@ export async function POST(req: NextRequest) {
       }
       // A brand-new profile carries no kill-list entry, so it appears on the next
       // poll — no need to touch membership.
+      // Toggle A2A hidup: daftarkan served-agent (backup config dulu). Gagal di
+      // sini TIDAK membatalkan profil — dilaporkan jujur supaya operator tahu
+      // profilnya ada tapi belum terdaftar A2A.
+      let a2aRegistered: boolean | null = null
+      let a2aError: string | null = null
+      if (serveA2a) {
+        try {
+          await upsertServedAgent({
+            slug: created.name,
+            description: created.description,
+            advertisedToolsets,
+          })
+          a2aRegistered = true
+        } catch (err) {
+          a2aRegistered = false
+          a2aError = (err as Error).message
+        }
+      }
       return NextResponse.json(
         {
           success: true,
@@ -228,14 +289,26 @@ export async function POST(req: NextRequest) {
           description: created.description,
           role: created.role,
           division: created.division,
+          domains: created.domains,
           /** Preview soul yang tertulis (template atau prompt Jun). */
-          soulPreview: soul.trim() || soulFor(created.role, created.name, created.division),
+          soulPreview: soul.trim() || soulFor(created.role, created.name, created.division, created.domains),
           /** Model yang BENAR-BENAR terpasang; null = bawaan Hermes. */
           model: modelApplied,
           provider: providerApplied,
           /** Model yang diminta tapi gagal dipasang (profil tetap dibuat). */
           modelRequested: model || null,
           modelError,
+          /** Toggle A2A: null = mati (config tidak disentuh). */
+          a2aRegistered,
+          a2aError,
+          /**
+           * Jujur soal arti "terdaftar": daftar served-agent baru berlaku
+           * setelah gateway di-restart — bukan langsung aktif.
+           */
+          a2aNote:
+            a2aRegistered === true
+              ? 'Tersimpan. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.'
+              : null,
         },
         { status: 201 },
       )

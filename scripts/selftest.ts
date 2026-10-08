@@ -127,6 +127,9 @@ import { columnOf } from '../src/lib/office/board'
 import { wrapBubble } from '../src/components/SpriteOffice'
 import { filterModels } from '../src/components/ModelPicker'
 import { officeChatArgs, sendChatMessage } from '../src/lib/hermes/chat'
+import { parseDomains, ownerForDomain, ownersForDomains, buildServedAgentEntry } from '../src/lib/hermes/a2a'
+import { parseSoulMarker, soulFor } from '../src/lib/hermes/soul'
+import { listServedAgents, setServedAgentsConfigPath, upsertServedAgent } from '../src/lib/hermes/a2a-served'
 import * as THREE from 'three'
 
 let failures = 0
@@ -4706,6 +4709,91 @@ void (async () => {
     }
     if (/a\.targetLevel = 0\s*\n\s*a\.seatYaw = deskSeatYaw/.test(code)) problems.push('meja dikirim ke lantai 0 tanpa melihat lantai mejanya')
     check('work beats rest and wander: meeting > desk > review > idle, chat per agent, cron only as policy', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // A2A-3: DOMAIN→PEMILIK JUJUR + SERVED-AGENT BENAR.
+  //
+  // Ekspektasi TIDAK dihitung dari fungsi yang diuji:
+  // - daftar domain harapan ditulis literal di sini (bukan via parseDomains),
+  // - SOUL harapan dibaca dari template soulFor (sumber independen — marker
+  //   yang ditulis createProfile harus terbaca parser yang sama),
+  // - file config adalah YAML buatan tangan di tmpdir (bukan hasil writer).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    // 1. parseDomains: koma + normalisasi. Harapan literal.
+    const got = parseDomains('Meta-Ads, reporting,  budget ')
+    for (const [i, want] of (['meta-ads', 'reporting', 'budget'] as string[]).entries()) {
+      if (got[i] !== want) problems.push(`domain ke-${i} "${got[i]}", harus "${want}"`)
+    }
+    if (got.length !== 3) problems.push(`${got.length} domain, harus 3`)
+    if (parseDomains('a, A, a ').length !== 1) problems.push('duplikat tidak dibuang')
+
+    // 2. ownerForDomain: cocok domains dulu, lalu kata di deskripsi card.
+    const roster = [
+      { name: 'budi', domains: ['meta-ads'], description: 'Iklan Meta & Google: budget, CPA.' },
+      { name: 'sari', domains: ['seo'], description: 'Riset keyword.' },
+    ]
+    if (ownerForDomain('meta-ads', roster) !== 'budi') problems.push('pemilik meta-ads bukan budi')
+    if (ownerForDomain('cpa', roster) !== 'budi') problems.push('cpa di deskripsi budi tidak ketemu')
+    // Kasus "tidak ada pemilik": HARUS null — office menampilkan itu apa adanya.
+    if (ownerForDomain('blockchain', roster) !== null) problems.push('domain tanpa pemilik tidak null')
+    const owners = ownersForDomains(['meta-ads', 'blockchain'], roster)
+    if (owners['meta-ads'] !== 'budi' || owners['blockchain'] !== null) {
+      problems.push(`peta pemilik salah: ${JSON.stringify(owners)}`)
+    }
+
+    // 3. buildServedAgentEntry: local SELALU false (true = dijawab gateway umum).
+    const entry = buildServedAgentEntry({ slug: 'Budi', description: 'd', advertisedToolsets: ['terminal'] })
+    if (entry.local !== false) problems.push('served-agent local bukan false')
+    if (entry.slug !== 'budi' || entry.path !== '/budi' || entry.profile !== 'budi' || entry.tenant !== 'budi') {
+      problems.push(`identitas entri salah: ${JSON.stringify(entry)}`)
+    }
+
+    // 4. Marker SOUL: soulFor (sumber independen) → parseSoulMarker.
+    // Marker LAMA tanpa domains tetap terbaca (kompatibel mundur).
+    const soul = soulFor('backend', 'budi', 'tech', ['meta-ads', 'reporting'])
+    if (!soul.includes('domains=meta-ads,reporting')) problems.push('soulFor tidak menulis domains')
+    const back = parseSoulMarker(soul)
+    if (back.role !== 'backend' || back.division !== 'tech') problems.push(`marker terbaca ${back.role}/${back.division}`)
+    if (JSON.stringify(back.domains) !== '["meta-ads","reporting"]') problems.push(`domains terbaca ${JSON.stringify(back.domains)}`)
+    const lama = parseSoulMarker('# x\n<!-- office: role=qa division=tech -->')
+    if (lama.role !== 'qa' || (lama.domains ?? []).length !== 0) problems.push('marker lama rusak')
+
+    // 5. Writer config: YAML buatan tangan (bukan hasil writer) → upsert →
+    // list baca kembali; kunci lain byte-sama; backup ada.
+    const dir = mkdtempSync(join(tmpdir(), 'hermes-a2a3-'))
+    const cfg = join(dir, 'sandbox.yaml')
+    const before = 'platforms:\n  a2a:\n    enabled: true\n    port: 9900\n  telegram:\n    - a2a\n'
+    writeFileSync(cfg, before, 'utf8')
+    setServedAgentsConfigPath(cfg)
+    try {
+      const r = await upsertServedAgent({ slug: 'zz-selftest', description: 'Selftest A2A-3', advertisedToolsets: ['terminal'] })
+      if (!existsSync(r.backupPath)) problems.push('backup config tidak dibuat')
+      else if (readFileSync(r.backupPath, 'utf8') !== before) problems.push('backup bukan isi sebelum tulis')
+      const listed = await listServedAgents()
+      const zhit = listed.find((x) => x.slug === 'zz-selftest')
+      if (!zhit) problems.push('entri tidak terbaca kembali')
+      else {
+        if (zhit.local !== false) problems.push('entri terbaca local=true')
+        if (zhit.description !== 'Selftest A2A-3') problems.push(`deskripsi terbaca "${zhit.description}"`)
+        if (JSON.stringify(zhit.advertised_toolsets) !== '["terminal"]') {
+          problems.push(`toolsets terbaca ${JSON.stringify(zhit.advertised_toolsets)}`)
+        }
+      }
+      const after = readFileSync(cfg, 'utf8')
+      if (!after.includes('  telegram:\n    - a2a') || !after.includes('port: 9900')) {
+        problems.push('kunci lain berubah saat menulis agents')
+      }
+      await upsertServedAgent({ slug: 'zz-selftest', description: 'v2', advertisedToolsets: [] })
+      const twice = (await listServedAgents()).filter((x) => x.slug === 'zz-selftest')
+      if (twice.length !== 1 || twice[0].description !== 'v2') problems.push('upsert kedua duplikat/bukan timpa')
+    } finally {
+      setServedAgentsConfigPath(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+    check('a2a-3: domain to owner is honest, served-agent is local:false, config write is safe', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */

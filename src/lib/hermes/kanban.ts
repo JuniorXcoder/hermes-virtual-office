@@ -17,6 +17,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { Agent, NewTaskInput, Task, TaskOrigin, TaskStatus, AgentDivision, AgentRole } from '@/types/hermes'
 import { parseSoulMarker, soulFor } from './soul'
+import { parseDomains } from './a2a'
 import { readEvidence, splitEvidenceBatch, type EvidenceInput, type EvidenceMark, type EvidenceReading } from './evidence'
 import { readVerification, splitVerificationBatch, type VerificationMark, type VerificationReading, type VerifyEvent } from './verification'
 
@@ -575,7 +576,7 @@ export async function listAssignees(): Promise<{ name: string; onDisk: boolean; 
 /* ----------------------------------------------------------------- profiles -- */
 
 /** Where Hermes keeps its state. `HERMES_HOME` wins if the operator set it. */
-function hermesHome(): string {
+export function hermesHome(): string {
   return process.env.HERMES_HOME || path.join(os.homedir(), '.hermes')
 }
 
@@ -647,8 +648,8 @@ const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
  */
 export async function createProfile(
   name: string,
-  opts?: { description?: string; role?: AgentRole; division?: AgentDivision; soul?: string },
-): Promise<{ name: string; description: string; role: AgentRole; division: AgentDivision }> {
+  opts?: { description?: string; role?: AgentRole; division?: AgentDivision; soul?: string; domains?: string[] },
+): Promise<{ name: string; description: string; role: AgentRole; division: AgentDivision; domains: string[] }> {
   const clean = name.trim().toLowerCase()
   if (!PROFILE_NAME.test(clean)) {
     throw new Error(
@@ -661,6 +662,7 @@ export async function createProfile(
   }
   const role: AgentRole = opts?.role ?? roleFor(clean)
   const division: AgentDivision = opts?.division ?? divisionFor(role)
+  const domains = parseDomains(opts?.domains?.join(','))
   const desc = (opts?.description || `${clean} — ${role}, divisi ${division}`).trim().slice(0, 200)
   const args = ['profile', 'create', clean, '--no-alias', '--description', desc]
   try {
@@ -673,15 +675,17 @@ export async function createProfile(
     throw new Error(`hermes profile create ${clean} failed: ${(e.stderr || e.message || '').trim()}`)
   }
   // Soul: 1 prompt dari form → SOUL.md profil. Kosong → template per role.
-  const soulText = (opts?.soul || '').trim() || soulFor(role, clean, division)
+  // Marker ikut menyimpan domains (pemetaan office, bukan A2A). Soul kustom
+  // tanpa marker tetap diberi marker — role/divisi/domains harus terbaca mesin.
+  const soulText = (opts?.soul || '').trim() || soulFor(role, clean, division, domains)
   const soulWithMarker = /office:\s*role=/i.test(soulText)
     ? soulText
-    : `${soulText}\n<!-- office: role=${role} division=${division} -->`
+    : `${soulText}\n<!-- office: role=${role} division=${division}${domains.length ? ` domains=${domains.join(',')}` : ''} -->`
   const dir = path.join(hermesHome(), 'profiles', clean)
   await writeFile(path.join(dir, 'SOUL.md'), soulWithMarker, 'utf8')
   // describe: catat role/divisi supaya terbaca tanpa buka SOUL.md
   await hermesWrite(['profile', 'describe', clean, `${desc} [${role}/${division}]`]).catch(() => {})
-  return { name: clean, description: desc, role, division }
+  return { name: clean, description: desc, role, division, domains }
 }
 
 /**
@@ -812,14 +816,14 @@ export async function listAgents(
 
   const active = activeTaskByAssignee(tasks)
 
-  // Soul per agent: baca marker office (role/divisi). Fallback ke keyword nama.
+  // Soul per agent: baca marker office (role/divisi/domains). Fallback ke keyword nama.
   const souls = await Promise.all(names.map((n) => readSoul(n)))
   const meta = names.map((name, i) => {
     const soul = souls[i]
     const parsed = soul ? parseSoulMarker(soul) : {}
     const role = parsed.role ?? roleFor(name)
     const division = parsed.division ?? divisionFor(role)
-    return { name, soul, role, division }
+    return { name, soul, role, division, domains: parsed.domains ?? [] as string[] }
   })
 
   // Meja PER DIVISI dulu, lalu meja KOSONG divisi lain (lihat `assignDesks`): yang punya
@@ -830,7 +834,7 @@ export async function listAgents(
     meta.map((m) => ({ name: m.name, division: m.division, role: m.role, busy: active.has(m.name) })),
   )
 
-  return meta.map(({ name, soul, role, division }) => {
+  return meta.map(({ name, soul, role, division, domains }) => {
     const task = active.get(name)
     // Menunggu manusia MENGALAHKAN working/review: agent yang berhenti menunggu keputusan
     // tidak boleh tampil sedang bekerja. Kursinya tetap — dia masih memegang task itu.
@@ -847,6 +851,7 @@ export async function listAgents(
       role,
       division,
       soulExists: soul != null,
+      domains,
       deskIndex: seatOf.get(name) ?? null,
       status,
       currentTaskId: task?.id ?? null,
