@@ -41,6 +41,30 @@ export type DoctorReport = {
   checks: DoctorCheck[]
 }
 
+/**
+ * MODEL-PROVIDER-1: klasifikasi pure "provider menggantung".
+ *
+ * `model.provider: custom:<nama>` hanya hidup bila definisi `custom_providers`
+ * bernama `<nama>` ada DI SCOPE PROFIL ITU (bukan cuma global). Tanpa itu chat
+ * mati dengan "Unknown provider" walau model default terisi.
+ *
+ * - provider non-custom (null, "openai", ...) = 'ok' (di luar urusan blok ini).
+ * - definisi tak terbaca (null) = 'unknown' (jujur, bukan lulus).
+ * - custom tanpa definisi cocok = 'dangling' (rusak).
+ * - custom dengan definisi cocok = 'ok'.
+ */
+export function classifyProviderScope(
+  provider: string | null,
+  defs: { name?: string }[] | null,
+): 'ok' | 'dangling' | 'unknown' {
+  const pv = (provider || '').trim()
+  if (!pv.toLowerCase().startsWith('custom:')) return 'ok'
+  const need = pv.slice('custom:'.length).trim().toLowerCase()
+  if (defs === null) return 'unknown'
+  const have = (defs || []).some((d) => String(d?.name || '').trim().toLowerCase() === need)
+  return have ? 'ok' : 'dangling'
+}
+
 /** Env tanpa penanda sesi agent — sama kontraknya dengan cleanEnv() di kanban.ts. */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }
@@ -271,7 +295,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
 
   // Modul berat diimpor malas: kalau CLI mati, doctor tetap bisa menilai
   // origin tanpa menarik seluruh jembatan kanban.
-  const { listProfiles, listTasks, profileModel, hermesHome } = await import('./kanban')
+  const { listProfiles, listTasks, profileModel, profileCustomProviders, hermesHome } = await import('./kanban')
   const { isConfigured } = await import('./meeting')
   const { listServedAgents } = await import('./a2a-served')
 
@@ -347,6 +371,8 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
     })
   } else {
     const models = await Promise.all(profiles.map(async (p) => ({ p, ...(await profileModel(p)) })))
+    // NOTE: `models` also feeds the dangling-provider verdict below — keep the
+    // two loops over the same snapshot, not two separate reads.
     const missing = models.filter((m) => !m.model).map((m) => m.p)
     if (!missing.length) {
       checks.push({
@@ -364,6 +390,58 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
         detail: `tanpa model: ${missing.join(', ')} — chat ke mereka akan gagal`,
         fix: `isi model tiap profil (pemilih model di form Agent), atau: hermes -p <nama> config set model.default <model>`,
       })
+    }
+    // Provider menggantung: `model.provider: custom:<nama>` tanpa definisi
+    // `custom_providers` bernama itu di scope profil = chat mati dengan
+    // "Unknown provider", walau model default ADA. Periksa lama lulus untuk
+    // kasus ini — sekarang gagal jujur + langkah perbaikan yang bisa disalin.
+    const customNames = models
+      .map((m) => {
+        const pv = (m.provider || '').trim()
+        return pv.toLowerCase().startsWith('custom:') ? pv.slice('custom:'.length).trim().toLowerCase() : null
+      })
+      .filter((n): n is string => !!n)
+    if (customNames.length) {
+      const defs = await Promise.all(profiles.map(async (p) => ({ p, defs: await profileCustomProviders(p) })))
+      const dangling: string[] = []
+      const unreadable: string[] = []
+      for (const m of models) {
+        const row = defs.find((d) => d.p === m.p)
+        const verdict = classifyProviderScope(m.provider, row?.defs ?? null)
+        // row hilang = profil lenyap di tengah baca: tak bisa dipastikan.
+        if (!row) {
+          unreadable.push(m.p)
+        } else if (verdict === 'dangling') {
+          dangling.push(`${m.p} (provider "${(m.provider || '').trim()}" tanpa definisi)`)
+        } else if (verdict === 'unknown') {
+          unreadable.push(m.p)
+        }
+      }
+      if (dangling.length) {
+        checks.push({
+          id: 'model-providers',
+          label: 'Provider model bisa diresolusi',
+          status: 'fail',
+          detail: `provider menggantung: ${dangling.join(', ')} — chat ke mereka mati ("Unknown provider")`,
+          fix: `salin definisi dari config global ke tiap profil, contoh:\nhermes -p <nama> config set custom_providers "$(hermes config get custom_providers --json)"\natau pilih ulang model dari pemilih model di form Agent (sekarang menyalin definisinya otomatis)`,
+        })
+      } else if (unreadable.length) {
+        checks.push({
+          id: 'model-providers',
+          label: 'Provider model bisa diresolusi',
+          status: 'unknown',
+          detail: `tidak bisa dipastikan — definisi provider tak terbaca untuk: ${unreadable.join(', ')}`,
+          fix: '',
+        })
+      } else {
+        checks.push({
+          id: 'model-providers',
+          label: 'Provider model bisa diresolusi',
+          status: 'pass',
+          detail: `semua provider custom (${[...new Set(customNames)].join(', ')}) ada definisinya di scope tiap profil`,
+          fix: '',
+        })
+      }
     }
   }
 

@@ -62,6 +62,9 @@ import {
   parseA2aPlatform,
   parseGatewayStart,
 } from '../src/lib/hermes/doctor'
+// MODEL-PROVIDER-1: pure pendamping klasifikasi provider menggantung —
+// "custom:<nama> tanpa definisi bernama itu di scope profil" = rusak.
+import { classifyProviderScope } from '../src/lib/hermes/doctor'
 import { localOriginAllowed } from '../src/lib/local-guard'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5263,6 +5266,72 @@ void (async () => {
     if (!/TAK PASTI/.test(pSrc)) problems.push('UI tanpa cabang TAK PASTI')
 
     check('setup-1: doctor jujur — lulus/gagal/tak-pasti, basi ditandai, restart terdeteksi', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // MODEL-PROVIDER-1: PROVIDER CUSTOM MENGGANTUNG = RUSAK, BUKAN "PUNYA MODEL".
+  //
+  // (a) classifyProviderScope: nilai harapan literal + kasus negatif —
+  //     custom tanpa definisi = 'dangling', definisi tak terbaca = 'unknown',
+  //     definisi cocok = 'ok', non-custom = 'ok' (di luar urusan blok ini).
+  // (b) setProfileModel menyalin definisi custom (sumber: kanbanConfig
+  //     global — tempat picker membaca) + verifikasi baca-balik: baca sumber,
+  //     bukan klaim. Provider tak dikenal = tolak SEBELUM menulis apa pun.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // 1. Pure: harapan literal + negatif.
+    if (classifyProviderScope('custom:9router', [{ name: '9router' }]) !== 'ok') {
+      problems.push('definisi cocok bukan ok')
+    }
+    if (classifyProviderScope('custom:9router', [{ name: 'lain' }]) !== 'dangling') {
+      problems.push('custom tanpa definisi cocok bukan dangling')
+    }
+    if (classifyProviderScope('custom:9router', []) !== 'dangling') {
+      problems.push('daftar definisi kosong bukan dangling')
+    }
+    if (classifyProviderScope('custom:9router', null) !== 'unknown') {
+      problems.push('definisi tak-terbaca bukan unknown')
+    }
+    if (classifyProviderScope('custom:9Router', [{ name: '9router' }]) !== 'ok') {
+      problems.push('cocok huruf-besar bukan ok')
+    }
+    if (classifyProviderScope(null, []) !== 'ok') problems.push('provider null bukan ok')
+    if (classifyProviderScope('openai', []) !== 'ok') problems.push('provider non-custom bukan ok')
+
+    // 2. setProfileModel: definisi ikut tertulis ATAU ditolak jujur — baca
+    // sumber (kanban.ts), bukan klaim dari ingatan.
+    const kSrc = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
+    const body = kSrc.slice(kSrc.indexOf('export async function setProfileModel'))
+    if (!/kanbanConfig<RawProvider\[\]>/.test(body) || !/custom_providers/.test(body)) {
+      problems.push('setProfileModel tak membaca definisi custom_providers global')
+    }
+    if (!/hermesWrite\(\['-p', name, 'config', 'set', 'custom_providers'/.test(body)) {
+      problems.push('setProfileModel tak menulis custom_providers ke scope profil')
+    }
+    if (!/gagal terverifikasi/.test(body) && !/read back/i.test(body)) {
+      problems.push('setProfileModel tanpa verifikasi baca-balik')
+    }
+    if (!/tidak dikenal/.test(body) || !/tidak diubah/.test(body)) {
+      problems.push('setProfileModel tak menolak-jujur provider tak dikenal sebelum menulis')
+    }
+    // Balasan set-model jujur: throw dari setProfileModel harus jadi 502,
+    // bukan success:true. Baca route, bukan asumsi.
+    const agSrc = readFileSync(new URL('../src/app/api/hermes/agents/route.ts', import.meta.url), 'utf8')
+    const setModel = agSrc.slice(agSrc.indexOf("action === 'set-model'"))
+    if (!/catch/.test(setModel) || !/action_failed/.test(setModel)) {
+      problems.push('route set-model menelan error jadi sukses')
+    }
+
+    // 3. Doctor: profil menggantung = dilaporkan rusak + fix bisa disalin.
+    const dSrc = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+    if (!/classifyProviderScope/.test(dSrc)) problems.push('doctor tak memakai classifyProviderScope')
+    if (!/model-providers/.test(dSrc)) problems.push('doctor tanpa periksa model-providers')
+    if (!/tanpa definisi/.test(dSrc)) problems.push('doctor tanpa kata "tanpa definisi" di detail')
+    if (!/config set custom_providers/.test(dSrc)) problems.push('doctor tanpa langkah salin-definisi di fix')
+
+    check('model-provider-1: custom menggantung = rusak; set-model salin definisi atau tolak jujur', problems.length === 0, problems.join(' | '))
   }
 
   // ───────────────────────────────────────────────────────────────────────────

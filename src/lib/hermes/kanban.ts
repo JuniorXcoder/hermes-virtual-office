@@ -395,7 +395,7 @@ export async function listModels(): Promise<ModelChoice[]> {
   return providersToModels(await kanbanConfig<RawProvider[]>('custom_providers'))
 }
 
-type RawProvider = {
+export type RawProvider = {
   name?: string
   base_url?: string
   model?: string
@@ -453,21 +453,96 @@ export async function profileModel(name: string): Promise<{ model: string | null
   }
 }
 
-/** Set a profile's default model (and provider). Affects its next spawn/chat turn. */
+/** Definitions of OpenAI-compatible providers in scope (global or `-p <name>`).
+ * The CLI masks `api_key`, so this is safe to read. Returns null when the
+ * key cannot be read at all (as opposed to legitimately empty). */
+export async function profileCustomProviders(name: string): Promise<RawProvider[] | null> {
+  try {
+    const raw = await hermesJson<RawProvider[]>([
+      '-p',
+      name,
+      'config',
+      'get',
+      'custom_providers',
+      '--json',
+    ])
+    return Array.isArray(raw) ? raw : []
+  } catch {
+    return null
+  }
+}
+
+/** Set a profile's default model (and provider). Affects its next spawn/chat turn.
+ *
+ * When the provider is a `custom:<name>` slug, the matching `custom_providers`
+ * DEFINITION is copied from the global config (the same source the model picker
+ * reads via `listModels()`) into the profile's own config, then read back to
+ * prove it landed. A profile-scoped `model.provider` without a profile-scoped
+ * definition is rejected by the CLI as "Unknown provider", so a dangling write
+ * is worse than a refusal: resolve first, throw honestly, never half-write.
+ */
 export async function setProfileModel(
   name: string,
   model: string | null,
   provider?: string | null,
 ): Promise<void> {
   if (!model) throw new Error('model wajib diisi')
+  // The picker's providers all come from `custom_providers`, and a profile's
+  // `model.provider` has to be the QUALIFIED slug (`custom:9router`) — that is
+  // what `hermes model` itself writes. A bare name is accepted by
+  // `kanban set-model` (its own resolver) but not here, so qualify it.
+  const qualified = provider
+    ? provider.includes(':')
+      ? provider
+      : `custom:${provider.trim().toLowerCase()}`
+    : null
+  const customName =
+    qualified && qualified.trim().toLowerCase().startsWith('custom:')
+      ? qualified.trim().slice('custom:'.length).trim().toLowerCase()
+      : null
+  // Resolve the definition BEFORE touching the profile: never leave a
+  // half-written config behind.
+  let defJson: string | null = null
+  if (customName) {
+    const global = await kanbanConfig<RawProvider[]>('custom_providers').catch(
+      () => [] as RawProvider[],
+    )
+    const list = Array.isArray(global) ? global : []
+    const match = list.find((p) => String(p?.name || '').trim().toLowerCase() === customName)
+    if (!match || !String(match.base_url || '').trim()) {
+      throw new Error(
+        `provider "${qualified}" tidak dikenal — tidak ada definisi custom_providers bernama "${customName}" di config global; model profil "${name}" tidak diubah`,
+      )
+    }
+    defJson = JSON.stringify([match])
+  }
+  // Definition first, then model+provider: a crash between writes leaves the
+  // harmless case (unused definition) rather than the fatal one (dangling provider).
+  if (defJson) {
+    await hermesWrite(['-p', name, 'config', 'set', 'custom_providers', defJson])
+  }
   await hermesWrite(['-p', name, 'config', 'set', 'model.default', model])
-  if (provider) {
-    // The picker's providers all come from `custom_providers`, and a profile's
-    // `model.provider` has to be the QUALIFIED slug (`custom:9router`) — that is
-    // what `hermes model` itself writes. A bare name is accepted by
-    // `kanban set-model` (its own resolver) but not here, so qualify it.
-    const qualified = provider.includes(':') ? provider : `custom:${provider.trim().toLowerCase()}`
+  if (qualified) {
     await hermesWrite(['-p', name, 'config', 'set', 'model.provider', qualified])
+  }
+  if (customName && defJson) {
+    // Read back: prove the definition actually landed in profile scope.
+    const landed = await hermesJson<RawProvider[]>([
+      '-p',
+      name,
+      'config',
+      'get',
+      'custom_providers',
+      '--json',
+    ]).catch(() => [] as RawProvider[])
+    const ok =
+      Array.isArray(landed) &&
+      landed.some((p) => String(p?.name || '').trim().toLowerCase() === customName)
+    if (!ok) {
+      throw new Error(
+        `definisi provider "${qualified}" gagal terverifikasi di profil "${name}" — model.default/model.provider sudah tertulis tapi chat bisa gagal ("Unknown provider"); salin manual: hermes -p ${name} config set custom_providers '<json definisi ${customName} dari config global>'`,
+      )
+    }
   }
 }
 
