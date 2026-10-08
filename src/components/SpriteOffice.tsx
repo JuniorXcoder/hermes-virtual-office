@@ -198,8 +198,8 @@ function buildStatic(): HTMLCanvasElement {
   })
 
   /* ------------------------------------------------------- the furniture -- */
-  // desks (ground floor)
-  for (const desk of DESKS) {
+  // desks (ground floor). Meja exec (lantai 1) adalah meja CEO, digambar di "CEO suite desk".
+  for (const desk of DESKS.filter((d) => d.level === 0)) {
     push(desk.x, desk.z, () => {
       solid(ctx, desk.x, desk.z, 1.8, 1.0, 0.72, C.woodTop, C.wood)
       const mx = desk.x - Math.sin(desk.facing) * 0.28

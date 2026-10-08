@@ -569,6 +569,18 @@ export type Desk = {
   division: AgentDivision
   /** Managers own one desk per division; everyone else is staff. */
   seat: 'manager' | 'staff'
+  /**
+   * Lantai meja. Meja divisi di lantai 0; meja exec adalah meja CEO di ruang CEO, lantai 1.
+   * Disimpan di meja, bukan diasumsikan, karena scene dulu menulis `targetLevel = 0` untuk
+   * SEMUA meja — badan yang dikirim ke meja CEO akan berjalan ke titik itu di lantai dasar.
+   */
+  level: 0 | 1
+  /**
+   * Jarak kursi dari pusat meja sepanjang `facing`. Kosong = `DESK_SEAT.z` (meja standar).
+   * Meja CEO lebih dalam dan kursi bosnya lebih jauh dari meja daripada kursi meja standar,
+   * jadi jaraknya dibaca dari CEO_SUITE — tanpa ini agent duduk 0.46 m di depan kursi bos.
+   */
+  seatDist?: number
 }
 
 /* ------------------------------------------------- three division rooms -- */
@@ -602,7 +614,7 @@ function mkDesk(
   facing: number,
   side: 'near' | 'far' = 'near',
 ): Desk {
-  return { index, x, z, facing, column, side, division, seat }
+  return { index, x, z, facing, column, side, division, seat, level: 0 }
 }
 
 /**
@@ -677,7 +689,8 @@ function contentDesks(): Desk[] {
   ]
 }
 
-export const DESKS: Desk[] = [...devDesks(), ...mktDesks(), ...contentDesks()]
+// `DESKS` sendiri didefinisikan SETELAH `CEO_SUITE` (lihat `execDesks`): meja exec dibaca dari
+// tabel itu, dan `const` yang dibaca sebelum barisnya dieksekusi melempar ReferenceError.
 
 /**
  * THE EXTRA FURNITURE THAT MAKES EACH ROOM ITS OWN.
@@ -859,9 +872,10 @@ export const DESK_SEAT = { x: 0, z: DESK_CHAIR.z + SEAT_BACK_OFFSET }
 export function deskSeatWorld(desk: Desk) {
   const s = Math.sin(desk.facing)
   const c = Math.cos(desk.facing)
+  const dz = desk.seatDist ?? DESK_SEAT.z
   return {
-    x: desk.x + DESK_SEAT.x * c + DESK_SEAT.z * s,
-    z: desk.z - DESK_SEAT.x * s + DESK_SEAT.z * c,
+    x: desk.x + DESK_SEAT.x * c + dz * s,
+    z: desk.z - DESK_SEAT.x * s + dz * c,
     facing: desk.facing + Math.PI,
   }
 }
@@ -1376,6 +1390,78 @@ export const CEO_SUITE = {
   whiteboard: { x: -24.6, z: -20.76, len: 3.4, t: 0.16, y0: 0.6, y1: 2.1 },
 } as const
 
+/**
+ * MEJA DIVISI EXEC = MEJA CEO YANG SUDAH ADA.
+ *
+ * Exec dulu punya NOL meja, jadi CEO (satu-satunya agent di kantor) mendapat `deskIndex: null`
+ * dan tidak pernah duduk kerja. Meja baru tidak digambar: entri ini MENUNJUK meja eksekutif di
+ * CEO_SUITE, dan blok `CEO suite` di build.ts tetap satu-satunya yang menggambarnya.
+ *
+ * `facing: π` — kursi di sisi utara meja (konvensi `deskSeatWorld`: kursi di +facing).
+ * `seatDist` = jarak meja→kursi bos di tabel yang sama, jadi titik duduknya PERSIS kursi bos
+ * (-23.6, -19.1); kalau sofa/kursi dipindah, titik duduknya ikut.
+ * `side: 'far'` — `visitorSpot` meja ini jatuh di samping kursi bos (-22.45, -19.05), bukan di
+ * sisi tamu, tempat dua kursi tamu menutup jalur berdiri.
+ */
+function execDesks(): Desk[] {
+  const d = CEO_SUITE.desk
+  return [
+    {
+      ...mkDesk(9, 'exec', 'manager', 0, d.x, d.z, Math.PI, 'far'),
+      level: 1,
+      seatDist: d.z - CEO_SUITE.bossChair.z,
+    },
+  ]
+}
+
+export const DESKS: Desk[] = [...devDesks(), ...mktDesks(), ...contentDesks(), ...execDesks()]
+
+/** Urutan cadangan saat kolam meja satu divisi habis: tech → growth → content → exec. */
+const OVERFLOW_ORDER: AgentDivision[] = ['tech', 'growth', 'content', 'exec']
+
+/**
+ * Bagi meja: tiap agent ke meja divisinya dulu, sisanya ke meja KOSONG divisi lain.
+ *
+ * Dulu yang tak kebagian di divisinya mendapat `null` walau meja lain kosong — itu persis kasus
+ * CEO: exec tanpa meja, jadi ia tidak pernah duduk. Sekarang `null` hanya kalau memang tidak ada
+ * meja kosong yang BOLEH ia pakai.
+ *
+ * Satu pengecualian, sengaja: meja CEO ada di ruang CEO, dan ruang itu hanya untuk CEO dan
+ * manajer (`mayEnterCeoRoom`). Staf tidak diberi meja itu — termasuk lewat cadangan — karena
+ * meja yang tidak boleh didatangi sama dengan mengirim badan ke pintu yang menolaknya.
+ *
+ * Urutan: yang punya kerja dulu, lalu nama — sama seperti sebelumnya, dan deterministik.
+ */
+export function assignDesks(
+  members: { name: string; division: AgentDivision; role: AgentRole; busy: boolean }[],
+): Map<string, number | null> {
+  const out = new Map<string, number | null>()
+  const free = new Set(DESKS.map((d) => d.index))
+  const allowed = (m: { role: AgentRole }, d: Desk) => d.level === 0 || mayEnterCeoRoom(m.role)
+  const order = (a: { name: string; busy: boolean }, b: { name: string; busy: boolean }) =>
+    (a.busy ? 0 : 1) - (b.busy ? 0 : 1) || a.name.localeCompare(b.name)
+  const overflow: typeof members = []
+  for (const div of ['exec', 'tech', 'growth', 'content'] as AgentDivision[]) {
+    const pool = desksForDivision(div)
+    for (const m of members.filter((x) => x.division === div).sort(order)) {
+      const desk = pool.find((d) => free.has(d.index) && allowed(m, d))
+      if (desk) {
+        free.delete(desk.index)
+        out.set(m.name, desk.index)
+      } else {
+        overflow.push(m)
+      }
+    }
+  }
+  const spare = OVERFLOW_ORDER.flatMap((div) => desksForDivision(div))
+  for (const m of overflow.sort(order)) {
+    const desk = spare.find((d) => free.has(d.index) && allowed(m, d))
+    if (desk) free.delete(desk.index)
+    out.set(m.name, desk ? desk.index : null)
+  }
+  return out
+}
+
 /* ------------------------------------------------------------- footprints -- */
 
 export type Footprint = {
@@ -1518,7 +1604,9 @@ export const FOOTPRINTS: Footprint[] = [
   })(),
 
   /* ------------------------------------------------------- desks + chairs -- */
-  ...DESKS.flatMap((d) => {
+  // Hanya meja lantai 0: meja exec adalah meja CEO, yang footprint-nya (`ceo-desk`, kursi bos)
+  // sudah ditulis dari CEO_SUITE di bawah. Menulisnya dua kali = dua kotak di lantai yang salah.
+  ...DESKS.filter((d) => d.level === 0).flatMap((d) => {
     const s = Math.sin(d.facing)
     const c = Math.cos(d.facing)
     const chair = { x: d.x + DESK_CHAIR.z * s, z: d.z + DESK_CHAIR.z * c }

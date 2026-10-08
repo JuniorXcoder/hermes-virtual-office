@@ -822,27 +822,13 @@ export async function listAgents(
     return { name, soul, role, division }
   })
 
-  // Meja PER DIVISI: working dulu, lalu abjad. Tiap divisi punya pool meja
-  // sendiri (lihat desksForDivision); yang tak kebagian → deskIndex null
-  // (standby di lounge, tidak error).
-  const { desksForDivision } = await import('../office/layout')
-  const taken = new Map<number, string>()
-  const seatOf = new Map<string, number | null>()
-  for (const div of ['exec', 'tech', 'growth', 'content'] as AgentDivision[]) {
-    const pool = desksForDivision(div).map((d) => d.index)
-    const members = meta
-      .filter((m) => m.division === div)
-      .sort((a, b) => {
-        const av = active.has(a.name) ? 0 : 1
-        const bv = active.has(b.name) ? 0 : 1
-        return av - bv || a.name.localeCompare(b.name)
-      })
-    members.forEach((m, k) => {
-      const seat = k < pool.length ? pool[k] : null
-      seatOf.set(m.name, seat)
-      if (seat != null) taken.set(seat, m.name)
-    })
-  }
+  // Meja PER DIVISI dulu, lalu meja KOSONG divisi lain (lihat `assignDesks`): yang punya
+  // kerja didahulukan, lalu abjad. `null` hanya kalau tidak ada meja kosong yang boleh dipakai —
+  // dulu divisi exec (nol meja) membuat CEO selalu `null` dan tidak pernah duduk kerja.
+  const { assignDesks } = await import('../office/layout')
+  const seatOf = assignDesks(
+    meta.map((m) => ({ name: m.name, division: m.division, role: m.role, busy: active.has(m.name) })),
+  )
 
   return meta.map(({ name, soul, role, division }) => {
     const task = active.get(name)

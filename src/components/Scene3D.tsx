@@ -26,6 +26,7 @@ export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
   const meeting = useOffice((s) => s.meeting)
   const view = useOffice((s) => s.view)
   const health = useOffice((s) => s.health)
+  const work = useOffice((s) => s.work)
   const setPeek = useOffice((s) => s.setPeek)
   const select = useOffice((s) => s.select)
   const openTask = useOffice((s) => s.openTask)
@@ -84,6 +85,11 @@ export default function Scene3D({ onScene, onDummy, onBoard, onName }: Props) {
   useEffect(() => {
     sceneRef.current?.setMeeting(meeting)
   }, [meeting])
+
+  // Chat hidup / cron baru jalan: agent ditarik ke mejanya (lihat office/duty.ts).
+  useEffect(() => {
+    sceneRef.current?.setWork(work)
+  }, [work])
 
   useEffect(() => {
     if (view === '3d') sceneRef.current?.start()

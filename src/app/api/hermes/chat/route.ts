@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { chatLiveAgents } from '@/lib/office/duty'
 import {
+  chatTurnsInFlight,
   getChatSession,
   listChatSessions,
   readChatHistory,
@@ -35,6 +37,17 @@ async function chatProfiles(): Promise<string[]> {
 export async function GET(req: NextRequest) {
   const agent = req.nextUrl.searchParams.get('agent')
   try {
+    // `?live=1` — siapa yang sedang diajak bicara, untuk kantor (agent pergi ke mejanya).
+    // Dipisah dari daftar biasa karena daftar biasa memanggil CLI (profil, papan) dan ini
+    // dipoll tiap beberapa detik; yang ini hanya membaca indeks sesi dan memori proses.
+    if (req.nextUrl.searchParams.get('live') === '1') {
+      const now = Date.now()
+      return NextResponse.json({
+        live: chatLiveAgents(await listChatSessions(), chatTurnsInFlight(), now),
+        inFlight: chatTurnsInFlight(),
+        at: new Date(now).toISOString(),
+      })
+    }
     if (!agent) {
       // An agent IS a profile — one name, one memory store. The panel used to ask
       // for a separate "profile for new chats", which was nonsense: `jun` the agent

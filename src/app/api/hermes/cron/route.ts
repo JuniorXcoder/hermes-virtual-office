@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { assertLocalWriteRequest } from '@/lib/local-guard'
 import { actOnJob, createJob, listJobs, listRuns, parseLimit, type JobAction } from '@/lib/hermes/cron'
+import { cronPulse } from '@/lib/office/duty'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,12 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id')
   const limit = Number(req.nextUrl.searchParams.get('limit') || 25)
   try {
+    // `?pulse=1` — cron agent yang baru jalan, untuk kantor. Hanya membaca jobs.json (tanpa
+    // `cron runs` lewat CLI), karena dipoll tiap beberapa detik. Hasilnya TIDAK menyebut agent:
+    // cron tidak punya pemilik di Hermes (lihat `cronPulse`).
+    if (req.nextUrl.searchParams.get('pulse') === '1') {
+      return NextResponse.json({ pulse: cronPulse(await listJobs(), Date.now()) })
+    }
     if (id) {
       const job = (await listJobs()).find((j) => j.id === id)
       if (!job) {

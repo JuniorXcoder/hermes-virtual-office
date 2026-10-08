@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
 import type { AvatarState } from './office/types'
 import type { Health } from './office/health'
+import type { CronPulse, WorkSignals } from './office/duty'
 import { fetchJson } from './api'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
@@ -38,7 +39,15 @@ type State = {
    */
   health: Health
 
+  /**
+   * Sinyal kerja di luar kanban: siapa yang sedang diajak chat, dan cron yang baru jalan.
+   * Scene membacanya untuk mengirim agent ke mejanya (lihat office/duty.ts).
+   */
+  work: WorkSignals
+
   load: () => Promise<void>
+  /** Baca sinyal kerja. Gagal = tidak ada sinyal, bukan sinyal lama (lihat badannya). */
+  loadWork: () => Promise<void>
   /** Baca kesehatan. Terpisah dari load(), karena kegagalannya tidak boleh menjatuhkan kantor. */
   loadHealth: () => Promise<void>
   loadOffice: () => Promise<void>
@@ -74,6 +83,23 @@ export const useOffice = create<State>((set) => ({
   // Mulai dari TIDAK TAHU, bukan dari hijau. Sistem yang belum selesai membaca keadaannya
   // tidak boleh tampil sehat — itu kebohongan yang paling gampang terjadi.
   health: { level: 'warn', reasons: ['belum membaca keadaan sistem'] },
+
+  work: { chatLive: [], cron: null },
+
+  async loadWork() {
+    const [chat, cron] = await Promise.all([
+      fetchJson<{ live?: string[] }>('/api/hermes/chat?live=1', { cache: 'no-store' }),
+      fetchJson<{ pulse?: CronPulse | null }>('/api/hermes/cron?pulse=1', { cache: 'no-store' }),
+    ])
+    // Pembacaan yang gagal dianggap "tidak ada kerja": lebih baik agent tetap jalan-jalan
+    // daripada terpaku di meja selamanya karena sinyal lama yang tidak pernah padam.
+    set({
+      work: {
+        chatLive: chat.ok ? chat.data?.live ?? [] : [],
+        cron: cron.ok ? cron.data?.pulse ?? null : null,
+      },
+    })
+  },
 
   async loadHealth() {
     try {
@@ -188,6 +214,7 @@ export function startPolling() {
         useOffice.getState().refreshMeeting(),
         useOffice.getState().loadOffice(),
         useOffice.getState().loadHealth(),
+        useOffice.getState().loadWork(),
       ])
     } finally {
       running = false

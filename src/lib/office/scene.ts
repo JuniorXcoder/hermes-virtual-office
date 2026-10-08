@@ -46,6 +46,7 @@ import {
   type MeetingRoomId,
 } from './layout'
 import type { Agent, AgentDivision, AgentRole, Meeting, Task } from '@/types/hermes'
+import { dutyOf, type Duty, type WorkSignals } from './duty'
 import type { AvatarState } from './types'
 
 export type SceneAgent = AnimAgent & {
@@ -133,6 +134,11 @@ export type SceneAgent = AnimAgent & {
   wanderIndex: number
   /** Seconds to stay put before wandering again. */
   restUntil: number
+  /**
+   * Kewajiban yang terakhir dievaluasi (rapat/meja/review/bebas). Disimpan untuk mendeteksi
+   * PERUBAHAN: saat kerja mulai, istirahat dan perjalanan yang sedang berlangsung dibatalkan.
+   */
+  duty?: Duty
 }
 
 export type SceneEvents = {
@@ -489,6 +495,18 @@ export function createScene(
     restored = true
   }
 
+  // ---- work signals (chat / cron) ----------------------------------------------
+
+  /** Agent yang sedang diajak chat. */
+  let chatLive = new Set<string>()
+  /** KEBIJAKAN "ada kerja cron" — tanpa pemilik, lihat `cronPulse` di duty.ts. */
+  let cronLive = false
+
+  function setWork(w: WorkSignals) {
+    chatLive = new Set(w.chatLive)
+    cronLive = !!w.cron
+  }
+
   // ---- destination resolution ------------------------------------------------
 
   function deskTarget(desk: Desk) {
@@ -589,6 +607,40 @@ export function createScene(
       return
     }
 
+    const st = a.data.status
+    const isDummy = a.kind === 'dummy'
+    const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
+    const inMeeting = !!(meeting && meetingLive && meeting.participants.includes(a.data.name))
+    const myDesk = a.data.deskIndex != null ? deskByIndex(a.data.deskIndex) ?? null : null
+    const duty = dutyOf({
+      inMeeting,
+      status: st,
+      hasDesk: !!myDesk,
+      isDummy,
+      chatLive: chatLive.has(a.data.name),
+      cronLive,
+    })
+
+    // 0a. KERJA MENGALAHKAN ISTIRAHAT DAN JALAN-JALAN.
+    //
+    // Dulu cabang "resting" (0b) dan "sudah jalan" (4) dievaluasi SEBELUM status kerja, jadi
+    // agent yang duduk di kolam atau sedang berjalan ke gym meneruskannya sampai timer istirahat
+    // habis, padahal task, chat atau cron sudah menunggunya. Pemilik melihatnya sebagai "ada
+    // kerjaan tapi agent-nya santai". Begitu kewajiban berubah ke selain bebas, semuanya
+    // dibatalkan di sini: tujuan, jalur, timer istirahat, dan klaim spot santai (supaya kursi
+    // santainya bisa dipakai orang lain). Hanya saat BERUBAH — kalau setiap frame, badan yang
+    // sudah duduk di meja akan dicabut dari kursinya terus-menerus.
+    if (duty !== a.duty) {
+      if (duty !== 'idle') {
+        a.target = null
+        a.path = []
+        a.destKey = ''
+        a.restUntil = 0
+        a.spotKey = ''
+      }
+      a.duty = duty
+    }
+
     // 0b. a body that has arrived and is resting stays put (and keeps its pose).
     if (a.restUntil > t && !a.path.length) {
       a.target = null
@@ -617,12 +669,10 @@ export function createScene(
       return
     }
 
-    const st = a.data.status
-    const isDummy = a.kind === 'dummy'
+    // Urutan cabang di bawah = urutan prioritas `dutyOf`: rapat > meja > review > bebas.
 
     // 1. meeting wins over everything — but ONLY while it is actually live.
-    const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
-    if (meeting && meetingLive && meeting.participants.includes(a.data.name)) {
+    if (meeting && duty === 'meeting') {
       const idx = meeting.participants.indexOf(a.data.name)
       a.target = meetingSeat(idx)
       a.targetLevel = 1
@@ -635,35 +685,37 @@ export function createScene(
       return
     }
 
-    // 2. reviewer walk: a reviewing agent stands at the author's desk
-    if (!isDummy && st === 'review') {
-      const desk = a.data.deskIndex != null ? deskByIndex(a.data.deskIndex) : null
-      if (desk) {
+    // 2. working: sit at the assigned desk and type. Kanban working/blocked, chat yang hidup,
+    // atau (KEBIJAKAN) cron yang baru jalan — lihat duty.ts.
+    if (duty === 'desk' && myDesk) {
+      const desk = myDesk
+      a.target = deskTarget(desk)
+      // Lantai dari MEJANYA: meja exec ada di ruang CEO, lantai 1.
+      a.targetLevel = desk.level
+      // Klaim kursinya, supaya tidak ada yang memilihnya sebagai spot santai selama ia duduk
+      // (kursi bos juga spot santai, dan cabang 0b mengosongkan `target`).
+      a.spotKey = `${a.target.x.toFixed(1)},${a.target.z.toFixed(1)}`
+      a.seatYaw = deskSeatYaw(desk)
+      a.arrivalFace = deskSeatYaw(desk)
+      a.holdFace = a.arrivalFace
+      a.holdSeat = true
+      a.activity = 'typing'
+      return
+    }
+
+    // 3. reviewer walk: a reviewing agent stands at the author's desk
+    if (duty === 'review' && myDesk) {
+      const desk = myDesk
+      {
         const v = visitorSpot(desk)
         a.target = new THREE.Vector3(v.x, 0, v.z)
-        // every desk is on the ground floor
-        a.targetLevel = 0
+        a.targetLevel = desk.level
         a.activity = 'idle'
         // The reviewer STANDS at the desk and looks at it. Facing, not a seat — this was
         // `a.seatYaw`, which made every reviewing agent ignore furniture on its approach.
         a.arrivalFace = Math.atan2(desk.x - v.x, desk.z - v.z)
         a.holdFace = a.arrivalFace
         a.holdSeat = false
-        return
-      }
-    }
-
-    // 3. working: sit at the assigned desk and type
-    if (!isDummy && (st === 'working' || st === 'review' || st === 'blocked') && a.data.deskIndex != null) {
-      const desk = deskByIndex(a.data.deskIndex)
-      if (desk) {
-        a.target = deskTarget(desk)
-        a.targetLevel = 0
-        a.seatYaw = deskSeatYaw(desk)
-        a.arrivalFace = deskSeatYaw(desk)
-        a.holdFace = a.arrivalFace
-        a.holdSeat = true
-        a.activity = 'typing'
         return
       }
     }
@@ -1253,6 +1305,7 @@ export function createScene(
     syncAvatars,
     setTasks,
     setMeeting,
+    setWork,
     say,
     setHour,
     setQuality,

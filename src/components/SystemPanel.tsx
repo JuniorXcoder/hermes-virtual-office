@@ -23,6 +23,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import FullPanel from './FullPanel'
+import { useOffice } from '@/lib/store'
 
 type UsageRow = {
   model: string
@@ -117,6 +118,7 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
   const [notice, setNotice] = useState<string | null>(null)
   const [appr, setAppr] = useState<Approvals | null>(null)
   const [apprErr, setApprErr] = useState<string | null>(null)
+  const work = useOffice((st) => st.work)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -212,6 +214,29 @@ export default function SystemPanel({ open, onClose }: { open: boolean; onClose:
       )}
 
       {notice && <div className="mb-4 rounded border border-slate-600 bg-slate-800/60 p-2 text-xs">{notice}</div>}
+
+      {/* ---------- kerja di kantor ---------- */}
+      {/* Bukti kenapa agent duduk di mejanya walau papan kosong. Cron ditulis sebagai KEBIJAKAN:
+          Hermes tidak menyimpan pemilik cron, jadi panel tidak menyebut agent untuknya. */}
+      <section className="mb-5">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Kerja di kantor</h3>
+        <div className="space-y-1 rounded border border-slate-700 bg-slate-800/50 p-2 text-xs">
+          <div>
+            chat hidup:{' '}
+            {work.chatLive.length ? <span className="font-mono">{work.chatLive.join(', ')}</span> : <span className="text-slate-500">tidak ada</span>}
+          </div>
+          <div>
+            {work.cron ? (
+              <>
+                cron <span className="font-mono">{work.cron.name}</span> jalan {age(work.cron.agoSec)} lalu —
+                kebijakan: agent yang bebas kembali ke mejanya
+              </>
+            ) : (
+              <span className="text-slate-500">tidak ada cron agent yang jalan dalam 2 menit terakhir</span>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* ---------- persetujuan ---------- */}
       <section className="mb-5">

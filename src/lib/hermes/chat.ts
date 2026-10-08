@@ -224,6 +224,20 @@ function cleanReply(stdout: string): string {
     .trim()
 }
 
+/**
+ * Agent yang turn chat-nya SEDANG berjalan di proses server ini.
+ *
+ * `sendChatMessage` menunggu CLI sampai selesai (bisa ratusan detik kalau agent memakai tools),
+ * dan selama itu `updatedAt` sesi belum berubah — jadi indeks sesi saja tidak bisa bilang
+ * "agent ini sedang bekerja". Hanya proses yang menjalankan CLI yang tahu, maka dicatat di sini.
+ * Hitungan, bukan boolean: dua tab yang mengirim bersamaan tidak boleh saling menghapus.
+ */
+const inFlight = new Map<string, number>()
+
+export function chatTurnsInFlight(): string[] {
+  return [...inFlight.keys()].sort()
+}
+
 export type SendResult = {
   session: ChatSession
   /** The agent's reply, cleaned of CLI decoration. */
@@ -257,7 +271,16 @@ export async function sendChatMessage(
 
   const args = officeChatArgs(profile, text, existing?.id)
 
-  const { stdout, stderr } = await cli(args)
+  inFlight.set(agent, (inFlight.get(agent) ?? 0) + 1)
+  let out: { stdout: string; stderr: string }
+  try {
+    out = await cli(args)
+  } finally {
+    const n = (inFlight.get(agent) ?? 1) - 1
+    if (n > 0) inFlight.set(agent, n)
+    else inFlight.delete(agent)
+  }
+  const { stdout, stderr } = out
   const reply = cleanReply(stdout)
   // The session line arrives on stderr; the answer on stdout. Search both so a
   // future CLI version moving the line does not break this again.

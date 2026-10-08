@@ -2084,7 +2084,9 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
 
   /* ------------------------------------------------------ division rooms -- */
   const deskTopMat = woodMat
-  for (const d of DESKS) {
+  // Hanya meja lantai 0. Meja exec ADALAH meja eksekutif di ruang CEO, yang digambar blok
+  // `CEO suite` di bawah; menggambarnya lagi di sini = meja kedua dan monitor melayang di sana.
+  for (const d of DESKS.filter((x) => x.level === 0)) {
     const g = new THREE.Group()
     g.position.set(d.x, 0, d.z)
     g.rotation.y = d.facing
@@ -2259,9 +2261,17 @@ export function buildOffice(scene: THREE.Scene, hour: number) {
     modesty.position.set(0, S.desk.h - 0.3, S.desk.d / 2 - 0.08)
     desk.add(modesty)
     // monitor menghadap kursi bos (layar ke -z)
-    const mon = box(0.62, 0.36, 0.03, 0x1b1d20, { rough: 0.4 })
+    // Ini juga MONITOR MEJA EXEC (entri DESKS yang menunjuk meja ini): didaftarkan ke `monitors`
+    // supaya bisa diklik (intip layar) dan menyala saat CEO bekerja, seperti monitor meja lain.
+    // Emisif kecil karena scene hanya mengubah `emissiveIntensity` — tanpa warna emisif,
+    // layarnya tidak akan pernah terlihat menyala.
+    const mon = box(0.62, 0.36, 0.03, 0x1b1d20, { rough: 0.4, emissive: 0x1d3b4a, ei: 0.55 })
     mon.position.set(0, S.desk.h + 0.3, 0.18)
     desk.add(mon)
+    for (const d of DESKS.filter((x) => x.level === 1)) {
+      mon.userData = { kind: 'monitor', deskIndex: d.index }
+      monitors[d.index] = mon
+    }
     const monStand = box(0.04, 0.12, 0.04, 0x1b1d20)
     monStand.position.set(0, S.desk.h + 0.06, 0.2)
     desk.add(monStand)

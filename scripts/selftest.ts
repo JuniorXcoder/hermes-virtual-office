@@ -44,7 +44,8 @@ import {
 } from '../src/lib/hermes/verification'
 import { verificationMarkClass, verificationMarkOf } from '../src/components/useVerificationMarks'
 import type { Task } from '../src/types/hermes'
-import { wrapAngle } from '../src/lib/office/layout'
+import { wrapAngle, assignDesks, visitorSpot, CEO_SUITE } from '../src/lib/office/layout'
+import { CHAT_LIVE_MS, CRON_WINDOW_MS, chatLiveAgents, cronPulse, dutyOf } from '../src/lib/office/duty'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -644,10 +645,13 @@ console.log('geometry')
     if (!legs.length) problems.push(`idle spot (${spot.x},${spot.z}) L${spot.level} unreachable`)
   }
 
-  // 3. Every desk must be reachable from the door (same level).
+  // 3. Every desk must be reachable from the door — on ITS OWN floor. Meja exec ada di
+  // lantai 1; menguji rute lantai 0 ke koordinatnya hanya membuktikan ada lantai di bawahnya.
   for (const d of DESKS) {
     const seat = deskSeatWorld(d)
-    const legs = route({ x: DOOR.x, z: DOOR.z - 1.5 }, { x: seat.x, z: seat.z }, 0)
+    const legs = d.level === 0
+      ? route({ x: DOOR.x, z: DOOR.z - 1.5 }, { x: seat.x, z: seat.z }, 0)
+      : routeBetween({ x: DOOR.x, z: DOOR.z - 1.5, level: 0 }, { x: seat.x, z: seat.z, level: d.level })
     if (!legs.length) problems.push(`desk ${d.index} unreachable`)
   }
 
@@ -4515,6 +4519,193 @@ void (async () => {
       problems.length === 0,
       problems.join(' | '),
     )
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SETIAP DIVISI PUNYA MEJA, DAN MEJA EXEC ADALAH KURSI BOS.
+  //
+  // Exec dulu punya nol meja, jadi CEO — satu-satunya agent di kantor — tidak pernah duduk kerja.
+  // Titik duduk meja exec DIUKUR dari mesh kursi bos di scene, bukan dibandingkan dengan konstanta
+  // CEO_SUITE yang juga dipakai untuk menghitungnya (itu hanya membuktikan a === a).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    try {
+      for (const div of ['exec', 'tech', 'growth', 'content'] as const) {
+        if (!desksForDivision(div).length) problems.push(`divisi ${div} tidak punya meja`)
+      }
+      const exec = desksForDivision('exec')[0]
+      if (exec) {
+        if (exec.level !== 1) problems.push(`meja exec di lantai ${exec.level}, bukan lantai ruang CEO`)
+        const seat = deskSeatWorld(exec)
+        const scene = new THREE.Scene()
+        const office = buildOffice(scene, 12)
+        scene.updateMatrixWorld(true)
+        const chair = scene.getObjectByName('ceo-boss-chair')
+        const deskO = scene.getObjectByName('ceo-desk')
+        if (!chair || !deskO) problems.push('kursi bos / meja CEO tidak ada di scene')
+        else {
+          const c = new THREE.Vector3().setFromMatrixPosition(chair.matrixWorld)
+          const gap = Math.hypot(c.x - seat.x, c.z - seat.z)
+          if (gap > 0.05) {
+            problems.push(`titik duduk meja exec (${seat.x.toFixed(2)}, ${seat.z.toFixed(2)}) ${gap.toFixed(2)} m dari kursi bos (${c.x.toFixed(2)}, ${c.z.toFixed(2)})`)
+          }
+          if (Math.abs(c.y - exec.level * LEVEL_H) > 0.05) problems.push(`kursi bos di y ${c.y.toFixed(2)}, meja exec mengaku lantai ${exec.level}`)
+          // Arah duduk: menghadap meja (selatan), sama dengan arah kursi bos.
+          const mx = exec.x - 0.28 * Math.sin(exec.facing)
+          const mz = exec.z - 0.28 * Math.cos(exec.facing)
+          const yaw = Math.atan2(mx - seat.x, mz - seat.z)
+          if (Math.abs(wrapAngle(yaw - CEO_SUITE.bossChair.facing)) > 0.05) problems.push(`agent di meja exec menghadap ${yaw.toFixed(2)}, bukan ke meja`)
+          // Monitor meja exec = monitor yang benar-benar berdiri di atas meja CEO.
+          const mon = office.monitors[exec.index]
+          if (!mon) problems.push('meja exec tidak punya monitor (tidak bisa diintip, tidak menyala)')
+          else {
+            const db = new THREE.Box3().setFromObject(deskO, true)
+            const m = new THREE.Vector3().setFromMatrixPosition(mon.matrixWorld)
+            let anc: THREE.Object3D | null = mon
+            while (anc && anc !== deskO) anc = anc.parent
+            if (!anc) problems.push('monitor meja exec bukan bagian dari meja CEO')
+            if (m.x < db.min.x || m.x > db.max.x || m.z < db.min.z || m.z > db.max.z || m.y < db.min.y + 0.7) {
+              problems.push(`monitor meja exec di (${m.x.toFixed(2)}, ${m.y.toFixed(2)}, ${m.z.toFixed(2)}), tidak di atas meja CEO`)
+            }
+            if ((mon.userData as { deskIndex?: number }).deskIndex !== exec.index) problems.push('monitor meja exec tidak membawa deskIndex-nya')
+          }
+          // Tidak ada meja duplikat: tepat SATU monitor berdiri di ruang CEO, dan tidak ada
+          // footprint meja generik untuk meja exec.
+          const inCeo = office.monitors.filter((x) => {
+            if (!x) return false
+            const p = new THREE.Vector3().setFromMatrixPosition(x.matrixWorld)
+            return insideCeoRoom(p.x, p.z) && p.y > LEVEL_H
+          })
+          if (inCeo.length !== 1) problems.push(`${inCeo.length} monitor di ruang CEO, harus tepat 1`)
+          if (FOOTPRINTS.some((f) => f.id === `desk-${exec.index}` || f.id === `chair-${exec.index}`)) {
+            problems.push('meja exec mendapat footprint meja generik juga — dua meja di satu tempat')
+          }
+          // Reviewer berdiri di tempat yang bisa diinjak, di dalam ruang CEO.
+          const v = visitorSpot(exec)
+          if (!insideCeoRoom(v.x, v.z)) problems.push('titik berdiri reviewer meja exec di luar ruang CEO')
+          if (blocked(v.x, v.z, BODY_R, { level: 1 })) problems.push(`titik berdiri reviewer meja exec (${v.x}, ${v.z}) tertutup perabot`)
+        }
+      }
+    } catch (e) {
+      problems.push(`THREW: ${(e as Error).message}`)
+    }
+    check('every division has a desk, and the exec desk seat IS the boss chair (measured from the mesh)', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // TIDAK ADA `deskIndex: null` SELAMA MASIH ADA MEJA KOSONG YANG BOLEH DIPAKAI.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    type M = { name: string; division: 'exec' | 'tech' | 'growth' | 'content'; role: AgentRole; busy: boolean }
+    const exec = desksForDivision('exec')[0]
+    // Roster yang sebenarnya hari ini: satu CEO di divisi exec.
+    const solo = assignDesks([{ name: 'jun', division: 'exec', role: 'ceo', busy: false }])
+    if (solo.get('jun') !== exec?.index) problems.push(`CEO tunggal mendapat meja ${solo.get('jun')}, bukan meja exec ${exec?.index}`)
+    // Kolam tech habis → orang ke-4 tumpah ke meja kosong pertama sesuai urutan (growth, index terkecil).
+    const techs: M[] = ['a', 'b', 'c', 'd'].map((n) => ({ name: n, division: 'tech', role: 'backend', busy: false }))
+    const t4 = assignDesks(techs)
+    const firstGrowth = desksForDivision('growth')[0].index
+    if (t4.get('d') !== firstGrowth) problems.push(`tech ke-4 mendapat ${t4.get('d')}, bukan meja growth kosong ${firstGrowth}`)
+    // Yang punya kerja didahulukan: 'd' sibuk → ia yang dapat meja tech.
+    const busyFirst = assignDesks(techs.map((m) => ({ ...m, busy: m.name === 'd' })))
+    if (desksForDivision('tech').every((d) => d.index !== busyFirst.get('d'))) problems.push('agent yang punya kerja tidak didahulukan untuk meja divisinya')
+    // Deterministik: urutan masukan tidak mengubah hasil.
+    const rev = assignDesks([...techs].reverse())
+    if (techs.some((m) => rev.get(m.name) !== t4.get(m.name))) problems.push('pembagian meja bergantung pada urutan masukan')
+    // Orchestrator exec tidak boleh masuk ruang CEO → tidak diberi meja CEO, tapi tetap dapat meja.
+    const orch = assignDesks([{ name: 'o', division: 'exec', role: 'orchestrator', busy: false }])
+    if (orch.get('o') == null || orch.get('o') === exec?.index) problems.push(`orchestrator exec mendapat ${orch.get('o')}`)
+    // Penuh: 10 orang (CEO + 9 staf) → semua dapat meja, tidak ada null.
+    const full: M[] = [
+      { name: 'ceo', division: 'exec', role: 'ceo', busy: false },
+      ...Array.from({ length: 9 }, (_, i) => ({ name: `s${i}`, division: 'content' as const, role: 'content' as AgentRole, busy: i % 2 === 0 })),
+    ]
+    const fm = assignDesks(full)
+    const nulls = full.filter((m) => fm.get(m.name) == null).map((m) => m.name)
+    if (nulls.length) problems.push(`null padahal masih ada meja: ${nulls.join(', ')}`)
+    if (new Set(fm.values()).size !== full.length) problems.push('dua agent mendapat meja yang sama')
+    check('desk assignment: own division first, then any free desk — never null while a usable desk is free', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // KERJA MENGALAHKAN ISTIRAHAT DAN JALAN-JALAN.
+  //
+  // Prioritasnya diuji pada fungsi murninya (scene butuh WebGL), lalu URUTAN-nya di retarget()
+  // diuji pada kodenya: kesalahan aslinya bukan aturan yang keliru, tapi aturan yang tidak
+  // pernah sempat dibaca karena cabang istirahat `return` lebih dulu.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const base = { inMeeting: false, status: 'idle' as const, hasDesk: true, isDummy: false, chatLive: false, cronLive: false }
+    const want = (label: string, got: string, exp: string) => {
+      if (got !== exp) problems.push(`${label}: ${got}, harus ${exp}`)
+    }
+    want('bebas', dutyOf(base), 'idle')
+    want('kanban working', dutyOf({ ...base, status: 'working' }), 'desk')
+    want('kanban blocked', dutyOf({ ...base, status: 'blocked' }), 'desk')
+    want('kanban review', dutyOf({ ...base, status: 'review' }), 'review')
+    want('chat hidup', dutyOf({ ...base, chatLive: true }), 'desk')
+    want('chat hidup saat review', dutyOf({ ...base, status: 'review', chatLive: true }), 'desk')
+    want('cron (kebijakan) saat bebas', dutyOf({ ...base, cronLive: true }), 'desk')
+    want('cron saat review', dutyOf({ ...base, status: 'review', cronLive: true }), 'review')
+    want('rapat mengalahkan kerja', dutyOf({ ...base, status: 'working', chatLive: true, inMeeting: true }), 'meeting')
+    want('dummy tidak bekerja', dutyOf({ ...base, isDummy: true, status: 'working', chatLive: true, cronLive: true }), 'idle')
+    want('tanpa meja tidak ke meja', dutyOf({ ...base, hasDesk: false, status: 'working' }), 'idle')
+
+    // sumber: chat diatribusikan per agent; cron TIDAK
+    const now = Date.parse('2026-10-08T06:00:00Z')
+    const iso = (msAgo: number) => new Date(now - msAgo).toISOString()
+    const live = chatLiveAgents(
+      [
+        { agent: 'jun', updatedAt: iso(30_000) },
+        { agent: 'lama', updatedAt: iso(CHAT_LIVE_MS + 1000) },
+      ],
+      ['sedang-jalan'],
+      now,
+    )
+    if (live.join(',') !== 'jun,sedang-jalan') problems.push(`chat hidup terbaca ${JSON.stringify(live)}`)
+    const pulse = cronPulse(
+      [
+        { name: 'skrip', noAgent: true, lastRunAt: iso(5_000) },
+        { name: 'watchdog', noAgent: false, lastRunAt: '2026-10-08T12:59:30+07:00' },
+        { name: 'kuno', noAgent: false, lastRunAt: iso(CRON_WINDOW_MS + 1000) },
+        { name: 'masa-depan', noAgent: false, lastRunAt: iso(-60_000) },
+      ],
+      now,
+    )
+    if (pulse?.name !== 'watchdog' || pulse.agoSec !== 30) problems.push(`cron pulse terbaca ${JSON.stringify(pulse)}`)
+    if (pulse && Object.keys(pulse).some((k) => /agent|owner|profile/i.test(k))) problems.push('cron pulse mengaku tahu pemiliknya')
+    if (cronPulse([{ name: 'kuno', noAgent: false, lastRunAt: iso(CRON_WINDOW_MS + 1000) }], now) !== null) problems.push('cron lama masih dianggap baru jalan')
+
+    // urutan di retarget()
+    const src = readFileSync(new URL('../src/lib/office/scene.ts', import.meta.url), 'utf8')
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    const body = code.slice(code.indexOf('function retarget('))
+    const at = (re: RegExp) => body.search(re)
+    const dutyAt = at(/const duty = dutyOf\(/)
+    const switchAt = at(/if \(duty !== a\.duty\) \{\s*if \(duty !== 'idle'\) \{/)
+    const restAt = at(/if \(a\.restUntil > t && !a\.path\.length\)/)
+    const underwayAt = at(/if \(a\.target && a\.path\.length\) return/)
+    const anchoredAt = at(/if \(a\.anchored\)/)
+    const leavingAt = at(/if \(a\.leaving\)/)
+    if (dutyAt < 0 || switchAt < 0) problems.push('retarget() tidak mengevaluasi kewajiban sama sekali')
+    else {
+      if (!(switchAt < restAt)) problems.push('cabang istirahat dievaluasi SEBELUM kerja — badan di kolam tidak akan berdiri')
+      if (!(switchAt < underwayAt)) problems.push('cabang "sudah jalan" dievaluasi SEBELUM kerja')
+      if (!(anchoredAt < switchAt && leavingAt < switchAt)) problems.push('kerja dievaluasi sebelum anchored/leaving — resepsionis bisa dikirim ke meja')
+      const sw = body.slice(switchAt, restAt)
+      for (const need of [/a\.target = null/, /a\.path = \[\]/, /a\.restUntil = 0/, /a\.spotKey = ''/]) {
+        if (!need.test(sw)) problems.push(`awal kerja tidak membatalkan ${need.source}`)
+      }
+    }
+    const order = ['duty === \'meeting\'', 'duty === \'desk\'', 'duty === \'review\'', 'a.target && a.path.length'].map((k) => body.indexOf(k))
+    if (order.some((x) => x < 0) || order.some((x, i) => i > 0 && x < order[i - 1])) {
+      problems.push(`urutan cabang bukan rapat > meja > review > bebas (${order.join(',')})`)
+    }
+    if (/a\.targetLevel = 0\s*\n\s*a\.seatYaw = deskSeatYaw/.test(code)) problems.push('meja dikirim ke lantai 0 tanpa melihat lantai mejanya')
+    check('work beats rest and wander: meeting > desk > review > idle, chat per agent, cron only as policy', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */
