@@ -483,6 +483,7 @@ export async function POST(req: NextRequest) {
       // (false), bukan klaim. rm force:true tidak error untuk yang hilang,
       // jadi keberadaan dicek dulu lewat readdir.
       let dirRemoved = false
+      let dirError: string | null = null
       try {
         const { hermesHome } = await import('@/lib/hermes/kanban')
         const dir = path.join(hermesHome(), 'profiles', name)
@@ -492,7 +493,7 @@ export async function POST(req: NextRequest) {
           dirRemoved = true
         }
       } catch (err) {
-        a2aError = a2aError ?? `sisa direktori gagal dibersihkan: ${(err as Error).message}`
+        dirError = (err as Error).message
       }
       return NextResponse.json({
         success: true,
@@ -509,6 +510,8 @@ export async function POST(req: NextRequest) {
         avatarRemoved,
         /** Sisa direktori `profiles/<nama>/` dibersihkan? */
         dirRemoved,
+        /** Gagal membersihkan sisa direktori (null = tidak ada kegagalan). */
+        dirError,
         /**
          * Jujur soal waktu berlaku: daftar served-agent dibaca SEKALI saat
          * gateway boot — pencabutan baru berlaku setelah gateway di-restart.
