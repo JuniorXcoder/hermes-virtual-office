@@ -63,10 +63,16 @@ below — so it works against any local Hermes install without a bespoke API lay
 - **The caller's avatar walks to the callee's desk** while the conversation is live. If the peer has no desk, the trip is cancelled rather than sent to a place that does not exist.
 - **Honest discovery**: asking "who owns this domain?" returns `null` when nobody owns it. The office displays that as-is and never invents an owner.
 - **Loopback only.** The A2A server binds `127.0.0.1`; it is not reachable from the network.
+- **Spawning registers A2A automatically.** Creating an agent from the office (avatar slot / spawn panel) writes the served entry (`local: false`) plus the `a2a_agents` peer entries through the same writers the CLI path uses (`ensureA2aPeer`, called from `POST /api/hermes/agents` in `src/app/api/hermes/agents/route.ts`). Each row carries an **A2A Ready** checklist with three honest states — ✅ ready (registered *and* the gateway restarted after it), 🟡 registered but not yet active, ❌ not registered (`src/components/AgentSpawnPanel.tsx`).
+- **A restart notice, not a silent green light.** After a successful registration the UI pops "please restart the server" (`src/components/RestartNotice.tsx`) with a restart button that schedules it via `POST /api/hermes/gateway-restart` — or shows a copyable manual command when scheduling fails. Why restart is needed: the served list is read once at gateway boot, with no hot reload (`docs/DEPLOYMENT.md` §7.7 item 3).
+- **`kill` deletes cleanly.** `action: "kill"` deletes the profile and purges its tasks, then removes the served entry, the `a2a_agents` peers (global scope plus other served profiles), the `agent:<name>` avatar row, and any leftover `profiles/<name>/` directory (the `kill` branch in `src/app/api/hermes/agents/route.ts`). Cleanup failures are reported, not hidden — and served/peer removal only takes effect after a gateway restart.
 
 ### 3. Multi-Agent AI Meeting Room
 
 - Trigger collaborative discussions between 2 to 4 agents on any topic.
+- **Two honest modes.** `simulasi` — the gateway LLM speaks, **not** the agents (the old behaviour, labelled as such). `a2a` — real agents take turns over the A2A protocol (`MeetingMode` in `src/lib/hermes/meeting-a2a.ts`, mode radio in `src/components/MeetingPanel.tsx`). Pick participants in the meeting panel; each participant **must be served** or the meeting is refused, naming who is not served (`assertA2aParticipants` in `src/lib/hermes/meeting-a2a.ts`). Mode `a2a` needs no `AI_BASE_URL`/`AI_API_KEY`; mode `simulasi` does.
+- **Transcripts outlive the app.** Every meeting is archived to `data/meetings/` (see `DATA_DIR` in `src/lib/hermes/meeting.ts`), with its mode stamped on the archive. Mode-`a2a` archives also list the `ctx-*` session ids, so each turn can be verified verbatim against `hermes sessions export`. A live meeting can be cancelled from the panel — the archive is then marked **DIBATALKAN** (cancelled) instead of finished, noting at which turn it stopped (`POST /api/hermes/meeting/cancel`).
+- **Still limited, stated plainly.** A turn that a peer fails to answer is recorded as a `GAGAL` turn, never invented by the LLM (`src/lib/hermes/meeting-a2a.ts`). The reverse direction of a call depends on the callee actually owning the `a2a` toolset — see the doctor check below.
 - **Room routing by division** — a single division meets in its own room, an exec-heavy meeting takes another, and a cross-division meeting takes the ten-seat room. Rooms are not random.
 - **Speech bubbles & gestures**: CSS2D balloons synchronized with the active speaker.
 - **Auto-generated minutes** containing **Decisions**, **Action Items** and **Identified Risks**, with a parser stable enough to survive a heading rewrite.
@@ -88,6 +94,8 @@ stores the thread in its memory. The **Agent** panel creates a profile the same 
 ```bash
 hermes profile create <name> --no-skills
 ```
+
+**Picking a model also copies the provider definition.** The model picker lists real providers from `hermes config get custom_providers --json` (`listCustomProviders` / `providersToModels` in `src/lib/hermes/kanban.ts`), and choosing a model writes both the model and its provider into the profile (`setProfileModel` in `src/lib/hermes/kanban.ts`, called from `POST /api/hermes/agents`). Without that copy the agent dies with `Unknown provider` even though a default model is set — the doctor's `model-providers` check watches for exactly this (`src/lib/hermes/doctor.ts`).
 
 Each agent's **Description** becomes the text other agents see when they discover it, and
 **Keahlian / domain** is a domain map used by the office to work out who owns what. That map
@@ -111,7 +119,68 @@ The office is meant to be where you *run* the fleet, so the controls refuse to l
 - **Per-agent limits**, and **every refusal is audited.** A staff agent attempting a
   privileged action is refused *and* the refusal is written down.
 
-### 7. Three View Modes, Fullscreen Panels, Mobile-Friendly
+### 7. "Siap pakai?" health panel & self-repair
+
+The office refuses to show a green light it cannot prove. The **Siap pakai?**
+panel (`src/components/DoctorPanel.tsx`, read-only `GET /api/hermes/doctor` →
+`runDoctor` in `src/lib/hermes/doctor.ts`) runs a dozen checks; every check
+returns `pass`, `fail`, or `unknown` ("tidak bisa dipastikan" — reported, never
+forced green).
+
+| Check (`id`) | pass means | fail means | unknown means |
+|---|---|---|---|
+| Hermes CLI ketemu & bisa dipanggil (`cli`) | binary runs | binary missing/broken | — |
+| Board bisa dibaca (`board`) | kanban readable via CLI | board unreadable | — |
+| Profil agent ada (`profiles`) | ≥ 1 profile | none | profile list unreadable |
+| Profil punya model (`models`) | every profile has a default model | some profile has none | unreadable |
+| Provider model bisa diresolusi (`model-providers`) | each profile's `custom:<name>` provider has a matching definition (copied by the model picker) | dangling provider — chat to it dies with `Unknown provider` | provider definitions unreadable |
+| Provider LLM rapat simulasi (`simulasi`) | `AI_BASE_URL` + `AI_API_KEY` set | not configured — `simulasi` meetings refuse with "not configured" | — |
+| Platform A2A nyala (`a2a-platform`) | `platforms.a2a` enabled with a port (no token → loopback only) | disabled / no port | config unreadable |
+| Agen yang di-serve (`served`) | fresh entries, all `local: false` | stale entries (profile gone), `local: true` (wrong identity), or nothing served | served list unreadable |
+| Butuh restart gateway? (`restart`) | gateway started after `config.yaml` changed — stored served entries are live | config newer than gateway start — entries stored but NOT yet active | gateway start time unreadable |
+| Origin boleh menulis (`origin`) | request origin allowed to write | blocked origin attempting a write | — |
+| Agent bisa memanggil, toolset a2a (`caller`) | every served agent owns the `a2a` toolset (can be called *and* can call) | some served agent is mute: callable but cannot call anyone (one-way meetings) | toolset list unreadable, or nothing served to judge |
+| Nama agent bisa diresolusi, peer a2a_agents (`peers`) | each served agent has a resolvable `<name>-local` peer | missing peer — `a2a_call("name")` fails with `unknown agent` | peer list unreadable |
+| A2A menolak path tak dikenal (`fallthrough`) | POST to an unknown path is rejected (`no agent is served at`), GET is 404 | unknown paths fall through to the default agent — misleading | A2A port unreachable |
+
+**Self-repair: preview first, then run, then doctor-after.** The same panel
+offers `pratinjau perbaikan` (read-only `GET /api/hermes/selfrepair` →
+`previewRepairs` in `src/lib/hermes/selfrepair.ts`) and, only after the operator
+approves, `POST` runs the repairs (`runRepairs`) and re-runs the doctor so the
+new state is shown — not claimed. It sweeps seven kinds of rot, idempotently
+(healthy state → nothing changes): stale served entries, avatar bodies without
+a profile, duplicate avatar rows, leftover profile directories, dangling
+providers, missing `a2a` toolsets, missing `a2a_agents` peers. What it *cannot*
+fix is returned as `unfixable` with the reason ("tidak bisa dipastikan …"),
+never forced.
+
+**Hermes-side contract.** Some checks only pass because Hermes itself behaves a
+certain way — the served list read once at boot, `local: false` required, the
+unknown-path rejection. Those behaviours live in Hermes, not here; the
+re-installable patch and the five-item contract are documented at
+[docs/patches/hermes-a2a-unknown-path-404.README.md](docs/patches/hermes-a2a-unknown-path-404.README.md)
+and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) §7.7 "Kontrak Hermes yang
+dibutuhkan". Read those two before blaming the office for a red check.
+
+**Check it yourself** (proof, not promises — replace `3000` with the port the
+office actually serves):
+
+```bash
+curl -s http://127.0.0.1:3000/api/hermes/doctor | python3 -m json.tool
+curl -s http://127.0.0.1:3000/api/hermes/selfrepair | python3 -m json.tool
+# unknown A2A path must be REJECTED, not answered (needs docs/patches/ applied):
+curl -s -X POST http://127.0.0.1:9900/zz-tidak-ada \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"cek","method":"message/send","params":{"message":{"role":"user","parts":[{"text":"ping"}]}}}'
+# a meeting turn, verbatim against the session store (<ctx-id> from the archive):
+hermes sessions export --format jsonl --source a2a | grep <ctx-id>
+# toolsets an agent card may advertise (the real list, not a label):
+hermes tools list --platform cli
+# providers the model picker copies from:
+hermes config get custom_providers --json
+```
+
+### 8. Three View Modes, Fullscreen Panels, Mobile-Friendly
 
 - **3D** isometric mode, an accessible **Kanban** board, and a low-cost **Sprite** mode for
   machines that should not render a full scene.
@@ -123,7 +192,7 @@ The office is meant to be where you *run* the fleet, so the controls refuse to l
   without it a notched phone reports `env(safe-area-inset-*)` as `0` and the chat input ends up
   under the keyboard.
 
-### 8. Talks to the Hermes CLI, not a private schema
+### 9. Talks to the Hermes CLI, not a private schema
 
 - Drives the board through `hermes kanban ... --json`, and A2A history through
   `hermes sessions export --format jsonl --source a2a`, the CLI's documented surface, rather
@@ -220,7 +289,9 @@ The office is a thin UI over Hermes, with one server layer in between:
 │                  /api/hermes/tasks/{id}/verification       │
 │                  /api/hermes/board · /approvals            │
 │  agents          /api/hermes/agents · /models · /toolsets  │
-│  meetings        /api/hermes/meeting[/actions]             │
+│  health          /api/hermes/doctor · /api/hermes/selfrepair     │
+│                  /api/hermes/gateway-restart                    │
+│  meetings        /api/hermes/meeting[/actions][/cancel]         │
 │  agent-to-agent  /api/hermes/a2a/live · /a2a/transcript    │
 │  operations      /api/hermes/cron[/actions] · /chat        │
 │                  /api/hermes/control · /observability      │
@@ -288,7 +359,7 @@ Two commands cover the invariants a screenshot cannot:
 
 ```bash
 npm run typecheck   # types, including the layout and pose tables
-npm run selftest    # 102 measured invariants
+npm run selftest    # 112 measured invariants
 ```
 
 `npm run selftest` asserts what actually broke while this was built. It covers four kinds of
