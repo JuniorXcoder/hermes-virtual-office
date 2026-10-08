@@ -1646,6 +1646,17 @@ void (async () => {
       if (!a1 || a1.x !== 9 || a1.z !== 8 || a1.level !== 1 || a1.activity !== 'coffee') {
         problems.push(`avatar not updated: ${JSON.stringify(a1)}`)
       }
+      // KILL-BERSIH-1: deleteAvatar menghapus baris `agent:<nama>`; nama
+      // lain utuh; nama tak ada = false (bukan error).
+      db.saveAvatars([
+        { avatarId: 'agent:zz-kill', name: 'zz-kill', division: 'tech', kind: 'agent', x: 1, z: 1, level: 0, activity: 'idle', facing: 0, spawned: true, anchored: false },
+      ])
+      if (!db.deleteAvatar('agent:zz-kill')) problems.push('deleteAvatar tidak melaporkan true')
+      if (db.listAvatars().some((a) => a.avatarId === 'agent:zz-kill')) {
+        problems.push('baris avatar tercabut masih ada')
+      }
+      if (db.deleteAvatar('agent:zz-tidak-ada')) problems.push('avatar tak ada dilaporkan terhapus')
+      if (db.listAvatars().length !== 1) problems.push('baris lain ikut hilang saat menghapus avatar')
     } catch (e) {
       problems.push(`THREW: ${(e as Error).message}`)
     } finally {
@@ -4809,6 +4820,33 @@ void (async () => {
       await upsertServedAgent({ slug: 'zz-selftest', description: 'v2', advertisedToolsets: [] })
       const twice = (await listServedAgents()).filter((x) => x.slug === 'zz-selftest')
       if (twice.length !== 1 || twice[0].description !== 'v2') problems.push('upsert kedua duplikat/bukan timpa')
+      // 6. KILL-BERSIH-1: removeServedAgent mencabut SATU entri; yang lain
+      // utuh; reader tetap membaca sisa; nama tak terdaftar = removed:false
+      // (bukan error); indentasi 6/8 spasi tetap (reader buta bila bergeser).
+      await upsertServedAgent({ slug: 'zz-selftest-2', description: 'kedua', advertisedToolsets: [] })
+      const { removeServedAgent } = await import('../src/lib/hermes/a2a-served')
+      const rr = await removeServedAgent('zz-selftest')
+      if (!rr.removed) problems.push('remove tidak melaporkan removed:true')
+      else {
+        if (!existsSync(rr.backupPath)) problems.push('remove tidak membuat backup')
+        const left = await listServedAgents()
+        if (left.some((x) => x.slug === 'zz-selftest')) problems.push('entri tercabut masih terbaca')
+        const keep = left.find((x) => x.slug === 'zz-selftest-2')
+        if (!keep) problems.push('entri lain ikut hilang saat mencabut')
+        else if (keep.description !== 'kedua' || keep.local !== false) {
+          problems.push(`entri lain berubah: ${JSON.stringify(keep)}`)
+        }
+        const rawAfter: string = readFileSync(cfg, 'utf8')
+        const slugLines: string[] = rawAfter.split('\n').filter((l: string) => l.includes('- slug:'))
+        const bad: string[] = slugLines.filter((l: string) => !l.startsWith('      - slug:'))
+        if (bad.length) problems.push(`indentasi slug bergeser: ${JSON.stringify(bad)}`)
+      }
+      const miss = await removeServedAgent('zz-tidak-ada')
+      if (miss.removed) problems.push('nama tak terdaftar dilaporkan tercabut')
+      const afterRm: string = readFileSync(cfg, 'utf8')
+      if (!afterRm.includes('  telegram:\n    - a2a') || !afterRm.includes('port: 9900')) {
+        problems.push('kunci lain berubah saat mencabut agents')
+      }
     } finally {
       setServedAgentsConfigPath(null)
       rmSync(dir, { recursive: true, force: true })

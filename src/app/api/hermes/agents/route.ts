@@ -16,7 +16,10 @@ import { assertLocalWriteRequest } from '@/lib/local-guard'
 import type { AgentDivision, AgentRole } from '@/types/hermes'
 import { ROLE_LABEL, soulFor } from '@/lib/hermes/soul'
 import { parseDomains, ownersForDomains } from '@/lib/hermes/a2a'
-import { listServedAgents, upsertServedAgent } from '@/lib/hermes/a2a-served'
+import { listServedAgents, removeServedAgent, upsertServedAgent } from '@/lib/hermes/a2a-served'
+import { deleteAvatar } from '@/lib/office/db'
+import { readdir, rm } from 'node:fs/promises'
+import path from 'node:path'
 import { blockedAssigneesFor } from '@/lib/hermes/approvals'
 import { agentPermissionSummary, checkAgentAction, type AgentActionKind } from '@/lib/hermes/control'
 import { denyAudit } from '@/lib/hermes/audit'
@@ -457,6 +460,40 @@ export async function POST(req: NextRequest) {
       // Clear any membership entry: a stale entry would block a future profile
       // that reuses the name.
       show(name)
+      // KILL-BERSIH-1: kill = hapus juga dari kantor. Tiga pembersihan di
+      // bawah ini TIDAK membatalkan kill bila gagal — profilnya sudah
+      // terhapus, jadi kegagalan di sini dilaporkan jujur (bukan 502).
+      // 1. Cabut entri A2A (tidak terdaftar = hasil sah, bukan error).
+      let a2aRemoved: boolean | null = null
+      let a2aError: string | null = null
+      try {
+        a2aRemoved = (await removeServedAgent(name)).removed
+      } catch (err) {
+        a2aRemoved = false
+        a2aError = (err as Error).message
+      }
+      // 2. Hapus baris avatar `agent:<nama>` — badannya keluar dari kantor
+      // (scene menandai yang hilang sebagai leaving, lalu despawn di pintu).
+      const avatarRemoved = deleteAvatar(`agent:${name}`)
+      // 3. Bersihkan sisa direktori profil yang ditinggalkan
+      // `hermes profile delete` (tombstone + cache). deleteProfile di atas
+      // sudah menghapus profilnya; yang dibersihkan di sini hanyalah sisa
+      // yang membuat direktori `profiles/<nama>/` masih terlihat ada.
+      // Jujur: bila direktori sudah tidak ada, tidak ada yang dibersihkan
+      // (false), bukan klaim. rm force:true tidak error untuk yang hilang,
+      // jadi keberadaan dicek dulu lewat readdir.
+      let dirRemoved = false
+      try {
+        const { hermesHome } = await import('@/lib/hermes/kanban')
+        const dir = path.join(hermesHome(), 'profiles', name)
+        const entries = await readdir(dir).catch(() => null)
+        if (entries !== null) {
+          await rm(dir, { recursive: true, force: true })
+          dirRemoved = true
+        }
+      } catch (err) {
+        a2aError = a2aError ?? `sisa direktori gagal dibersihkan: ${(err as Error).message}`
+      }
       return NextResponse.json({
         success: true,
         action,
@@ -465,6 +502,22 @@ export async function POST(req: NextRequest) {
         deleted: hasProfile,
         /** How many of its tasks were removed from the board. */
         purged,
+        /** Entri A2A tercabut? null = langkah dilewati (profil tak ada dari awal). */
+        a2aRemoved: hasProfile ? a2aRemoved : null,
+        a2aError,
+        /** Baris avatar `agent:<nama>` terhapus dari kantor? */
+        avatarRemoved,
+        /** Sisa direktori `profiles/<nama>/` dibersihkan? */
+        dirRemoved,
+        /**
+         * Jujur soal waktu berlaku: daftar served-agent dibaca SEKALI saat
+         * gateway boot — pencabutan baru berlaku setelah gateway di-restart.
+         * Sampai itu, path A2A-nya masih dijawab server yang sedang jalan.
+         */
+        a2aNote:
+          a2aRemoved === true
+            ? 'Tercabut dari config. Berlaku setelah gateway di-restart — sampai itu, path A2A-nya masih dijawab.'
+            : null,
         hidden: hiddenNames(),
       })
     }

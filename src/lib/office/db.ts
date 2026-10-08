@@ -140,6 +140,21 @@ export function listAvatars(): AvatarState[] {
 }
 
 /**
+ * Hapus SATU baris avatar (`kill` membersihkan badan dari kantor).
+ *
+ * Id avatar agent = `agent:<nama>` (lihat syncAvatars di scene.ts:
+ * baris sintetis memakai id itu). `default` tidak pernah punya baris —
+ * false untuk nama itu adalah hasil sah, bukan error. Mengembalikan true
+ * hanya bila sebuah baris benar-benar terhapus.
+ */
+export function deleteAvatar(avatarId: string): boolean {
+  const clean = avatarId.trim()
+  if (!clean) return false
+  const r = officeDb().prepare(`DELETE FROM avatar_state WHERE avatar_id = ?`).run(clean) as { changes: number }
+  return Number(r?.changes ?? 0) > 0
+}
+
+/**
  * Batch upsert. The scene calls this every few seconds for every avatar, so it
  * runs inside ONE transaction — a per-avatar round trip was measurably wasteful
  * and left the file open for longer than it needed to be.

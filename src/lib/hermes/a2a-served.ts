@@ -216,3 +216,79 @@ export async function upsertServedAgent(opts: {
   await writeFile(cfgPath, lines.join('\n'), 'utf8')
   return { backupPath, entry }
 }
+
+/**
+ * Cabut SATU entri served-agent dari `platforms.a2a.agents`.
+ *
+ * Aturan tulis SAMA dengan upsert: backup dulu, blok lain byte-per-byte.
+ * Nama yang tidak terdaftar = bukan error: mengembalikan removed:false
+ * (""tidak ada yang dicabut"" adalah hasil yang sah).
+ *
+ * Serupa upsert, pencocokan slug menerima bentuk dikutip (`- slug: 'x'`,
+ * tulisan office) maupun polos (`- slug: x`, tulisan `hermes config set`).
+ */
+export async function removeServedAgent(slug: string): Promise<{ backupPath: string; removed: boolean }> {
+  const clean = slug.trim().toLowerCase()
+  const cfgPath = configPath()
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const backupPath = `${cfgPath}.bak-a2a3-${stamp}`
+  await copyFile(cfgPath, backupPath)
+  const raw = await readFile(cfgPath, 'utf8')
+  const lines = raw.split('\n')
+  // Blok daftar yang sama dengan upsert: di bawah `    agents:` dalam
+  // konteks `platforms:` → `a2a:`.
+  let agentsIdx = -1
+  let inPlatforms = false
+  let inA2a = false
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^platforms:\s*$/.test(line)) {
+      inPlatforms = true
+      inA2a = false
+      continue
+    }
+    if (inPlatforms && /^[a-z_]+:\s*(.*)$/.test(line) && !/^\s/.test(line)) {
+      inPlatforms = false
+      inA2a = false
+      continue
+    }
+    if (inPlatforms && /^  a2a:\s*$/.test(line)) {
+      inA2a = true
+      continue
+    }
+    if (inA2a && /^  [a-z_]+:\s*$/.test(line)) {
+      inA2a = false
+      continue
+    }
+    if (inA2a && /^    agents:\s*(\[\])?\s*$/.test(line)) {
+      agentsIdx = i
+      break
+    }
+  }
+  if (agentsIdx < 0) return { backupPath, removed: false }
+  const headerLine = lines[agentsIdx]
+  if (/\[\]/.test(headerLine)) return { backupPath, removed: false }
+  let at = -1
+  let end = -1
+  let i = agentsIdx + 1
+  while (i < lines.length && (/^      - slug:/.test(lines[i]) || /^        /.test(lines[i]) || lines[i].trim() === '')) {
+    if (lines[i].startsWith('      - slug:')) {
+      const slugM = /^      - slug: (?:'(.*)'|(\S+))$/.exec(lines[i])
+      const got = slugM ? (slugM[1] ?? slugM[2]).replace(/''/g, "'") : null
+      let j = i + 1
+      while (j < lines.length && /^        /.test(lines[j])) j++
+      if (got === clean) {
+        at = i
+        end = j
+        break
+      }
+      i = j
+      continue
+    }
+    i++
+  }
+  if (at < 0) return { backupPath, removed: false }
+  lines.splice(at, end - at)
+  await writeFile(cfgPath, lines.join('\n'), 'utf8')
+  return { backupPath, removed: true }
+}
