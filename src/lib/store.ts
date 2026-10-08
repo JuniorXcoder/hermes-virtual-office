@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import type { Agent, ArchivedMeeting, Meeting, Task } from '@/types/hermes'
 import type { AvatarState } from './office/types'
 import type { Health } from './office/health'
-import type { CronPulse, WorkSignals } from './office/duty'
+import type { CronPulse, WorkSignals, A2aPair } from './office/duty'
 import { fetchJson } from './api'
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_MS || 4000)
@@ -40,7 +40,8 @@ type State = {
   health: Health
 
   /**
-   * Sinyal kerja di luar kanban: siapa yang sedang diajak chat, dan cron yang baru jalan.
+   * Sinyal kerja di luar kanban: siapa yang sedang diajak chat, cron yang baru jalan,
+   * dan pasangan A2A yang masih hidup (agent jalan ke meja lawan bicaranya).
    * Scene membacanya untuk mengirim agent ke mejanya (lihat office/duty.ts).
    */
   work: WorkSignals
@@ -84,12 +85,13 @@ export const useOffice = create<State>((set) => ({
   // tidak boleh tampil sehat — itu kebohongan yang paling gampang terjadi.
   health: { level: 'warn', reasons: ['belum membaca keadaan sistem'] },
 
-  work: { chatLive: [], cron: null },
+  work: { chatLive: [], cron: null, a2a: [] },
 
   async loadWork() {
-    const [chat, cron] = await Promise.all([
+    const [chat, cron, a2a] = await Promise.all([
       fetchJson<{ live?: string[] }>('/api/hermes/chat?live=1', { cache: 'no-store' }),
       fetchJson<{ pulse?: CronPulse | null }>('/api/hermes/cron?pulse=1', { cache: 'no-store' }),
+      fetchJson<{ pairs?: A2aPair[] }>('/api/hermes/a2a/live', { cache: 'no-store' }),
     ])
     // Pembacaan yang gagal dianggap "tidak ada kerja": lebih baik agent tetap jalan-jalan
     // daripada terpaku di meja selamanya karena sinyal lama yang tidak pernah padam.
@@ -97,6 +99,7 @@ export const useOffice = create<State>((set) => ({
       work: {
         chatLive: chat.ok ? chat.data?.live ?? [] : [],
         cron: cron.ok ? cron.data?.pulse ?? null : null,
+        a2a: a2a.ok ? a2a.data?.pairs ?? [] : [],
       },
     })
   },

@@ -11,13 +11,15 @@
 import type { AgentStatus } from '@/types/hermes'
 
 /**
- * Urutan prioritas: rapat > kerja di meja > review > bebas.
+ * Urutan prioritas: rapat > a2a > kerja di meja > review > bebas.
  *
- * Rapat paling atas karena rapat mengikat beberapa orang sekaligus di satu ruang. Kerja di meja
- * di atas review karena agent yang sedang diajak chat sedang BEKERJA, walau papan masih menulis
- * task-nya `review`.
+ * Rapat paling atas karena rapat mengikat beberapa orang sekaligus di satu ruang. A2A di
+ * atas kerja-di-meja: agent yang sedang dalam percakapan agent-ke-agent harus BERHENTI dari
+ * aktivitasnya dan menuju lawan bicaranya — seperti aturan "kerja mengalahkan istirahat".
+ * Kerja di meja di atas review karena agent yang sedang diajak chat sedang BEKERJA, walau
+ * papan masih menulis task-nya `review`.
  */
-export type Duty = 'meeting' | 'desk' | 'review' | 'idle'
+export type Duty = 'meeting' | 'a2a' | 'desk' | 'review' | 'idle'
 
 /**
  * Percakapan dianggap masih hidup selama ini setelah balasan terakhir.
@@ -41,6 +43,11 @@ export type DutyInput = {
   isDummy: boolean
   /** Ada percakapan hidup dengan agent INI (turn berjalan atau baru saja dibalas). */
   chatLive: boolean
+  /**
+   * Nama agent yang sedang diajak bicara agent INI lewat A2A (sesi source='a2a'
+   * yang masih hidup). Null/undefined = tidak ada. Rapat tetap menang di atas ini.
+   */
+  a2aPeer?: string | null
   /** Kantor sedang dalam keadaan "ada kerja cron" (lihat `cronPulse` — ini KEBIJAKAN). */
   cronLive: boolean
 }
@@ -48,6 +55,7 @@ export type DutyInput = {
 export function dutyOf(i: DutyInput): Duty {
   if (i.inMeeting) return 'meeting'
   if (i.isDummy || !i.hasDesk) return 'idle'
+  if (i.a2aPeer) return 'a2a'
   if (i.status === 'working' || i.status === 'blocked') return 'desk'
   if (i.chatLive) return 'desk'
   if (i.status === 'review') return 'review'
@@ -119,4 +127,39 @@ export type WorkSignals = {
   chatLive: string[]
   /** Cron agent yang baru jalan, atau null. */
   cron: CronPulse | null
+  /** Agent dalam percakapan A2A yang masih hidup + meja lawan bicaranya. */
+  a2a: A2aPair[]
+}
+
+/**
+ * Satu pasangan A2A yang masih hidup: agent kantor yang sedang bercakap dan
+ * meja lawan bicaranya. `peerDesk` null = lawan bicara eksternal / tak
+ * dikenal / tanpa meja → perjalanannya DIBATALKAN (lihat `a2aTarget`), dan
+ * agent mengambil panggilan di mejanya sendiri.
+ */
+export type A2aPair = {
+  agent: string
+  /** Nama peer dari framing inbound, null bila tak tercatat. */
+  peer: string | null
+  /** deskIndex meja peer bila peer = agent kantor yang punya meja. */
+  peerDesk: number | null
+}
+
+/**
+ * Ke mana avatar yang duty-nya `a2a` harus pergi.
+ *
+ * - peer punya meja dan bukan diri sendiri → BERDIRI di meja peer (visit).
+ * - selain itu tapi agent punya meja sendiri → DUDUK di meja sendiri,
+ *   mengambil panggilan di sana (kasus inbound dari peer eksternal).
+ * - tidak ada meja sama sekali → null: BATALKAN perjalanan, jangan kirim
+ *   avatar ke tempat yang tidak ada.
+ */
+export function a2aTarget(
+  ownDesk: number | null,
+  peerDesk: number | null,
+  peerIsSelf: boolean,
+): { deskIndex: number; visit: boolean } | null {
+  if (peerDesk !== null && !peerIsSelf) return { deskIndex: peerDesk, visit: true }
+  if (ownDesk !== null) return { deskIndex: ownDesk, visit: false }
+  return null
 }

@@ -46,7 +46,7 @@ import {
   type MeetingRoomId,
 } from './layout'
 import type { Agent, AgentDivision, AgentRole, Meeting, Task } from '@/types/hermes'
-import { dutyOf, type Duty, type WorkSignals } from './duty'
+import { dutyOf, a2aTarget, type Duty, type WorkSignals } from './duty'
 import type { AvatarState } from './types'
 
 export type SceneAgent = AnimAgent & {
@@ -501,10 +501,13 @@ export function createScene(
   let chatLive = new Set<string>()
   /** KEBIJAKAN "ada kerja cron" — tanpa pemilik, lihat `cronPulse` di duty.ts. */
   let cronLive = false
+  /** Pasangan A2A yang masih hidup: agent → peer + meja peer. */
+  let a2aLive = new Map<string, { peer: string | null; peerDesk: number | null }>()
 
   function setWork(w: WorkSignals) {
     chatLive = new Set(w.chatLive)
     cronLive = !!w.cron
+    a2aLive = new Map((w.a2a || []).map((p) => [p.agent, { peer: p.peer, peerDesk: p.peerDesk }]))
   }
 
   // ---- destination resolution ------------------------------------------------
@@ -612,12 +615,14 @@ export function createScene(
     const meetingLive = meeting?.state === 'queued' || meeting?.state === 'running'
     const inMeeting = !!(meeting && meetingLive && meeting.participants.includes(a.data.name))
     const myDesk = a.data.deskIndex != null ? deskByIndex(a.data.deskIndex) ?? null : null
+    const a2a = a2aLive.get(a.data.name) ?? null
     const duty = dutyOf({
       inMeeting,
       status: st,
       hasDesk: !!myDesk,
       isDummy,
       chatLive: chatLive.has(a.data.name),
+      a2aPeer: a2a ? (a2a.peer ?? a.data.name) : null,
       cronLive,
     })
 
@@ -669,7 +674,7 @@ export function createScene(
       return
     }
 
-    // Urutan cabang di bawah = urutan prioritas `dutyOf`: rapat > meja > review > bebas.
+    // Urutan cabang di bawah = urutan prioritas `dutyOf`: rapat > a2a > meja > review > bebas.
 
     // 1. meeting wins over everything — but ONLY while it is actually live.
     if (meeting && duty === 'meeting') {
@@ -685,7 +690,45 @@ export function createScene(
       return
     }
 
-    // 2. working: sit at the assigned desk and type. Kanban working/blocked, chat yang hidup,
+    // 2. a2a: agent yang memanggil MENDEKATI lawan bicaranya. Menang atas kerja
+    // di meja — seperti "kerja mengalahkan istirahat", tapi rapat tetap di atas.
+    // anchored/spawnGate/leaving sudah kembali di atas, jadi tak tersentuh.
+    // Peer tanpa meja / eksternal → agent mengambil panggilan di meja sendiri
+    // (lihat `a2aTarget` di duty.ts). Tanpa meja sama sekali → jangan ke mana-mana.
+    if (duty === 'a2a') {
+      const pair = a2aLive.get(a.data.name)
+      const ownIdx = a.data.deskIndex ?? null
+      const t = a2aTarget(ownIdx, pair?.peerDesk ?? null, !!pair?.peer && pair.peer === a.data.name)
+      const desk = t ? deskByIndex(t.deskIndex) ?? null : null
+      if (t && desk) {
+        if (t.visit) {
+          const v = visitorSpot(desk)
+          a.target = new THREE.Vector3(v.x, 0, v.z)
+          a.targetLevel = desk.level
+          a.activity = 'idle'
+          a.arrivalFace = Math.atan2(desk.x - v.x, desk.z - v.z)
+          a.holdFace = a.arrivalFace
+          a.holdSeat = false
+        } else {
+          a.target = deskTarget(desk)
+          a.targetLevel = desk.level
+          a.spotKey = `${a.target.x.toFixed(1)},${a.target.z.toFixed(1)}`
+          a.seatYaw = deskSeatYaw(desk)
+          a.arrivalFace = deskSeatYaw(desk)
+          a.holdFace = a.arrivalFace
+          a.holdSeat = true
+          a.activity = 'typing'
+        }
+        return
+      }
+      // Tak ada meja untuk dituju: diam. Jatuh ke cabang wander di bawah akan
+      // mengirimnya jalan-jalan — bukan itu yang diminta percakapan ini.
+      a.target = null
+      a.activity = 'idle'
+      return
+    }
+
+    // 3. working: sit at the assigned desk and type. Kanban working/blocked, chat yang hidup,
     // atau (KEBIJAKAN) cron yang baru jalan — lihat duty.ts.
     if (duty === 'desk' && myDesk) {
       const desk = myDesk
