@@ -34,6 +34,15 @@ export function a2aEndpoint(baseUrl: string, slug: string): string {
   return `${baseUrl.replace(/\/$/, '')}/${slug.trim().toLowerCase()}`
 }
 
+/**
+ * Basis URL yang SAMA dipakai kantor untuk message/send (meeting.ts) dan
+ * untuk entri peer `a2a_agents.<slug>-local` (kanban.ts). Satu sumber supaya
+ * peer selalu menunjuk path yang benar-benar dijawab gateway.
+ */
+export function peerBaseUrl(): string {
+  return (process.env.A2A_BASE_URL || 'http://127.0.0.1:9900').replace(/\/$/, '')
+}
+
 /** Peserta yang belum di-serve: cocok via profile ATAU slug. */
 export function missingServed(
   participants: string[],
@@ -83,6 +92,12 @@ export function buildCrossPrompt(opts: {
   topic: string
   point: string
 }): string {
+  // URL penuh DIKIRIM ke agent (bukan cuma nama): `a2a_call` menerima URL
+  // langsung tanpa bergantung pada entri peer di config pemanggil — sebab-2
+  // RAPAT-A2A-2 (hop gagal `unknown agent` karena peer tak terdaftar, padahal
+  // kemarin "berhasil" cuma kebetulan model jatuh ke URL). Peer tetap
+  // didaftarkan juga (ensureA2aPeer) supaya nama pun resolvable — dua jalur.
+  const nextUrl = a2aEndpoint(peerBaseUrl(), opts.next)
   return [
     `Kamu ${opts.speaker}, peserta RAPAT KANTOR. TOPIK: ${opts.topic}.`,
     'Poinmu di ronde pembuka (kirim persis ini):',
@@ -90,6 +105,7 @@ export function buildCrossPrompt(opts: {
     '',
     'Langkah wajib:',
     `1. Pakai tool a2a_call milikmu untuk mengirim poin di atas ke agen bernama ${opts.next}.`,
+    `   Panggil dengan agent "${nextUrl}" (URL penuh — langsung bisa diresolusi).`,
     '   Isi pesan: topik rapat + poinmu, maks 90 kata.',
     `2. Setelah ${opts.next} membalas, laporkan di sini dengan format:`,
     `BALASAN ${opts.next}:`,

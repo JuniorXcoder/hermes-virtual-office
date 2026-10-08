@@ -190,7 +190,15 @@ export default function AgentSpawnPanel({
     setErr(null)
     setNote(null)
     try {
-      const res = await fetchJson<{ purged?: number; a2aNote?: string | null; needsGatewayRestart?: boolean | null }>('/api/hermes/agents', {
+      const res = await fetchJson<{
+        purged?: number
+        a2aNote?: string | null
+        peerAdded?: boolean | null
+        peerError?: string | null
+        toolsetAdded?: boolean | null
+        toolsetError?: string | null
+        needsGatewayRestart?: boolean | null
+      }>('/api/hermes/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, name }),
@@ -208,8 +216,16 @@ export default function AgentSpawnPanel({
         setNote(`"${name}" disembunyikan — tugasnya tetap di papan`)
       } else if (action === 'serve') {
         // SELFREPAIR-1 Celah 1: jujur — terdaftar, tapi BERLAKU SETELAH
-        // restart gateway (bukan langsung "siap").
-        setNote(`"${name}" ${d?.a2aNote ?? 'terdaftar. Berlaku setelah gateway di-restart.'}`)
+        // restart gateway (bukan langsung "siap"). A2A-CALL-1: pratinjau +
+        // laporan kemampuan MEMANGGIL (peer + toolset, idempoten).
+        const callBits: string[] = []
+        if (d?.toolsetAdded === true) callBits.push('toolset a2a ditambahkan (bisa memanggil)')
+        else if (d?.toolsetAdded === false && d?.toolsetError) callBits.push(`toolset a2a GAGAL (${d.toolsetError})`)
+        else callBits.push('toolset a2a sudah ada (bisa memanggil)')
+        if (d?.peerAdded === true) callBits.push(`peer ${name}-local didaftarkan`)
+        else if (d?.peerAdded === false && d?.peerError) callBits.push(`peer GAGAL (${d.peerError})`)
+        else callBits.push(`peer ${name}-local sudah ada`)
+        setNote(`"${name}" ${d?.a2aNote ?? 'terdaftar. Berlaku setelah gateway di-restart.'} ${callBits.join(' · ')}.`)
         if (d?.needsGatewayRestart != null) setNeedsGatewayRestart(d.needsGatewayRestart)
       } else if (action === 'unserve') {
         setNote(`"${name}" ${d?.a2aNote ?? 'tercabut dari config.'}`)
@@ -240,6 +256,10 @@ export default function AgentSpawnPanel({
         domains?: string[]
         a2aRegistered?: boolean | null
         a2aError?: string | null
+        toolsetAdded?: boolean | null
+        toolsetError?: string | null
+        peerAdded?: boolean | null
+        peerError?: string | null
         a2aNote?: string | null
         needsGatewayRestart?: boolean | null
       }>('/api/hermes/agents', {
@@ -281,7 +301,21 @@ export default function AgentSpawnPanel({
         : res.data.a2aRegistered === false
           ? `GAGAL didaftarkan A2A (${res.data.a2aError}) — profilnya ada tapi belum terdaftar. `
           : 'A2A tidak didaftarkan (toggle mati) — profilnya ada tapi belum terdaftar. Nyalakan manual bila perlu. '
-      setNote(`profil "${res.data.name}" dibuat, ${modelNote} — agent berjalan masuk lewat pintu utama. ${domNote}${a2aNote}`)
+      // A2A-CALL-1: kemampuan MEMANGGIL ikut dilaporkan (pratinjau + laporan,
+      // idempoten — dua kali jalan tak menggandakan).
+      const callNote = res.data.a2aRegistered === true
+        ? (res.data.toolsetAdded === true
+          ? 'toolset a2a ditambahkan (bisa memanggil). '
+          : res.data.toolsetAdded === false && res.data.toolsetError
+            ? `toolset a2a GAGAL (${res.data.toolsetError}). `
+            : 'toolset a2a sudah ada (bisa memanggil). ') +
+          (res.data.peerAdded === true
+            ? `peer ${res.data.name}-local didaftarkan (nama bisa diresolusi). `
+            : res.data.peerAdded === false && res.data.peerError
+              ? `peer GAGAL (${res.data.peerError}). `
+              : `peer ${res.data.name}-local sudah ada. `)
+        : ''
+      setNote(`profil "${res.data.name}" dibuat, ${modelNote} — agent berjalan masuk lewat pintu utama. ${domNote}${a2aNote}${callNote}`)
       setNeedsGatewayRestart(res.data.needsGatewayRestart ?? null)
       // Pendaftaran A2A sukses → pop up "silahkan restart server". Gagal =
       // JANGAN tampilkan pop up sukses (catatan di atas sudah bilang gagal).

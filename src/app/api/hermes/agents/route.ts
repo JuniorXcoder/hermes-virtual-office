@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   createProfile,
   deleteProfile,
+  ensureA2aPeer,
+  ensureA2aToolset,
   hermesHome,
   listAgents,
   listAssignees,
@@ -9,6 +11,7 @@ import {
   listTasks,
   profileModel,
   purgeTasks,
+  removeA2aPeer,
   setProfileModel,
   tasksForAssignee,
 } from '@/lib/hermes/kanban'
@@ -273,19 +276,60 @@ export async function POST(req: NextRequest) {
           description: prev?.description || `Hermes profile '${name}' exposed over A2A.`,
           advertisedToolsets: prev?.advertised_toolsets ?? [],
         })
+        // A2A-CALL-1: serve = bisa DIPANGGIL + bisa MEMANGGIL. Daftarkan peer
+        // supaya nama agent selalu resolvable (sebab-2 RAPAT-A2A-2), dan
+        // pastikan toolset a2a (GABUNG, bukan timpa). Peer ditulis di global
+        // + scope profil SEMUA agent served lain supaya gate tool Hermes
+        // (_a2a_tools_available, baca scope profil) terbuka di sesi mereka.
+        // Keduanya idempoten; gagal dilaporkan jujur TANPA membatalkan served.
+        let peerAdded: boolean | null = null
+        let peerError: string | null = null
+        let peerProfiles: string[] = []
+        try {
+          const others = (await listServedAgents().catch(() => []))
+            .map((s) => s.profile).filter((p) => p.toLowerCase() !== name.toLowerCase())
+          const r = await ensureA2aPeer(name, others)
+          peerAdded = r.added
+          peerProfiles = r.profileAdded
+        } catch (err) {
+          peerAdded = false
+          peerError = (err as Error).message
+        }
+        let toolsetAdded: boolean | null = null
+        let toolsetError: string | null = null
+        try {
+          toolsetAdded = (await ensureA2aToolset(name)).added
+        } catch (err) {
+          toolsetAdded = false
+          toolsetError = (err as Error).message
+        }
+        return NextResponse.json({
+          success: true,
+          action,
+          name,
+          a2aNote:
+            'Terdaftar. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.',
+          /** Peer `<nama>-local` terdaftar? false+gagal = pendaftaran gagal (lihat peerError). */
+          peerAdded,
+          peerError,
+          /** Profil yang ikut ditulisi peer (gate tool scope-profil). */
+          peerProfiles,
+          /** Toolset a2a ditambahkan ke profil? false+gagal = lihat toolsetError. */
+          toolsetAdded,
+          toolsetError,
+          needsGatewayRestart: await readNeedsGatewayRestart(),
+        })
       } else {
         await removeServedAgent(name)
+        return NextResponse.json({
+          success: true,
+          action,
+          name,
+          a2aNote:
+            'Tercabut dari config. Berlaku setelah gateway di-restart — sampai itu, path A2A-nya masih dijawab.',
+          needsGatewayRestart: await readNeedsGatewayRestart(),
+        })
       }
-      return NextResponse.json({
-        success: true,
-        action,
-        name,
-        a2aNote:
-          action === 'serve'
-            ? 'Terdaftar. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.'
-            : 'Tercabut dari config. Berlaku setelah gateway di-restart — sampai itu, path A2A-nya masih dijawab.',
-        needsGatewayRestart: await readNeedsGatewayRestart(),
-      })
     } catch (err) {
       return NextResponse.json(
         { error: { code: 'action_failed', message: (err as Error).message, status: 502 } },
@@ -376,6 +420,11 @@ export async function POST(req: NextRequest) {
       // profilnya ada tapi belum terdaftar A2A.
       let a2aRegistered: boolean | null = null
       let a2aError: string | null = null
+      // A2A-CALL-1: agent baru harus bisa MEMANGGIL juga, bukan cuma DIPANGGIL.
+      let toolsetAdded: boolean | null = null
+      let toolsetError: string | null = null
+      let peerAdded: boolean | null = null
+      let peerError: string | null = null
       if (serveA2a) {
         try {
           await upsertServedAgent({
@@ -387,6 +436,25 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           a2aRegistered = false
           a2aError = (err as Error).message
+        }
+        // Gagal di sini tak membatalkan profil — lapor jujur seperti a2aError.
+        // Peer: global + profil semua served lain (gate tool scope-profil).
+        let peerProfiles: string[] = []
+        try {
+          toolsetAdded = (await ensureA2aToolset(created.name)).added
+        } catch (err) {
+          toolsetAdded = false
+          toolsetError = (err as Error).message
+        }
+        try {
+          const others = (await listServedAgents().catch(() => []))
+            .map((s) => s.profile).filter((p) => p.toLowerCase() !== created.name.toLowerCase())
+          const r = await ensureA2aPeer(created.name, others)
+          peerAdded = r.added
+          peerProfiles = r.profileAdded
+        } catch (err) {
+          peerAdded = false
+          peerError = (err as Error).message
         }
       }
       return NextResponse.json(
@@ -412,6 +480,12 @@ export async function POST(req: NextRequest) {
            */
           a2aRegistered,
           a2aError,
+          /** Toolset a2a di profil baru (GABUNG): null = toggle mati. */
+          toolsetAdded,
+          toolsetError,
+          /** Peer `<nama>-local` terdaftar: null = toggle mati. */
+          peerAdded,
+          peerError,
           /**
            * Jujur soal arti "terdaftar": daftar served-agent baru berlaku
            * setelah gateway di-restart — bukan langsung aktif.
@@ -585,6 +659,22 @@ export async function POST(req: NextRequest) {
         a2aRemoved = false
         a2aError = (err as Error).message
       }
+      // A2A-CALL-1: cabut juga peer `<nama>-local` (global + profil served
+      // lain) supaya tak tinggal peer basi yang menunjuk path agent yang
+      // sudah tiada. Tak terdaftar = sah.
+      let peerRemoved: boolean | null = null
+      let peerError: string | null = null
+      let peerProfilesRemoved: string[] = []
+      try {
+        const others = (await listServedAgents().catch(() => []))
+          .map((s) => s.profile).filter((p) => p.toLowerCase() !== name.toLowerCase())
+        const r = await removeA2aPeer(name, others)
+        peerRemoved = r.removed
+        peerProfilesRemoved = r.profileRemoved
+      } catch (err) {
+        peerRemoved = false
+        peerError = (err as Error).message
+      }
       // 2. Hapus baris avatar `agent:<nama>` — badannya keluar dari kantor
       // (scene menandai yang hilang sebagai leaving, lalu despawn di pintu).
       const avatarRemoved = deleteAvatar(`agent:${name}`)
@@ -619,6 +709,11 @@ export async function POST(req: NextRequest) {
         /** Entri A2A tercabut? null = langkah dilewati (profil tak ada dari awal). */
         a2aRemoved: hasProfile ? a2aRemoved : null,
         a2aError,
+        /** Peer `<nama>-local` tercabut? null = langkah dilewati. */
+        peerRemoved: hasProfile ? peerRemoved : null,
+        peerError,
+        /** Profil yang ikut dibersihkan peer-nya. */
+        peerProfilesRemoved: hasProfile ? peerProfilesRemoved : null,
         /** Baris avatar `agent:<nama>` terhapus dari kantor? */
         avatarRemoved,
         /** Sisa direktori `profiles/<nama>/` dibersihkan? */

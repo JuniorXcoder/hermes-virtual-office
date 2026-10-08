@@ -19,10 +19,14 @@ import {
   classifyProviderScope,
 } from './doctor'
 import {
+  ensureA2aPeer,
   ensureA2aToolset,
   ensureProviderDef,
   hermesHome,
+  listA2aPeers,
   listProfiles,
+  peerEntryUrl,
+  peerKeyFor,
   profileCustomProviders,
   profileModel,
   profileToolsets,
@@ -37,6 +41,7 @@ export type RepairKind =
   | 'strayProfileDir'
   | 'danglingProvider'
   | 'missingA2aToolset'
+  | 'missingA2aPeer'
 
 export type RepairPreviewItem = {
   kind: RepairKind
@@ -60,6 +65,8 @@ export type RepairResult = {
   avatarMerged: { agent: string; kept: string; dropped: string[] }[]
   /** Toolset a2a ditambahkan ke profil yang sudah ada. */
   toolsetAdded: string[]
+  /** Peer `<nama>-local` didaftarkan ke a2a_agents. */
+  peerAdded: string[]
   /** Definisi provider disalin ke scope profil. */
   providerFixed: string[]
   /** Sisa direktori profiles/<nama>/ yang dibersihkan. */
@@ -242,7 +249,9 @@ export async function previewRepairs(): Promise<RepairPreview> {
     unfixable.push({ target: '(direktori profil)', why: `tak terbaca — ${(err as Error).message.slice(0, 160)}` })
   }
 
-  // 5+6. Per profil: provider menggantung + toolset a2a hilang.
+  // 5+6+7. Per profil: provider menggantung + toolset a2a hilang + peer hilang.
+  // Klasifikasi A2A-CALL-1 (koreksi operator): tools=[] (kunci tak ada/kosong)
+  // = TERBACA tak-bisa-memanggil → planned; tools=null (baca gagal) = unknown.
   const checks = await Promise.all(
     profiles.map(async (p) => ({
       p,
@@ -268,11 +277,66 @@ export async function previewRepairs(): Promise<RepairPreview> {
       planned.push({
         kind: 'missingA2aToolset',
         target: c.p,
-        what: `tambahkan toolset "a2a" ke platform_toolsets.cli profil "${c.p}" (bisa dipanggil, tak bisa memanggil)`,
+        what:
+          c.tools.length === 0
+            ? `tambahkan toolset "a2a" ke profil "${c.p}" (kunci platform_toolsets tidak ada — bisa dipanggil, tak bisa memanggil)`
+            : `tambahkan toolset "a2a" ke platform_toolsets.cli profil "${c.p}" (bisa dipanggil, tak bisa memanggil)`,
       })
     } else if (c.tools === null) {
-      unfixable.push({ target: c.p, why: 'tidak bisa dipastikan — platform_toolsets tak terbaca' })
+      unfixable.push({ target: c.p, why: 'tidak bisa dipastikan — platform_toolsets gagal dibaca (bukan sekadar tak ada)' })
     }
+  }
+
+  // 7. Peer hilang: tiap profil yang di-serve WAJIB punya
+  // `a2a_agents.<slug>-local` supaya namanya resolvable (sebab-2 RAPAT-A2A-2).
+  // Daftar peer tak terbaca = unfixable (unknown), bukan planned.
+  try {
+    const served = await listServedAgents()
+    const peers = await listA2aPeers()
+    if (peers === null) {
+      unfixable.push({ target: '(daftar peer a2a_agents)', why: 'tak terbaca — peer hilang tidak bisa dipastikan' })
+    } else {
+      const { samePeerUrl, listProfilePeers } = await import('./kanban')
+      for (const s of served) {
+        const key = peerKeyFor(s.profile)
+        const want = peerEntryUrl(s.profile)
+        const got = peers[key]?.url ? String(peers[key].url) : ''
+        if (!got || !samePeerUrl(got, want)) {
+          planned.push({
+            kind: 'missingA2aPeer',
+            target: s.profile,
+            what: `daftarkan peer "${key}" → ${want} (nama agent bisa diresolusi a2a_call)`,
+          })
+        }
+      }
+      // 7b. Peer PROFIL: tiap served WAJIB ada di scope profil served LAIN —
+      // gate tool Hermes baca scope profil (mkt-1 tanpa peer profil = tool
+      // a2a_call tak muncul meski toolset a2a ada + peer global ada).
+      const profPeers = await Promise.all(
+        served.map(async (s) => ({ s, mine: await listProfilePeers(s.profile).catch(() => null) })),
+      )
+      for (const pp of profPeers) {
+        if (pp.mine === null) {
+          unfixable.push({ target: pp.s.profile, why: 'tidak bisa dipastikan — peer profil gagal dibaca (bukan sekadar tak ada)' })
+          continue
+        }
+        for (const t of served) {
+          if (t.profile.toLowerCase() === pp.s.profile.toLowerCase()) continue
+          const key = peerKeyFor(t.profile)
+          const want = peerEntryUrl(t.profile)
+          const got = pp.mine[key]?.url ? String(pp.mine[key].url) : ''
+          if (!got || !samePeerUrl(got, want)) {
+            planned.push({
+              kind: 'missingA2aPeer',
+              target: `${pp.s.profile}→${t.profile}`,
+              what: `tulis peer "${key}" → ${want} di profil "${pp.s.profile}" (gate tool a2a_call scope-profil)`,
+            })
+          }
+        }
+      }
+    }
+  } catch {
+    unfixable.push({ target: '(daftar peer a2a_agents)', why: 'tak terbaca — peer hilang tidak bisa dipastikan' })
   }
 
   return { planned, unfixable }
@@ -289,6 +353,7 @@ export async function runRepairs(): Promise<RepairResult> {
     avatarRemoved: [],
     avatarMerged: [],
     toolsetAdded: [],
+    peerAdded: [],
     providerFixed: [],
     dirsRemoved: [],
     failed: [],
@@ -363,6 +428,22 @@ export async function runRepairs(): Promise<RepairResult> {
         case 'missingA2aToolset': {
           const r = await ensureA2aToolset(item.target)
           if (r.added) res.toolsetAdded.push(item.target)
+          break
+        }
+        case 'missingA2aPeer': {
+          // Target "a→b" = peer profil; target polos = peer global (+ profil served lain).
+          const arrow = item.target.indexOf('→')
+          if (arrow > 0) {
+            const caller = item.target.slice(0, arrow)
+            const tgt = item.target.slice(arrow + 1)
+            const r = await ensureA2aPeer(tgt, [caller])
+            if (r.profileAdded.length) res.peerAdded.push(item.target)
+          } else {
+            const servedNow = await listServedAgents().catch(() => [])
+            const others = servedNow.map((s) => s.profile).filter((p) => p.toLowerCase() !== item.target.toLowerCase())
+            const r = await ensureA2aPeer(item.target, others)
+            if (r.added || r.profileAdded.length) res.peerAdded.push(item.target)
+          }
           break
         }
       }

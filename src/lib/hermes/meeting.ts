@@ -22,6 +22,7 @@ import {
   failedTurnText,
   missingServed,
   normalizeMeetingMode,
+  peerBaseUrl,
   sendA2a,
 } from './meeting-a2a'
 import { listServedAgents } from './a2a-served'
@@ -387,7 +388,7 @@ function push(meeting: Meeting, turn: MeetingTurn) {
   meeting.turns.push(turn)
 }
 
-const A2A_URL = (process.env.A2A_BASE_URL || 'http://127.0.0.1:9900').replace(/\/$/, '')
+const A2A_URL = peerBaseUrl()
 const A2A_TURN_TIMEOUT_MS = Number(process.env.MEETING_A2A_TIMEOUT_MS || 280_000)
 
 /**

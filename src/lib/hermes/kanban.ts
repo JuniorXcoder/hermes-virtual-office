@@ -17,6 +17,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { Agent, NewTaskInput, Task, TaskOrigin, TaskStatus, AgentDivision, AgentRole } from '@/types/hermes'
 import { parseSoulMarker, soulFor } from './soul'
+import { a2aEndpoint, peerBaseUrl } from './meeting-a2a'
 import { parseDomains } from './a2a'
 import { readEvidence, splitEvidenceBatch, type EvidenceInput, type EvidenceMark, type EvidenceReading } from './evidence'
 import { readVerification, splitVerificationBatch, type VerificationMark, type VerificationReading, type VerifyEvent } from './verification'
@@ -546,9 +547,16 @@ export async function setProfileModel(
   }
 }
 
-/** Toolset CLI satu profil (`platform_toolsets.cli`). Null = kunci tak ada/tak terbaca
- * (bedakan: [] = ada tapi kosong). A2A-CALL-1: profil tanpa `a2a` di sini bisa
- * DIPANGGIL tapi tidak bisa MEMANGGIL. */
+/** Toolset CLI satu profil (`platform_toolsets.cli`).
+ *
+ * Tiga keadaan dibedakan (A2A-CALL-1 + koreksi operator):
+ * - `[]` = kunci tidak ada / kosong — TERBACA, artinya TIDAK BISA MEMANGGIL
+ *   (FAIL di doctor, direncanakan di selfrepair). Semua agent buatan kantor
+ *   lahir tanpa kunci ini, jadi ini kasus paling umum — bukan "tak pasti".
+ * - `null` = baca BENAR-BENAR gagal (CLI error/timeout, keluaran tak terurai)
+ *   — hanya ini yang "tidak bisa dipastikan" (unknown).
+ * - daftar berisi = terbaca apa adanya.
+ */
 export async function profileToolsets(name: string): Promise<string[] | null> {
   try {
     const raw = await hermesJson<{ cli?: unknown } | string[]>([
@@ -561,10 +569,13 @@ export async function profileToolsets(name: string): Promise<string[] | null> {
     ])
     if (Array.isArray(raw)) return raw.map(String)
     const cli = (raw as { cli?: unknown })?.cli
-    if (cli === undefined) return null
-    if (!Array.isArray(cli)) return null
+    if (cli === undefined) return []
+    if (!Array.isArray(cli)) return []
     return cli.map((t) => String(t))
-  } catch {
+  } catch (err) {
+    // "Config key not set" = kunci memang tidak ada → TERBACA kosong (FAIL,
+    // bukan unknown). Gagal nyata (timeout, executable hilang) = null.
+    if (/not set|no such|tidak ada/i.test((err as Error)?.message ?? '')) return []
     return null
   }
 }
@@ -600,6 +611,151 @@ export async function ensureA2aToolset(name: string): Promise<{ added: boolean; 
   return { added: true, toolsets: after }
 }
 
+/**
+ * Peer A2A global untuk satu agent (`a2a_agents.<slug>-local`).
+ *
+ * Sebab-2 RAPAT-A2A-2: `a2a_call("mkt-1")` menjawab `unknown agent` karena
+ * daftar peer hanya berisi `jun-local` — hop yang "berhasil" kemarin cuma
+ * kebetulan model jatuh ke URL penuh. Peer terdaftar = nama SELALU resolvable.
+ */
+export function peerKeyFor(slug: string): string {
+  return `${slug.trim().toLowerCase()}-local`
+}
+
+/** URL penuh peer satu agent (basis SAMA dengan message/send kantor). */
+export function peerEntryUrl(slug: string): string {
+  return a2aEndpoint(peerBaseUrl(), slug)
+}
+
+/** Banding URL peer: abaikan garis miring akhir (tulisan CLI vs office). */
+export function samePeerUrl(a: string, b: string): boolean {
+  return a.trim().replace(/\/+$/, '') === b.trim().replace(/\/+$/, '')
+}
+
+export type A2aPeerEntry = { url?: string; timeout?: number }
+
+/**
+ * Daftar peer A2A satu profil (`hermes -p <nama> config get a2a_agents`).
+ *
+ * Gate tool Hermes (`_a2a_tools_available`) membaca config SCOPE PROFIL sesi
+ * itu — bukan global. Profil tanpa `a2a_agents` = tool a2a_call TAK MUNCUL di
+ * sesi profil itu meski peer global ada (terbukti: mkt-1 "TOOL A2A_CALL TIDAK
+ * ADA" sebelum peer profil ditulis, gate terbuka sesudahnya). Null = baca
+ * gagal (unknown); {} = tak ada peer (gate tutup = FAIL, bukan unknown).
+ */
+export async function listProfilePeers(name: string): Promise<Record<string, A2aPeerEntry> | null> {
+  try {
+    const raw = await hermesJson<Record<string, A2aPeerEntry> | null>([
+      '-p', name, 'config', 'get', 'a2a_agents', '--json',
+    ])
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    return raw
+  } catch (err) {
+    if (/not set|no such|tidak ada/i.test((err as Error)?.message ?? '')) return {}
+    return null
+  }
+}
+
+/**
+ * Daftar peer A2A global (`a2a_agents`). Null = tak terbaca (unknown),
+ * bukan kosong — bedakan seperti profileToolsets.
+ */
+export async function listA2aPeers(): Promise<Record<string, A2aPeerEntry> | null> {
+  try {
+    const raw = await kanbanConfig<Record<string, A2aPeerEntry> | null>('a2a_agents')
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    return raw
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pastikan peer `<slug>-local` terdaftar menunjuk path served agent itu.
+ *
+ * Ditulis di DUA scope (A2A-CALL-1 bukti live 2026-10-09):
+ * - global: supaya `a2a_call("nama")` resolvable dari sesi mana pun;
+ * - profil TIAP agent yang di-serve (kecuali dirinya): supaya gate tool Hermes
+ *   (`_a2a_tools_available`, baca scope profil) TERBUKA dan tool a2a_call
+ *   muncul di sesi profil itu. Tanpa peer profil, agent "bisa dipanggil tapi
+ *   tak bisa memanggil" meski toolset a2a ada.
+ *
+ * GABUNG, bukan timpa: `hermes config set` nested hanya menyentuh kunci itu,
+ * entri peer lain dipertahankan. Verifikasi baca-balik; throw jujur bila tak
+ * mendarat. Idempoten: sudah benar = {added:false}, tanpa tulis.
+ */
+export async function ensureA2aPeer(
+  slug: string,
+  callerProfiles: string[] = [],
+): Promise<{ added: boolean; key: string; url: string; profileAdded: string[] }> {
+  const clean = slug.trim().toLowerCase()
+  const key = peerKeyFor(clean)
+  const url = peerEntryUrl(clean)
+  const peers = await listA2aPeers()
+  if (peers === null) {
+    throw new Error(`daftar peer a2a_agents tak terbaca — peer \"${key}\" tidak bisa dipastikan`)
+  }
+  let added = false
+  if (!(peers[key] && samePeerUrl(String(peers[key]?.url ?? ''), url))) {
+    await hermesWrite(['config', 'set', `a2a_agents.${key}`, JSON.stringify({ url, timeout: 120 }), '--force'])
+    const after = await listA2aPeers()
+    if (!after?.[key] || !samePeerUrl(String(after[key]?.url ?? ''), url)) {
+      throw new Error(`peer \"${key}\" gagal terverifikasi — tulis tidak mendarat`)
+    }
+    added = true
+  }
+  // Peer di scope profil tiap pemanggil (gate tool baca scope profil).
+  const profileAdded: string[] = []
+  for (const caller of [...new Set(callerProfiles.map((c) => c.trim().toLowerCase()))]) {
+    if (!caller || caller === clean) continue
+    const mine = await listProfilePeers(caller)
+    if (mine === null) {
+      throw new Error(`peer profil \"${caller}\" tak terbaca — peer \"${key}\" tidak bisa dipastikan`)
+    }
+    if (mine[key] && samePeerUrl(String(mine[key]?.url ?? ''), url)) continue
+    await hermesWrite(['-p', caller, 'config', 'set', `a2a_agents.${key}`, JSON.stringify({ url, timeout: 120 }), '--force'])
+    const re = await listProfilePeers(caller)
+    if (!re?.[key] || !samePeerUrl(String(re[key]?.url ?? ''), url)) {
+      throw new Error(`peer \"${key}\" gagal terverifikasi di profil \"${caller}\" — tulis tidak mendarat`)
+    }
+    profileAdded.push(caller)
+  }
+  return { added, key, url, profileAdded }
+}
+
+/**
+ * Cabut peer `<slug>-local` dari global DAN scope profil pemanggil supaya tak
+ * tinggal peer basi di kedua scope. Tak terdaftar = {removed:false} (hasil
+ * sah, bukan error) — idempoten. Dipakai jalur kill/unserve.
+ */
+export async function removeA2aPeer(
+  slug: string,
+  callerProfiles: string[] = [],
+): Promise<{ removed: boolean; key: string; profileRemoved: string[] }> {
+  const key = peerKeyFor(slug)
+  let removed = false
+  try {
+    await hermesWrite(['config', 'unset', `a2a_agents.${key}`])
+    removed = true
+  } catch (err) {
+    if (!/not set|no such|tidak ada/i.test((err as Error)?.message ?? '')) {
+      throw err
+    }
+  }
+  const profileRemoved: string[] = []
+  for (const caller of [...new Set(callerProfiles.map((c) => c.trim().toLowerCase()))]) {
+    if (!caller || caller === slug.trim().toLowerCase()) continue
+    try {
+      await hermesWrite(['-p', caller, 'config', 'unset', `a2a_agents.${key}`])
+      profileRemoved.push(caller)
+    } catch (err) {
+      if (!/not set|no such|tidak ada/i.test((err as Error)?.message ?? '')) {
+        throw err
+      }
+    }
+  }
+  return { removed, key, profileRemoved }
+}
 /**
  * Tambal definisi provider menggantung di scope profil (SELFREPAIR-1).
  *

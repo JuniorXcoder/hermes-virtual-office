@@ -201,10 +201,11 @@ export default function DoctorPanel({ open, onClose }: { open: boolean; onClose:
                   <div key={i}>baris {m.agent} digabung → {m.kept} (buang: {m.dropped.join(', ')})</div>
                 ))}
                 {repair.toolsetAdded.length > 0 && <div>toolset a2a ditambah ke: {repair.toolsetAdded.join(', ')}</div>}
+                {repair.peerAdded.length > 0 && <div>peer a2a_agents didaftarkan untuk: {repair.peerAdded.join(', ')}</div>}
                 {repair.providerFixed.length > 0 && <div>definisi provider disalin ke: {repair.providerFixed.join(', ')}</div>}
                 {repair.dirsRemoved.length > 0 && <div>sisa direktori dibersihkan: {repair.dirsRemoved.join(', ')}</div>}
                 {!repair.a2aRemoved.length && !repair.avatarRemoved.length && !repair.avatarMerged.length &&
-                  !repair.toolsetAdded.length && !repair.providerFixed.length && !repair.dirsRemoved.length &&
+                  !repair.toolsetAdded.length && !repair.peerAdded.length && !repair.providerFixed.length && !repair.dirsRemoved.length &&
                   !repair.failed.length && <div>tidak ada yang berubah — keadaan sudah sehat (idempoten).</div>}
                 {repair.failed.map((f, i) => (
                   <div key={`f${i}`}>GAGAL {f.target}: {f.why}</div>

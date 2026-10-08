@@ -729,6 +729,107 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
     }
   }
 
+  // 10b. A2A-CALL-1 sebab-2: nama agent harus RESOLVABLE (`a2a_agents.<slug>-local`).
+  // Tanpa peer, `a2a_call("nama")` = `unknown agent` — hop cuma kebetulan jalan
+  // bila model jatuh ke URL penuh. Peer hilang = FAIL + jalan keluar.
+  if (profiles) {
+    try {
+      const { listA2aPeers, peerEntryUrl, peerKeyFor, samePeerUrl } = await import('./kanban')
+      const served = await listServedAgents().catch(() => null)
+      if (served === null) {
+        checks.push({
+          id: 'peers',
+          label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+          status: 'unknown',
+          detail: 'tidak bisa dipastikan — daftar served tak terbaca',
+          fix: '',
+        })
+      } else {
+        const peers = await listA2aPeers().catch(() => null)
+        if (peers === null) {
+          checks.push({
+            id: 'peers',
+            label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+            status: 'unknown',
+            detail: 'tidak bisa dipastikan — daftar peer a2a_agents gagal dibaca (bukan sekadar kosong)',
+            fix: '',
+          })
+        } else {
+          const missing = served.filter((s) => {
+            const got = peers[peerKeyFor(s.profile)]?.url ? String(peers[peerKeyFor(s.profile)].url) : ''
+            return !got || !samePeerUrl(got, peerEntryUrl(s.profile))
+          })
+          // 10c. Peer PROFIL: gate tool Hermes baca scope profil — served tanpa
+          // peer di profil served lain = tool a2a_call tak muncul di sesinya.
+          const { listProfilePeers } = await import('./kanban')
+          const profRows = await Promise.all(
+            served.map(async (s) => ({ s, mine: await listProfilePeers(s.profile).catch(() => null) })),
+          )
+          const profUnreadable = profRows.filter((r) => r.mine === null).map((r) => r.s.profile)
+          const profMissing: string[] = []
+          for (const r of profRows) {
+            if (r.mine === null) continue
+            for (const t of served) {
+              if (t.profile.toLowerCase() === r.s.profile.toLowerCase()) continue
+              const got = r.mine[peerKeyFor(t.profile)]?.url ? String(r.mine[peerKeyFor(t.profile)].url) : ''
+              if (!got || !samePeerUrl(got, peerEntryUrl(t.profile))) {
+                profMissing.push(`${r.s.profile}→${t.profile}`)
+              }
+            }
+          }
+          if (missing.length) {
+            checks.push({
+              id: 'peers',
+              label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+              status: 'fail',
+              detail: `peer hilang: ${missing.map((s) => `${peerKeyFor(s.profile)} → ${peerEntryUrl(s.profile)}`).join(', ')} — a2a_call("nama") menjawab unknown agent`,
+              fix: 'tekan "perbaiki" di panel Siap pakai (mendaftarkan peer yang hilang, idempoten)',
+            })
+          } else if (profUnreadable.length) {
+            checks.push({
+              id: 'peers',
+              label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+              status: 'unknown',
+              detail: `tidak bisa dipastikan — peer profil gagal dibaca untuk: ${profUnreadable.join(', ')}`,
+              fix: '',
+            })
+          } else if (profMissing.length) {
+            checks.push({
+              id: 'peers',
+              label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+              status: 'fail',
+              detail: `peer profil hilang: ${profMissing.join(', ')} — tool a2a_call tak muncul di sesi profil itu (gate scope-profil)`,
+              fix: 'tekan "perbaiki" di panel Siap pakai (menulis peer profil yang hilang, idempoten)',
+            })
+          } else if (!served.length) {
+            checks.push({
+              id: 'peers',
+              label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+              status: 'unknown',
+              detail: 'tidak bisa dipastikan — belum ada agent yang di-serve untuk dinilai',
+              fix: '',
+            })
+          } else {
+            checks.push({
+              id: 'peers',
+              label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+              status: 'pass',
+              detail: `semua ${served.length} agent yang di-serve punya peer (${served.map((s) => peerKeyFor(s.profile)).join(', ')})`,
+              fix: '',
+            })
+          }
+        }
+      }
+    } catch (err) {
+      checks.push({
+        id: 'peers',
+        label: 'Nama agent bisa diresolusi (peer a2a_agents)',
+        status: 'unknown',
+        detail: `tidak bisa dipastikan: ${(err as Error).message.slice(0, 200)}`,
+        fix: '',
+      })
+    }
+  }
   // 11. SELFREPAIR-1: A2A menolak path yang tidak dikenal (bug fallthrough).
   // Tambalan ada di sisi Hermes dan bisa hilang saat update — doctor memberi
   // tahu supaya pengguna tidak menuduh proyek ini.

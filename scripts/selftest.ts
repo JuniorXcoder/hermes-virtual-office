@@ -5696,6 +5696,87 @@ void (async () => {
     check('selfrepair-1: sapu mayat/dobel/basi + serve/unserve + pratinjau + doctor-sesudah + idempoten', problems.length === 0, problems.join(' | '))
   }
 
+  /* --------------------------------------- a2a-call-1 (memanggil + peer) -- */
+  // Klasifikasi operator: kunci platform_toolsets TAK ADA = TERBACA tak-bisa-
+  // memanggil (FAIL, bukan unknown). Sebab-2: peer `<slug>-local` + URL penuh
+  // di prompt silang (bukan cuma nama) supaya hop deterministik.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const { peerKeyFor, peerEntryUrl, samePeerUrl, listProfilePeers } = await import('../src/lib/hermes/kanban')
+
+    // 1. peerKeyFor + peerEntryUrl: kunci + URL penuh ke path served.
+    if (peerKeyFor('MKT-1') !== 'mkt-1-local') problems.push(`peerKeyFor salah: ${peerKeyFor('MKT-1')}`)
+    const want = peerEntryUrl('mkt-1')
+    if (!/^https?:\/\/.+\/mkt-1$/.test(want)) problems.push(`peerEntryUrl bukan URL penuh /mkt-1: ${want}`)
+    // NEGATIF: garis miring akhir diabaikan (tulisan CLI vs office).
+    if (!samePeerUrl('http://127.0.0.1:9900/mkt-1/', 'http://127.0.0.1:9900/mkt-1')) {
+      problems.push('samePeerUrl tak abaikan garis-miring-akhir')
+    }
+    if (samePeerUrl('http://127.0.0.1:9900/jun', 'http://127.0.0.1:9900/mkt-1')) {
+      problems.push('samePeerUrl samakan URL beda')
+    }
+
+    // 2. Prompt silang MENGIRIM URL penuh (bukan cuma nama) — deterministik,
+    // tak bergantung pada niat model jatuh ke URL.
+    const cx = buildCrossPrompt({ speaker: 'jun', next: 'mkt-1', topic: 't', point: 'p' })
+    if (!cx.includes(want)) problems.push(`cross tanpa URL penuh peer: ${want}`)
+    if (!cx.includes('a2a_call')) problems.push('cross tanpa a2a_call')
+    // NEGATIF: nama saja tanpa URL = tak cukup (itu keadaan lama yang gagal).
+    if (!/http/.test(cx)) problems.push('cross tanpa URL sama sekali')
+
+    // 3. Klasifikasi toolset: [] = FAIL (bukan unknown); null = unknown.
+    // canCall([]) harus false — kunci-hilang terbaca-tak-bisa-memanggil.
+    if (canCall([]) !== false) problems.push('daftar-kosong bukan false (kunci-hilang harus FAIL)')
+    if (canCall(null) !== null) problems.push('tak-terbaca bukan null (unknown hanya bila baca gagal)')
+
+    // 4. Route serve mendaftarkan peer + toolset (baca source, bukan klaim);
+    // kill mencabut peer (tak tinggal basi); spawn agent baru ikut keduanya.
+    const agSrc2 = readFileSync(new URL('../src/app/api/hermes/agents/route.ts', import.meta.url), 'utf8')
+    if (!/ensureA2aPeer/.test(agSrc2)) problems.push('route serve/spawn tanpa ensureA2aPeer')
+    if (!/ensureA2aToolset/.test(agSrc2)) problems.push('route serve/spawn tanpa ensureA2aToolset')
+    if (!/removeA2aPeer/.test(agSrc2)) problems.push('route kill tanpa removeA2aPeer')
+
+    // 5. Doctor + selfrepair memakai pemeriksa yang SAMA (jangan logika kedua):
+    // peer check di doctor, kind missingA2aPeer di selfrepair, UI baris peer.
+    const docSrc2 = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+    if (!/id: 'peers'/.test(docSrc2)) problems.push('doctor tanpa periksa peers (nama-resolvable)')
+    const srSrc2 = readFileSync(new URL('../src/lib/hermes/selfrepair.ts', import.meta.url), 'utf8')
+    if (!/missingA2aPeer/.test(srSrc2)) problems.push('selfrepair tanpa kind missingA2aPeer')
+    if (!/kunci platform_toolsets tidak ada/.test(srSrc2)) problems.push('selfrepair tak bedakan kunci-hilang dari baca-gagal')
+    const dpSrc2 = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
+    if (!/peerAdded/.test(dpSrc2)) problems.push('panel doctor tanpa baris peerAdded')
+    // 6. Tombol serve = pratinjau + laporan memanggil (bukan cuma served):
+    // panel spawn lapor toolset+peer, semua textarea >= 2 baris.
+    const aspSrc2 = readFileSync(new URL('../src/components/AgentSpawnPanel.tsx', import.meta.url), 'utf8')
+    if (!/toolset a2a ditambahkan \(bisa memanggil\)/.test(aspSrc2)) problems.push('tombol serve tanpa lapor toolset-memanggil')
+    if (!/peer .* didaftarkan/.test(aspSrc2)) problems.push('tombol serve tanpa lapor peer')
+    for (const m of aspSrc2.match(/<textarea[\s\S]*?\/>/g) ?? []) {
+      const r = /rows=\{(\d+)\}/.exec(m)
+      if (!r || Number(r[1]) < 2) problems.push('textarea spawn < 2 baris')
+    }
+
+    // 7. Peer PROFIL (gate scope-profil): profil tanpa peer = FAIL di doctor,
+    // bukan unknown — tool a2a_call tak muncul di sesi itu (bukti live mkt-1).
+    const mp = await listProfilePeers('mkt-1').catch(() => null)
+    if (mp === null) problems.push('peer profil mkt-1 tak terbaca (unknown sah)')
+    else if (!mp['jun-local']) problems.push('peer profil mkt-1 hilang jun-local (gate tutup = FAIL)')
+    const jp = await listProfilePeers('jun').catch(() => null)
+    if (jp === null) problems.push('peer profil jun tak terbaca (unknown sah)')
+    else if (!jp['mkt-1-local']) problems.push('peer profil jun hilang mkt-1-local (gate tutup = FAIL)')
+    // NEGATIF: profil tak ada = null (unknown sah — baca gagal, bukan kunci
+    // kosong). Beda dengan profil ADA tapi kunci tak ada = {} (FAIL).
+    const ghost = await listProfilePeers('tak-ada-profil-zz').catch(() => null)
+    if (ghost !== null) problems.push('profil-tak-ada harus null (unknown), bukan klaim kosong')
+    // 8. ensureA2aPeer dua-scope: serve/spawn tulis profil served lain, kill cabut keduanya.
+    if (!/ensureA2aPeer\(.*others\)/.test(agSrc2)) problems.push('serve/spawn tak tulis peer profil served-lain')
+    if (!/removeA2aPeer\(.*others\)/.test(agSrc2)) problems.push('kill tak cabut peer profil')
+    if (!/listProfilePeers/.test(srSrc2)) problems.push('selfrepair tak periksa peer profil')
+    if (!/profMissing|peer profil hilang/.test(docSrc2)) problems.push('doctor tak bedakan peer-profil hilang')
+
+    check('a2a-call-1: kunci-hilang=FAIL + peer resolvable + URL-penuh di prompt + kabel serve/spawn/kill + peer-profil', problems.length === 0, problems.join(' | '))
+  }
+
   /* ------------------------------------------------------------- result -- */
   console.log(`\n${checks - failures}/${checks} checks passed\n`)
   if (failures) {
