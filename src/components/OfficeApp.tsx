@@ -13,6 +13,7 @@ import SystemPanel from './SystemPanel'
 import BoardPanel from './BoardPanel'
 import ChatPanel from './ChatPanel'
 import A2aPanel from './A2aPanel'
+import DoctorPanel from './DoctorPanel'
 import NewTaskDialog from './NewTaskDialog'
 import KanbanModal from './KanbanModal'
 import DummySpawnDialog from './DummySpawnDialog'
@@ -54,6 +55,7 @@ export default function OfficeApp() {
   const [panelOpen, setPanelOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [a2aOpen, setA2aOpen] = useState(false)
+  const [doctorOpen, setDoctorOpen] = useState(false)
   const [boardOpen, setBoardOpen] = useState(false)
   const [nameOpen, setNameOpen] = useState(false)
   /** Slot of a dummy avatar that was clicked, if any. */
@@ -166,6 +168,9 @@ export default function OfficeApp() {
           <button className="vp-btn vp-btn-ghost" onClick={() => setA2aOpen(true)}>
             A2A
           </button>
+          <button className="vp-btn vp-btn-ghost" onClick={() => setDoctorOpen(true)}>
+            Siap pakai?
+          </button>
         </nav>
         {/* Saklar tampilan sengaja di luar <nav>: di HP baris tombol bisa digeser ke
             samping, dan pilihan 3D/Kanban/Sprite tidak boleh ikut hilang dari layar. */}
@@ -212,6 +217,7 @@ export default function OfficeApp() {
         onAgentCreated={() => void loadTasks()}
       />
       <A2aPanel open={a2aOpen} onClose={() => setA2aOpen(false)} />
+      <DoctorPanel open={doctorOpen} onClose={() => setDoctorOpen(false)} />
       <NewTaskDialog />
       {boardOpen && <KanbanModal onClose={() => setBoardOpen(false)} />}
       {nameOpen && <OfficeNameDialog onClose={() => setNameOpen(false)} />}

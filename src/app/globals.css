@@ -70,6 +70,9 @@ kbd {
 }
 .vp-dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
 .vp-dot.bad { background: var(--red); box-shadow: 0 0 8px var(--red); }
+/* Doctor "tak pasti": abu — sengaja bukan hijau, bukan merah. Yang tidak bisa
+   dipastikan tidak boleh tampil lulus maupun gagal. */
+.vp-dot.warn { background: #8a8f98; box-shadow: 0 0 8px #8a8f98; }
 
 /* -------------------------------------------------------------- controls -- */
 .vp-btn {

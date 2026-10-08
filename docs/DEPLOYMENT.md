@@ -164,7 +164,77 @@ server {
 
 ---
 
-## 6. Security Hardening Checklist
+## 7. A2A setup — supaya agent bisa dipanggil agent lain
+
+Jawaban untuk "kalau publik, pengguna lain harus setting di Hermes-nya juga?":
+**ya.** Aplikasi ini tidak membawa Hermes sendiri — ia menyetir instalasi Hermes
+yang sudah ada lewat CLI. Tanpa setup di bawah, kantor 3D-nya jalan tapi rapat
+A2A ditolak, toggle A2A tidak berpengaruh, dan tombol tulis bisa 403. Kalau
+ragu, buka panel **"Siap pakai?"** di topbar: ia memeriksa semuanya dan memberi
+langkah perbaikan yang bisa disalin.
+
+### 7.1 Nyalakan platform A2A
+
+```bash
+hermes config set platforms.a2a.enabled true --force
+hermes config set platforms.a2a.port 9900 --force
+```
+
+Tanpa token apa pun, server A2A mengikat **loopback saja** (127.0.0.1) — itu
+bawaan yang aman, bukan bug. Cek: `hermes config get platforms.a2a --json`.
+
+### 7.2 Serve tiap agent yang mau bisa dipanggil
+
+Dari aplikasi: buka form **Agent**, nyalakan toggle **A2A** untuk profil itu.
+Aplikasi yang menulis `platforms.a2a.agents` di `~/.hermes/config.yaml`:
+backup dulu, sunting bedah, kunci lain utuh.
+
+### 7.3 `local: false` itu SYARAT, bukan pilihan
+
+Entri served-agent **harus** `local: false`. Dengan `local: true`, request
+dijawab sesi gateway yang hidup — dan **identitas agent-nya salah** (bug ini
+pernah kejadian di sini: agent menjawab sebagai profil yang salah). Toggle di
+form Agent selalu menulis `local: false`; jangan ubah manual menjadi `true`.
+
+### 7.4 Setiap penambahan butuh restart gateway
+
+Daftar served **dibaca sekali saat gateway boot**. Toggle saja tidak cukup —
+entri baru tersimpan tapi belum aktif. Ini penyebab paling umum "kok gak bisa
+dipanggil":
+
+```bash
+systemctl --user restart hermes-gateway
+```
+
+Panel "Siap pakai?" membandingkan mtime `config.yaml` dengan waktu start
+gateway dan bilang terus terang "Tersimpan, belum aktif — restart gateway"
+bila config lebih baru.
+
+### 7.5 Akses dari luar loopback: ALLOWED_ORIGINS
+
+Kalau kantor dibuka lewat alamat publik (bukan localhost), dua syarat tulisan
+(spawn/kill/chat/rapat) harus terpenuhi, kalau tidak jawabannya 403 — dan pesan
+error-nya sendiri sudah menyebut cara memperbaikinya:
+
+1. `ALLOWED_ORIGINS` di `.env.local` harus memuat origin yang dipakai, lalu restart aplikasi.
+2. Header `Origin` harus sama dengan `Host` (same-origin).
+
+```bash
+# .env.local
+ALLOWED_ORIGINS=203.0.113.10:3300,office.example.com
+```
+
+### 7.6 Modal minimum per fitur
+
+| Fitur | Butuh |
+|---|---|
+| Kantor 3D + papan + chat | `HERMES_BIN` menunjuk executable hermes; profil agent ada dan punya model |
+| Rapat mode `simulasi` | `AI_BASE_URL` + `AI_API_KEY` (endpoint OpenAI-compatible). Tanpa ini rapat menjawab "not configured". |
+| Rapat mode `a2a` | **Tidak** butuh AI_BASE_URL/AI_API_KEY (agent nyata yang bicara), tapi butuh platform A2A nyala + ≥ 2 agent di-serve + restart gateway sesudahnya |
+
+---
+
+## 8. Security Hardening Checklist
 
 1. **Do not expose the Hermes home**: this app shells out to `hermes` with full
    access to your board and profiles. Treat the process account as a trusted

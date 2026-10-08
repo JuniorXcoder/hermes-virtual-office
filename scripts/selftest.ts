@@ -54,6 +54,14 @@ import {
   resolveA2aPeer,
   stripFraming,
 } from '../src/lib/hermes/a2a-transcript'
+import {
+  classifyServed,
+  gatewayStartMs,
+  needsRestart,
+  originVerdict,
+  parseA2aPlatform,
+  parseGatewayStart,
+} from '../src/lib/hermes/doctor'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -5106,6 +5114,98 @@ void (async () => {
     if (!/mode: meetingMode/.test(uSrc)) problems.push('UI tak mengirim mode')
 
     check('rapat-a2a-1: tolak jujur, gagal bukan karangan, mode tersimpan', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SETUP-1: PANEL "SIAP PAKAI?" JUJUR.
+  //
+  // Ekspektasi literal dari fungsi pure di doctor.ts (bukan dari UI):
+  // - parseA2aPlatform: null/array/salah-bentuk = belum ada; enabled harus
+  //   true persis; port non-angka = null.
+  // - classifyServed: profil hilang (case-insensitive) = BASI, bukan siap.
+  // - parseGatewayStart + needsRestart: config lebih baru dari start = restart;
+  //   start tak terparse = null = "tidak bisa dipastikan", bukan false.
+  // - originVerdict: tanpa header = unknown; beda origin = fail; loopback
+  //   lulus; host asing tanpa izin = fail + menyebut host itu.
+  // - Route doctor ada, GET + try/catch (penjaga error seragam). UI: panel
+  //   terdaftar di topbar OfficeApp, textarea perbaikan rows>=2, status TAK
+  //   PASTI tampil (bukan cuma LULUS/GAGAL).
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+
+    // 1. parseA2aPlatform.
+    if (parseA2aPlatform(null).found) problems.push('null terbaca ada')
+    if (parseA2aPlatform([]).found) problems.push('array terbaca ada')
+    if (parseA2aPlatform('x').found) problems.push('string terbaca ada')
+    const off = parseA2aPlatform({ enabled: false, port: 9900 })
+    if (!off.found || off.enabled) problems.push('enabled:false lolos')
+    const truthy = parseA2aPlatform({ enabled: 1, port: 9900 })
+    if (truthy.enabled) problems.push('enabled:1 (bukan true) lolos')
+    const ok = parseA2aPlatform({ enabled: true, port: 9900 })
+    if (!ok.found || !ok.enabled || ok.port !== 9900) problems.push(`platform nyala terbaca ${JSON.stringify(ok)}`)
+    const noport = parseA2aPlatform({ enabled: true })
+    if (noport.port !== null) problems.push(`port hilang terbaca ${noport.port}`)
+    const badport = parseA2aPlatform({ enabled: true, port: '9900' })
+    if (badport.port !== null) problems.push('port string lolos')
+
+    // 2. classifyServed: basi ditandai, cocok huruf-besar tetap segar.
+    const rows = classifyServed(
+      [{ profile: 'jun', slug: 'jun' }, { profile: 'Hilang', slug: 'hilang' }],
+      ['jun', 'budi'],
+    )
+    const junRow = rows.find((r) => r.slug === 'jun')
+    const lostRow = rows.find((r) => r.slug === 'hilang')
+    if (!junRow || junRow.stale) problems.push('yang ada malah basi')
+    if (!lostRow || !lostRow.stale) problems.push('profil hilang tidak basi')
+    const ci = classifyServed([{ profile: 'JUN', slug: 'jun' }], ['jun'])
+    if (ci[0].stale) problems.push('cocok huruf-besar dianggap basi')
+
+    // 3. parseGatewayStart + needsRestart.
+    const start = parseGatewayStart('Thu 2026-10-08 22:44:31 WIB\n')
+    if (start === null) problems.push('timestamp systemd tak terparse')
+    if (parseGatewayStart('') !== null) problems.push('string kosong terparse')
+    if (parseGatewayStart('bukan waktu') !== null) problems.push('sampah terparse jadi waktu')
+    if (start !== null) {
+      if (needsRestart(start + 1000, start) !== true) problems.push('config lebih baru tak minta restart')
+      if (needsRestart(start - 1000, start) !== false) problems.push('config lama malah minta restart')
+    }
+    if (needsRestart(Date.now(), null) !== null) problems.push('start tak-diketahui bukan null')
+
+    // 3b. gatewayStartMs: di mesin ini gateway hidup — harus terbaca (bukan
+    // null). Kalau null di sini, fallback systemctl+PID dua-duanya buta.
+    const liveStart = await gatewayStartMs()
+    if (liveStart === null) problems.push('gateway hidup tapi start-nya tak terbaca')
+
+    // 4. originVerdict: 4 cabang.
+    const noHdr = originVerdict(null, null, '')
+    if (noHdr.status !== 'unknown') problems.push('tanpa header bukan unknown')
+    const diff = originVerdict('a:3300', 'http://b:3300', '')
+    if (diff.status !== 'fail') problems.push('beda origin bukan fail')
+    const loop = originVerdict('127.0.0.1:3300', 'http://127.0.0.1:3300', '')
+    if (loop.status !== 'pass') problems.push(`loopback bukan pass: ${loop.detail}`)
+    const foreign = originVerdict('203.0.113.10:3300', 'http://203.0.113.10:3300', '')
+    if (foreign.status !== 'fail' || !foreign.fix.includes('203.0.113.10:3300')) {
+      problems.push(`asing tanpa izin tak menyebut host: ${foreign.detail} / ${foreign.fix}`)
+    }
+    const allowed = originVerdict('203.0.113.10:3300', 'http://203.0.113.10:3300', '203.0.113.10:3300')
+    if (allowed.status !== 'pass') problems.push('host berizin bukan pass')
+
+    // 5. Route doctor: GET + try/catch + memanggil runDoctor.
+    const dSrc = readFileSync(new URL('../src/app/api/hermes/doctor/route.ts', import.meta.url), 'utf8')
+    if (!/export\s+(async\s+)?function\s+GET\b/.test(dSrc)) problems.push('route doctor tanpa GET')
+    if (!/try\s*\{/.test(dSrc)) problems.push('route doctor tanpa try/catch')
+    if (!/runDoctor/.test(dSrc)) problems.push('route doctor tak memanggil runDoctor')
+
+    // 6. UI: tombol topbar + textarea rows>=2 + cabang TAK PASTI.
+    const oSrc = readFileSync(new URL('../src/components/OfficeApp.tsx', import.meta.url), 'utf8')
+    if (!/Siap pakai\?/.test(oSrc)) problems.push('topbar tanpa tombol Siap pakai?')
+    if (!/DoctorPanel/.test(oSrc)) problems.push('OfficeApp tak merender DoctorPanel')
+    const pSrc = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
+    if (!/rows=\{2\}/.test(pSrc)) problems.push('textarea perbaikan bukan rows=2')
+    if (!/TAK PASTI/.test(pSrc)) problems.push('UI tanpa cabang TAK PASTI')
+
+    check('setup-1: doctor jujur — lulus/gagal/tak-pasti, basi ditandai, restart terdeteksi', problems.length === 0, problems.join(' | '))
   }
 
   /* ------------------------------------------------------------- result -- */
