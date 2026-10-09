@@ -367,6 +367,8 @@ The plan is a real building, and the navigation grid is generated from it:
 
 ![Isometric view of the built office — pool courtyard, gym turf, one work room per division, cafeteria and meeting rooms — with a label over every agent](docs/office-3d.jpg)
 
+![Lower level by the pool: sun loungers, the gym with two avatars mid-workout, the office wing behind the "Marketing & SEO" sign, and the CEO suite with the meeting rooms above](docs/office-courtyard.jpg)
+
 ### 📋 Kanban board panel
 
 The **Papan** (board) panel: seven columns — **TODO**, **DIKERJAKAN**, **REVIEW**,
