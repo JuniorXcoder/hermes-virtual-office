@@ -70,6 +70,13 @@ The **Hermes Meeting Protocol** solves this with:
 - **Visual Bubble Duration**: Calculated dynamically based on text length:
   $$\text{Duration (ms)} = \min(14000, \max(4000, \text{length} \times 60))$$
 
+> **KOREKSI 2026-10-09: "Turn Timeout: 60 seconds per agent turn" di atas BASI —
+> tidak ada `60000`/`60_000` di kode.** Yang benar (lihat §7): timeout giliran
+> **simulasi 120 s** (`MEETING_TURN_TIMEOUT_MS`, default `120000`) dan **A2A
+> 280 s** (`MEETING_A2A_TIMEOUT_MS`, default `280000`). Dua angka lain cocok kode:
+> `MAX_PARTICIPANTS = 4` dan `MAX_TURNS = 10` (`MAX_MEETING_TURNS`). Rumus durasi
+> balon belum diverifikasi terhadap kode.
+
 ---
 
 ## 4. Prompt Engineering & System Instructions

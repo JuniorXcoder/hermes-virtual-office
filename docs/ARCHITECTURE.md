@@ -25,7 +25,7 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |                               |  OfficeStore  |                               |
 |                               +-------^-------+                               |
 +---------------------------------------|---------------------------------------+
-                                        | SSE / HTTP REST
+                                        | HTTP REST (polling, no SSE — see §6)
 +---------------------------------------|---------------------------------------+
 |                           NEXT.JS APP SERVER                                  |
 |                                                                               |
@@ -308,7 +308,11 @@ changes nothing. The seven sweep kinds (`staleServed`, `deadAvatar`,
 `missingA2aPeer`) and the two key-absent-vs-unreadable distinctions are
 documented in [`IMPLEMENTATION-NOTES.md`](IMPLEMENTATION-NOTES.md) §4–§5.
 
-### 8.1. Dual View Switcher (3D Isometric ⇄ 2D Grid/Kanban)
-- **Trigger**: 1-click persistent toggle in top-right HUD navbar (`[ 3D Office ]` / `[ 2D Kanban ]`).
-- **2D Mode**: Completely detaches WebGL render loop to achieve 0% GPU load on mobile devices or battery saver modes.
-- **Synchronization**: Shared Zustand store (`useOfficeStore`) guarantees that state, active meetings, and task movements remain 100% consistent across both views.
+### 8.1. View Switcher (3D Isometric / Kanban / Sprite)
+- **Trigger**: persistent toggle in the top-right HUD navbar — three buttons
+  (`3D`, `Kanban`, `Sprite`) in `src/components/OfficeApp.tsx`.
+- **Non-3D views**: the 3D `<Scene3D>` component is **unmounted** (and its render
+  loop stopped) whenever the view is not `3d`, so no WebGL frames render — 0% GPU
+  load on mobile devices or battery-saver modes.
+- **Synchronization**: shared Zustand store (`useOffice`, `src/lib/store.ts`)
+  keeps state, active meetings, and task movements consistent across the views.

@@ -380,7 +380,7 @@ a backup** — nothing can be restored from it.
 first, then the profile, and the response reports how many:
 
 ```json
-{ "success": true, "action": "kill", "name": "carol", "deleted": true, "purged": 3, "killed": [] }
+{ "success": true, "action": "kill", "name": "carol", "deleted": true, "purged": 3 }
 ```
 
 Without this the board accumulated work belonging to nobody — a name that no longer
@@ -434,7 +434,8 @@ Everything the meeting picker needs, in one request.
   instead of letting the user start something that cannot run.
 - `live` are meetings in this process. `state` is `queued | running | done | error | idle`.
 - `active` is the id holding the single execution slot, or `null`. A second start
-  queues behind it.
+  is **refused** (`409 meeting_failed`, `masih ada rapat yang berjalan`) — not
+  queued (see §26).
 - `archived` are markdown transcripts on disk under `DATA_DIR/meetings`, newest
   first. Reading is tolerant: a hand-edited or unparseable file yields fewer fields
   rather than failing the request, and one bad file never empties the list.
@@ -465,8 +466,10 @@ stale name from an old page cannot start a meeting with a non-existent agent.
 **Validation performed**
 
 1. `participants` must be an array; every entry is stringified.
-2. Names not in the current agent list are dropped.
-3. Fewer than 2 survivors → `400 invalid_request`
+2. Names not in the current agent list → `400 invalid_request` naming them
+   (`peserta tak dikenal: …`; in `a2a` mode the serve-reject text naming who) —
+   **not** silently dropped (see §26).
+3. Fewer than 2 known participants → `400 invalid_request`
    (`"pilih minimal 2 peserta yang dikenal"`).
 
 **Responses**
@@ -476,7 +479,8 @@ stale name from an old page cannot start a meeting with a non-existent agent.
 - `409 meeting_failed` → the engine refused (already running, provider
   unconfigured, or a start error)
 
-Only one meeting runs per server; a second start queues behind the first.
+Only one meeting runs per server; a second start is **refused** with
+`409 meeting_failed` (`masih ada rapat yang berjalan`), not queued (see §26).
 
 ---
 
