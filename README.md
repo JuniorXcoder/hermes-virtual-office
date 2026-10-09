@@ -14,6 +14,8 @@
 
 </div>
 
+[![Hermes Virtual Office — 3D office overview and gym floor, click to watch the demo](docs/hero.jpg)](https://youtu.be/ezEthYDU_bw)
+
 ---
 
 ## 🌟 Overview
@@ -348,9 +350,7 @@ Detailed architectural specifications are documented in [docs/ARCHITECTURE.md](d
 
 ### 🎬 Demo video
 
-[![Watch the demo — Hermes Agent Virtual Office](https://img.youtube.com/vi/ezEthYDU_bw/maxresdefault.jpg)](https://youtu.be/ezEthYDU_bw)
-
-[Watch on YouTube](https://youtu.be/ezEthYDU_bw) — *"Hermes Agent Virtual Office - Command Control AI Hermes"* by Kang Njun.
+▶ Watch the demo on YouTube: [Hermes Agent Virtual Office - Command Control AI Hermes](https://youtu.be/ezEthYDU_bw) by Kang Njun.
 
 The plan is a real building, and the navigation grid is generated from it:
 
