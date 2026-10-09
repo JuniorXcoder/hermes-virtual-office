@@ -497,10 +497,18 @@ owner picker; the cron panel offers one item, only for a job that is actually fa
 be noise). The default is every row with a resolved owner ON, every row without one
 OFF, because an item assigned to nobody is not work.
 
-The create call is one shared endpoint, `POST /api/hermes/tasks/from-items`, rather
-than one per source: the only thing that differs is the marker, and duplicating the
-path would let the two drift. Partial success is reported as such — one row with no
-assignee must not lose the others.
+> Historical note (2026-10-09): the create call below was `POST
+> /api/hermes/tasks/from-items`. That route no longer exists — it was merged
+> into `POST /api/hermes/tasks` (single shape `{title, assignee}` + batch shape
+> `{origin, items}`), because two copies of the same create path drift
+> (`src/app/api/hermes/tasks/route.ts`; current surface:
+> [`API-SPEC.md`](API-SPEC.md) §3). The behaviour described here (one shared
+> endpoint, partial success reported per row) is unchanged, only the path moved.
+
+The create call is one shared endpoint, `POST /api/hermes/tasks` (batch shape),
+rather than one per source: the only thing that differs is the marker, and
+duplicating the path would let the two drift. Partial success is reported as
+such — one row with no assignee must not lose the others.
 
 ### Both directions are visible
 
@@ -512,13 +520,14 @@ link can be read from either end.
 
 ```
 GET  meeting/actions?from=mTESTLINK  -> 3 items, dave unresolved (null)
-POST tasks/from-items                -> 2 created, 1 refused ("penanggung belum dipilih")
+POST tasks (batch)                   -> 2 created, 1 refused ("penanggung belum dipilih")
      created_by on the board          -> 'meeting:mTESTLINK' on both
 GET  cron/actions?from=<healthy job> -> 0 items
 GET  cron/actions?from=<failing job> -> 1 item carrying the job's real error text
-POST tasks/from-items (cron origin)  -> 1 created, origin reads back as cron:<id>
+POST tasks (batch, cron origin)      -> 1 created, origin reads back as cron:<id>
 GET  */actions?from=unknown          -> 404 JSON from the handler, not a route miss
 ```
+(paths as merged — see the historical note above)
 
 All probe tasks, the probe job and the probe transcript were removed afterwards; the
 board is back to its 13 tasks and `jobs.json` was restored from a backup taken before

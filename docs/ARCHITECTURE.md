@@ -34,12 +34,18 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |  |  • GET  /api/hermes/tasks         (board snapshot: tasks + agents)      |  |
 |  |  • POST /api/hermes/tasks         (create one task, or a batch)         |  |
 |  |  • GET  /api/hermes/tasks/{id}    (run history + log tail)              |  |
-|  |  • POST /api/hermes/tasks/{id}    (steer or cancel a running task)      |  |
+|  |  • POST /api/hermes/tasks/{id}    (steer/cancel/run/promote/set-model)  |  |
 |  |  • GET  /api/hermes/meeting       (configured flag + meeting list)      |  |
-|  |  • POST /api/hermes/meeting       (start a simulated meeting)           |  |
+|  |  • POST /api/hermes/meeting       (start a meeting: simulasi OR a2a)    |  |
+|  |  • POST /api/hermes/meeting/cancel (stop a live meeting → DIBATALKAN)   |  |
 |  |  • GET  /api/hermes/meeting/actions (follow-ups from the minutes)       |  |
-|  |  • GET  /api/hermes/agents        (profiles + office membership)        |  |
-|  |  • POST /api/hermes/agents        (create / spawn / kill a profile)     |  |
+|  |  • GET  /api/hermes/agents        (profiles + membership + A2A state)   |  |
+|  |  • POST /api/hermes/agents        (spawn/hide/kill/create/set-model +   |  |
+|  |                                    serve/unserve A2A entries)            |  |
+|  |  • GET  /api/hermes/doctor        (Siap pakai? pass/fail/unknown)       |  |
+|  |  • GET+POST /api/hermes/selfrepair (preview, then run + doctor-after)   |  |
+|  |  • GET  /api/hermes/a2a/live      (live agent→agent pairs, for scene)   |  |
+|  |  • GET  /api/hermes/a2a/transcript (A2A conversation transcripts)       |  |
 |  |  • GET  /api/hermes/cron          (scheduled jobs + recent runs)        |  |
 |  |  • POST /api/hermes/cron          (create / pause / resume / run / rm)  |  |
 |  |  • GET  /api/hermes/cron/actions  (a failing job as a candidate task)   |  |
@@ -49,16 +55,21 @@ Hermes Virtual Office operates on an **Adapter-First Architecture**, ensuring co
 |  +------------------------------------^------------------------------------+  |
 |                                       |                                       |
 |  +------------------------------------v------------------------------------+  |
-|  |                 Hermes CLI adapter (src/lib/hermes/kanban.ts)           |  |
-|  |  spawns:  hermes kanban [--board B] <args> --json                       |  |
+|  |              Hermes CLI bridges (src/lib/hermes/*.ts)                  |  |
+|  |  board/tasks/agents/chat: hermes kanban/chat/profile ... --json        |  |
+|  |  cron JOBS: $HERMES_HOME/cron/jobs.json (no --json mode); RUNS:        |  |
+|  |  `hermes cron runs`. A2A served entries: surgical read/write of        |  |
+|  |  platforms.a2a.agents in ~/.hermes/config.yaml (backup first,          |  |
+|  |  local:false).                                                         |  |
 |  +---------------------+-------------------------------+-------------------+  |
 |                        |                               |                      |
 +------------------------|-------------------------------|----------------------+
                          |                               |
              +-----------v-----------+       +-----------v-----------+
-             |    ApiServerDriver    |       |       MockDriver      |
-             |  • HTTP to port 8642  |       |  • Offline Preview    |
-             |  • OpenAI-compatible  |       |  • Unit Testing       |
+             |   Hermes A2A server   |       |  Upstream LLM gateway |
+             |  • 127.0.0.1:9900    |       |  • OpenAI-compatible  |
+             |  • one path /<slug>   |       |  • meetings (simulasi|
+             |    per served agent   |       |    mode) only         |
              +-----------------------+       +-----------------------+
 ```
 
@@ -198,20 +209,35 @@ To avoid complex polygon meshes, navigation uses a **2D Waypoint Graph**:
 
 ## 5. Meeting Orchestration Protocol
 
-The meeting subsystem handles multi-agent discussions safely without tripping upstream rate limits:
+Two modes, one runner each (`src/lib/hermes/meeting.ts`). Both serialize turns;
+both archive minutes to `data/meetings/`. For the wire details see
+[`IMPLEMENTATION-NOTES.md`](IMPLEMENTATION-NOTES.md) §1–§2.
 
-1. **Moderator Phase**: Assigned moderator opens the agenda and asks question 1.
-2. **Round-Robin Turns**: Participants take turns responding in sequential order.
-3. **Concurrency Guard**:
-   - Worker calls are **strictly serialized** (one LLM request at a time).
-   - Maximum budget of **10 turns** per meeting.
-   - Timeout capped at 60 seconds per turn.
-4. **Minutes Generator**:
-   - Once all turns conclude, a separate synthesis prompt formats the discussion into:
-     - `## 🎯 Decisions`
-     - `## 📋 Action Items (Owner + Deadline)`
-     - `## ⚠️ Identified Risks & Mitigations`
-   - Stored in markdown and broadcasted via SSE to the client.
+**Mode `simulasi`** (the old behaviour, labelled as such in the UI): the upstream
+LLM speaks, not the agents. Moderator opens (`phase: 'opening'`), then up to 2
+rounds of speeches (`phase: 'round1'..'round2'`), then minutes
+(`phase: 'minutes'`). Concurrency guard: strictly serialized, max
+`MAX_MEETING_TURNS` (default 10) turns, `MEETING_TURN_TIMEOUT_MS` (default
+120 s) per turn with `MEETING_TURN_RETRIES` (default 3) linear-backoff retries
+(`complete()` in `meeting.ts`). Minutes are a separate synthesis step
+(`MINUTES_SYSTEM`) with three fixed sections — `## KEPUTUSAN`,
+`## TINDAK LANJUT`, `## RISIKO` — and no agreement is invented when there is
+none (`Belum ada kesepakatan final` + competing options). Needs
+`AI_BASE_URL` + `AI_API_KEY`; without them the start is refused honestly.
+
+**Mode `a2a`**: real agents take turns over the A2A protocol — no `AI_*` needed.
+`runA2a()` (opening → cross-calls → minutes): one `message/send` per turn to
+`A2A_BASE_URL/<slug>` (`sendA2a()` in `meeting-a2a.ts`). Cross-turns instruct
+each agent to call the next via its own `a2a_call` tool with the **full peer
+URL** (resolvable without depending on the caller's peer table) and to quote
+the reply verbatim; failures are recorded `GAGAL + cause`, never
+LLM-fabricated. Participants must all be served or the meeting is refused
+before starting, naming who (`missingServed()` / `formatReject()`).
+
+Either mode can be cancelled mid-flight: `POST /api/hermes/meeting/cancel`
+stops at the safe boundary (the running turn finishes, the next never starts),
+the archive is marked `- status: DIBATALKAN` with the stop-turn count, and
+cancelling with nothing live answers `404 no_running_meeting`.
 
 ---
 
@@ -260,7 +286,29 @@ The cost is bounded: one request per interval per open tab, against a local CLI.
   - Warm desk lamps activated (`color: 0xffb347`, `intensity: 1.8`, localized point lights).
   - PC monitors cast vibrant cyan/green glow onto the avatars' faces and keyboards.
 
-### 7.5. Dual View Switcher (3D Isometric ⇄ 2D Grid/Kanban)
+## 8. Doctor & self-repair: honest state, then self-healing
+
+The **Siap pakai?** panel (`GET /api/hermes/doctor`, `src/lib/hermes/doctor.ts`,
+rendered by `src/components/DoctorPanel.tsx`) checks every layer the office
+depends on — CLI, board, profiles, per-profile models, dangling
+`custom:<name>` providers, simulasi LLM keys, A2A platform, served entries
+(stale marked BASI, `local:true` flagged), gateway restart state, write-origin
+trust, per-served caller toolsets, global + profile-scope peers, and the
+unknown-path fallthrough probe — each as `pass` / `fail` / `unknown` with a
+copy-paste fix. What cannot be established says so; "needs restart" is a
+check row, not a toast.
+
+**Self-repair** (`GET`+`POST /api/hermes/selfrepair`,
+`src/lib/hermes/selfrepair.ts`) closes the loop: preview what would change
+plus what cannot be fixed automatically and why, run it through the same
+writers the interactive paths use (config backed up first), then return a
+fresh doctor report showing the new state. Idempotent — a healthy office
+changes nothing. The seven sweep kinds (`staleServed`, `deadAvatar`,
+`dupAvatar`, `strayProfileDir`, `danglingProvider`, `missingA2aToolset`,
+`missingA2aPeer`) and the two key-absent-vs-unreadable distinctions are
+documented in [`IMPLEMENTATION-NOTES.md`](IMPLEMENTATION-NOTES.md) §4–§5.
+
+### 8.1. Dual View Switcher (3D Isometric ⇄ 2D Grid/Kanban)
 - **Trigger**: 1-click persistent toggle in top-right HUD navbar (`[ 3D Office ]` / `[ 2D Kanban ]`).
 - **2D Mode**: Completely detaches WebGL render loop to achieve 0% GPU load on mobile devices or battery saver modes.
 - **Synchronization**: Shared Zustand store (`useOfficeStore`) guarantees that state, active meetings, and task movements remain 100% consistent across both views.
