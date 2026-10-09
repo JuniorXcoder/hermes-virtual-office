@@ -5571,6 +5571,92 @@ void (async () => {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // RESTART-SAFE-1: TOMBOL RESTART TAHU SIAPA YANG AKAN DIBUNUHNYA.
+  //
+  // Bukti nyata: DOCS-2 crash "pid not alive" saat gateway di-restart —
+  // tombolnya tak tahu worker sedang bekerja. Pure dari SUMBER INDEPENDEN:
+  // decideRestart/restartBlockMessage/restartUnknownMessage (restart-guard.ts,
+  // tanpa CLI/proses) + source route + source pop up + source board.
+  // Negatif: guard yang tak bisa menolak = bukan guard — kosong-vs-ada dan
+  // confirm-false-vs-true diuji dua-duanya.
+  // ───────────────────────────────────────────────────────────────────────────
+  {
+    const problems: string[] = []
+    const { decideRestart, restartBlockMessage, restartUnknownMessage } =
+      await import('../src/lib/hermes/restart-guard')
+
+    // 1. Pure: kosong → schedule (operasi biasa jangan dibuat ribet).
+    const d0 = decideRestart({ state: 'ok', cards: [] })
+    if (d0.action !== 'schedule') problems.push('kosong malah block')
+    const d0c = decideRestart({ state: 'ok', cards: [] }, { confirm: true })
+    if (d0c.action !== 'schedule') problems.push('kosong+confirm malah block')
+
+    // 2. Pure: ada → BLOCK + kalimat konsekuensi; confirm → schedule.
+    const live = [
+      { id: 't_aaaa1111', title: 'kerja A', assignee: 'jun' },
+      { id: 't_bbbb2222', title: 'kerja B', assignee: null },
+    ]
+    const d1 = decideRestart({ state: 'ok', cards: live })
+    if (d1.action !== 'block' || d1.blocked !== 'running') problems.push('ada-running tak diblokir')
+    else {
+      if (d1.count !== 2) problems.push(`count salah (${d1.count}, harus 2)`)
+      if (!/2 card sedang dikerjakan/.test(d1.message)) problems.push('kalimat tak menyebut N')
+      if (!/membunuh worker/.test(d1.message)) problems.push('kalimat tanpa "membunuh worker"')
+      if (!/belum dikomit akan hilang/.test(d1.message)) problems.push('kalimat tanpa "belum dikomit"')
+    }
+    // NEGATIF pasangan: confirm eksplisit → schedule (guard bisa lewat).
+    const d1c = decideRestart({ state: 'ok', cards: live }, { confirm: true })
+    if (d1c.action !== 'schedule') problems.push('confirm-true tak menjadwalkan (guard macet-tolak)')
+    // confirm non-boolean ≠ true → tetap block (jangan longgar).
+    const d1x = decideRestart({ state: 'ok', cards: live }, { confirm: 'yes' as unknown as boolean })
+    if (d1x.action !== 'block') problems.push('confirm-"yes" lolos (harus boolean true)')
+
+    // 3. Pure: unknown → block jujur; confirm → schedule.
+    const du = decideRestart({ state: 'unknown', error: 'CLI mati' })
+    if (du.action !== 'block' || du.blocked !== 'unknown') problems.push('unknown tak diblokir (diam-diam mengizinkan)')
+    else if (!/tidak bisa dipastikan/.test(du.message)) problems.push('unknown tanpa "tidak bisa dipastikan"')
+    const duc = decideRestart({ state: 'unknown', error: 'CLI mati' }, { confirm: true })
+    if (duc.action !== 'schedule') problems.push('unknown+confirm tak menjadwalkan')
+    if (restartBlockMessage(0) !== '') problems.push('blockMessage(0) tak kosong')
+    if (!/sebab tidak diketahui/.test(restartUnknownMessage('  '))) problems.push('unknownMessage kosong tanpa fallback')
+
+    // 4. Route source: baca board + dua saklar harness + cabang 409 + manual tetap.
+    const grSrc2 = readFileSync(new URL('../src/app/api/hermes/gateway-restart/route.ts', import.meta.url), 'utf8')
+    if (!/readRunningKanbanCards/.test(grSrc2)) problems.push('route tak membaca card berjalan')
+    if (!/decideRestart/.test(grSrc2)) problems.push('route tak memakai decideRestart')
+    if (!/status: 409/.test(grSrc2)) problems.push('route tanpa penolakan 409 (guard tak bisa menolak)')
+    if (!/confirmRequired/.test(grSrc2)) problems.push('route tanpa confirmRequired')
+    if (!/runningCount/.test(grSrc2)) problems.push('route tanpa runningCount')
+    if (!/blocked: 'unknown'/.test(grSrc2)) problems.push('route tanpa cabang unknown')
+    if (!/hermes gateway restart/.test(grSrc2)) problems.push('route restart tanpa perintah portabel')
+    if (!/HERMES_KANBAN_BOARD_UNREADABLE/.test(grSrc2)) problems.push('route tanpa saklar harness unknown')
+    if (!/x-kanban-board/.test(grSrc2)) problems.push('route tanpa saklar harness board-lain')
+
+    // 5. Reader source: fungsi ada + filter `running` saja (bukan review).
+    const kSrc2 = readFileSync(new URL('../src/lib/hermes/kanban.ts', import.meta.url), 'utf8')
+    if (!/export async function readRunningKanbanCards/.test(kSrc2)) problems.push('kanban tanpa readRunningKanbanCards')
+
+    // 6. UI source: daftar DI POP UP + kalimat + centang + confirm:true.
+    const rnSrc2 = readFileSync(new URL('../src/components/RestartNotice.tsx', import.meta.url), 'utf8')
+    if (!/\/api\/hermes\/board/.test(rnSrc2)) problems.push('pop up tak membaca board read-only')
+    if (!/role="alert"/.test(rnSrc2)) problems.push('pop up tanpa blok peringatan di-body')
+    if (!/membunuh worker-nya/.test(rnSrc2)) problems.push('pop up tanpa kalimat konsekuensi')
+    if (!/type="checkbox"/.test(rnSrc2)) problems.push('pop up tanpa centang konfirmasi')
+    if (!/confirm: true/.test(rnSrc2)) problems.push('pop up tak mengirim confirm:true')
+    if (!/Saya tahu restart akan membunuh/.test(rnSrc2)) problems.push('pop up tanpa teks centang eksplisit')
+    for (const m of rnSrc2.match(/<textarea[\s\S]*?\/>/g) ?? []) {
+      const r = /rows=\{(\d+)\}/.exec(m)
+      if (!r || Number(r[1]) < 2) problems.push('textarea pop up < 2 baris')
+    }
+
+    // 7. Board route: field `running` untuk pop up (id + judul + assignee).
+    const bSrc = readFileSync(new URL('../src/app/api/hermes/board/route.ts', import.meta.url), 'utf8')
+    if (!/running: tasks/.test(bSrc)) problems.push('board tanpa field running untuk pop up')
+
+    check('restart-safe-1: guard running-cards + tolak-409 + kalimat-di-popup + harness', problems.length === 0, problems.join(' | '))
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // SELFREPAIR-1: APLIKASI MEMPERBAIKI KEADAAN RUSAKNYA SENDIRI.
   //
   // Pure dari SUMBER INDEPENDEN (bukan dari fungsi yang diuji) + kasus

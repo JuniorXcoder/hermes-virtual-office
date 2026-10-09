@@ -32,6 +32,16 @@ export async function GET() {
       pause: readPause(),
       /** Berapa task yang detailnya TIDAK dibaca, supaya pemotongan itu terlihat, bukan diam. */
       notRead: Math.max(0, worthReading.length - ids.length),
+      /**
+       * RESTART-SAFE-1: card `running` (id + judul + assignee) — dibaca pop up
+       * restart TANPA probe-buta ke route restart (probe ke sana akan
+       * MENJADWALKAN restart sungguhan saat kosong). Daftar yang SAMA dipakai
+       * penjaga route (`readRunningKanbanCards`), jadi keduanya tak berbeda
+       * pendapat. Gagal baca = 503 board_failed (pop up tampil `unknown`).
+       */
+      running: tasks
+        .filter((t) => t.status === 'running')
+        .map((t) => ({ id: t.id, title: t.title, assignee: t.assignee ?? null, status: t.status })),
     })
   } catch (err) {
     return NextResponse.json(

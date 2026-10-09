@@ -958,6 +958,29 @@ the real error, and the manual path — never fake success:
 }
 ```
 
+RESTART-SAFE-1: before scheduling, the route reads running kanban cards
+(`readRunningKanbanCards` in `src/lib/hermes/kanban.ts`, decided by pure
+`decideRestart` in `src/lib/hermes/restart-guard.ts`). A restart kills live
+kanban workers mid-flight (real case: DOCS-2 crashed "pid not alive" when the
+gateway restarted 13:17) — so the button must say who it is about to kill:
+
+- Running cards → `409` with `blocked: "running"`, `runningCount`, `running`
+  (`id` + `title` + `assignee` each), the consequence sentence, and
+  `confirmRequired: true`. Resend with `{ "confirm": true }` to proceed.
+  (Probed 2026-10-09: `1 card sedang dikerjakan — restart akan membunuh
+  worker-nya, dan pekerjaan yang belum dikomit akan hilang.` + this card's
+  id/title.)
+- None running → schedules as before (ordinary restarts stay frictionless;
+  probed via empty board → `scheduled: true`).
+- Board unreadable → `409` with `blocked: "unknown"` ("tidak bisa dipastikan
+  ada pekerjaan berjalan atau tidak") — never silently allowed; the operator
+  decides (probed via `HERMES_KANBAN_BOARD_UNREADABLE=1`). Test harness:
+  header `x-kanban-board: <slug>` reads another board (empty board → path a).
+- The `RestartNotice` popup renders the list IN the popup (from read-only
+  `GET /api/hermes/board` field `running`), not in the log, and requires an
+  explicit checkbox before sending `{ confirm: true }` when cards run or the
+  board is unknown.
+
 The manual command is `hermes gateway restart` (portable); the unit is the
 host-specific alternative. Host binary paths are deliberately not written here.
 

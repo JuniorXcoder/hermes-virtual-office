@@ -20,6 +20,7 @@ import { parseSoulMarker, soulFor } from './soul'
 import { a2aEndpoint, peerBaseUrl } from './meeting-a2a'
 import { parseDomains } from './a2a'
 import { readEvidence, splitEvidenceBatch, type EvidenceInput, type EvidenceMark, type EvidenceReading } from './evidence'
+import type { RunningCard, RunningReadout } from './restart-guard'
 import { readVerification, splitVerificationBatch, type VerificationMark, type VerificationReading, type VerifyEvent } from './verification'
 
 const run = promisify(execFile)
@@ -60,8 +61,9 @@ function cleanEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-async function kanban(args: string[]): Promise<string> {
-  const full = BOARD ? ['kanban', '--board', BOARD, ...args] : ['kanban', ...args]
+async function kanban(args: string[], board?: string): Promise<string> {
+  const useBoard = board ?? BOARD
+  const full = useBoard ? ['kanban', '--board', useBoard, ...args] : ['kanban', ...args]
   const cacheable = READ_VERBS.has(args[0])
   const key = full.join(' ')
   if (cacheable) {
@@ -90,8 +92,8 @@ async function kanban(args: string[]): Promise<string> {
   }
 }
 
-async function kanbanJson<T>(args: string[]): Promise<T> {
-  const out = await kanban([...args, '--json'])
+async function kanbanJson<T>(args: string[], board?: string): Promise<T> {
+  const out = await kanban([...args, '--json'], board)
   // The CLI prints a single JSON document, but be defensive about leading notices.
   const start = out.search(/[[{]/)
   if (start < 0) throw new Error(`expected JSON from: hermes kanban ${args.join(' ')}`)
@@ -170,9 +172,9 @@ function toTask(r: RawTask): Task {
  * asserted from one reading instead of being checked, which is exactly the mistake
  * the rest of this file keeps paying for.)
  */
-export async function listTasks(opts: { includeArchived?: boolean } = {}): Promise<Task[]> {
+export async function listTasks(opts: { includeArchived?: boolean; board?: string } = {}): Promise<Task[]> {
   const args = opts.includeArchived ? ['list', '--archived'] : ['list']
-  const rows = await kanbanJson<RawTask[]>(args)
+  const rows = await kanbanJson<RawTask[]>(args, opts.board)
   return rows.map(toTask)
 }
 
@@ -249,6 +251,33 @@ export async function createTask(input: NewTaskInput): Promise<Task> {
   const task = await getTask(m[0])
   if (!task) throw new Error(`created ${m[0]} but could not read it back`)
   return task
+}
+
+/**
+ * Card yang sedang berjalan — sumber jujur untuk penjaga restart gateway
+ * (RESTART-SAFE-1).
+ *
+ * Dibaca dari board lewat CLI (`listTasks`, perintah yang SAMA dipakai papan —
+ * saluran yang sudah ada), BUKAN dari tebakan daftar proses. `running` saja:
+ * `review` sudah di tangan reviewer, worker-nya tidak lagi dibunuh restart.
+ * Gagal baca (CLI mati/timeout) = `{ state: 'unknown' }` — pemanggil JANGAN
+ * diam-diam mengizinkan; biarkan operator memutuskan.
+ *
+ * `board` opsional = harness probe (a): board KOSONG → schedule. Board dipilih
+ * per-panggilan (BUKAN const module-load) supaya override per-request berfungsi.
+ */
+export async function readRunningKanbanCards(board?: string): Promise<RunningReadout> {
+  let tasks: Awaited<ReturnType<typeof listTasks>>
+  try {
+    tasks = await listTasks(board ? { board } : {})
+  } catch (err) {
+    return { state: 'unknown', error: (err as Error).message.slice(0, 400) }
+  }
+  const cards: RunningCard[] = tasks
+    .filter((t) => t.status === 'running')
+    .map((t) => ({ id: t.id, title: t.title, assignee: t.assignee ?? null }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+  return { state: 'ok', cards }
 }
 
 /** Free-text guidance injected into the running worker's session. */
