@@ -371,6 +371,8 @@ The plan is a real building, and the navigation grid is generated from it:
 
 ![Upper floor: the Rinjani meeting room and the CEO suite — desks, chairs, a sofa and a whiteboard, seen from above](docs/office-upper-floor.jpg)
 
+![The courtyard zones: cafeteria tables with an avatar, the bowling lane with pins and a ball rack, the pool behind planters, and picnic tables with a BBQ grill on the turf — avatar name labels float across the levels](docs/office-lounge.jpg)
+
 ### 📋 Kanban board panel
 
 The **Papan** (board) panel: seven columns — **TODO**, **DIKERJAKAN**, **REVIEW**,
