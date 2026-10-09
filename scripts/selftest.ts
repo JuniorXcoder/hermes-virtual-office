@@ -5928,7 +5928,7 @@ void (async () => {
   // ───────────────────────────────────────────────────────────────────────────
   {
     const problems: string[] = []
-    const { peerKeyFor, peerEntryUrl, samePeerUrl, listProfilePeers } = await import('../src/lib/hermes/kanban')
+    const { peerKeyFor, peerEntryUrl, samePeerUrl, listProfilePeers, listProfiles } = await import('../src/lib/hermes/kanban')
 
     // 1. peerKeyFor + peerEntryUrl: kunci + URL penuh ke path served.
     if (peerKeyFor('MKT-1') !== 'mkt-1-local') problems.push(`peerKeyFor salah: ${peerKeyFor('MKT-1')}`)
@@ -5984,12 +5984,24 @@ void (async () => {
 
     // 7. Peer PROFIL (gate scope-profil): profil tanpa peer = FAIL di doctor,
     // bukan unknown — tool a2a_call tak muncul di sesi itu (bukti live mkt-1).
+    //
+    // HATI-HATI: ini pemeriksaan KEADAAN MESIN, bukan invarian kode. Profil
+    // mkt-1/jun hanya ada di mesin operator; di runner CI atau mesin kontributor
+    // keduanya tidak ada — dan itu BUKAN kegagalan. Yang ditegakkan: KALAU
+    // profilnya ada, peer-nya harus benar dan harus terbaca.
+    const adaProfil = await listProfiles().catch(() => [] as string[])
     const mp = await listProfilePeers('mkt-1').catch(() => null)
-    if (mp === null) problems.push('peer profil mkt-1 tak terbaca (unknown sah)')
-    else if (!mp['jun-local']) problems.push('peer profil mkt-1 hilang jun-local (gate tutup = FAIL)')
+    if (!adaProfil.includes('mkt-1')) {
+      console.log('  dilewati: peer profil mkt-1 — profil tidak ada di mesin ini')
+    } else if (mp === null) {
+      problems.push('peer profil mkt-1 tak terbaca padahal profilnya ada')
+    } else if (!mp['jun-local']) problems.push('peer profil mkt-1 hilang jun-local (gate tutup = FAIL)')
     const jp = await listProfilePeers('jun').catch(() => null)
-    if (jp === null) problems.push('peer profil jun tak terbaca (unknown sah)')
-    else if (!jp['mkt-1-local']) problems.push('peer profil jun hilang mkt-1-local (gate tutup = FAIL)')
+    if (!adaProfil.includes('jun')) {
+      console.log('  dilewati: peer profil jun — profil tidak ada di mesin ini')
+    } else if (jp === null) {
+      problems.push('peer profil jun tak terbaca padahal profilnya ada')
+    } else if (!jp['mkt-1-local']) problems.push('peer profil jun hilang mkt-1-local (gate tutup = FAIL)')
     // NEGATIF: profil tak ada = null (unknown sah — baca gagal, bukan kunci
     // kosong). Beda dengan profil ADA tapi kunci tak ada = {} (FAIL).
     const ghost = await listProfilePeers('tak-ada-profil-zz').catch(() => null)
