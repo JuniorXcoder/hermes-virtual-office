@@ -5333,10 +5333,18 @@ void (async () => {
     }
     if (needsRestart(Date.now(), null) !== null) problems.push('start tak-diketahui bukan null')
 
-    // 3b. gatewayStartMs: di mesin ini gateway hidup — harus terbaca (bukan
-    // null). Kalau null di sini, fallback systemctl+PID dua-duanya buta.
+    // 3b. gatewayStartMs — KEADAAN MESIN, bukan invarian kode. Di mesin
+    // operator gateway hidup, jadi start-nya HARUS terbaca (null di situ =
+    // fallback systemctl+PID dua-duanya buta, masalah nyata). Di runner CI atau
+    // mesin kontributor tidak ada instalasi Hermes sama sekali — null di situ
+    // bukan kegagalan, jadi dilewati dengan alasan yang terlihat.
     const liveStart = await gatewayStartMs()
-    if (liveStart === null) problems.push('gateway hidup tapi start-nya tak terbaca')
+    if (liveStart === null) {
+      const { listProfiles } = await import('../src/lib/hermes/kanban')
+      const adaHermes = (await listProfiles().catch(() => [] as string[])).length > 0
+      if (adaHermes) problems.push('gateway tak terbaca padahal Hermes terpasang di mesin ini')
+      else console.log('  dilewati: start gateway — tidak ada instalasi Hermes di mesin ini')
+    }
 
     // 4. originVerdict: 4 cabang.
     const noHdr = originVerdict(null, null, '')
