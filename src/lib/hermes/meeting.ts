@@ -38,7 +38,7 @@ const AI_KEY = process.env.AI_API_KEY || ''
 const AI_URL = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
 
-/** One meeting at a time per server; a second start queues behind it. */
+/** One meeting at a time per server; a second start is rejected (409), not queued. */
 const meetings = new Map<string, Meeting>()
 let busy = false
 

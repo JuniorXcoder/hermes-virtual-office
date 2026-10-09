@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     configured: isConfigured(),
     /** Live in this process: running, queued, or just-finished with minutes. */
     live: listMeetings(),
-    /** Held by one meeting at a time; a second start queues behind it. */
+    /** Held by one meeting at a time; a second start is rejected with 409. */
     active: activeMeeting()?.id ?? null,
     /** Written by this or an earlier server run. */
     archived: await listArchived(),
