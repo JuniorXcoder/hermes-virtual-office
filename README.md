@@ -34,6 +34,20 @@ below — so it works against any local Hermes install without a bespoke API lay
 
 ---
 
+## 🔗 Made by
+
+This office is not a demo — it runs the daily operations of my own businesses,
+on the same Hermes install it drives:
+
+- 🌐 **Portfolio** · [syahrur.com](https://syahrur.com)
+- 💳 **QRIS Payment Gateway** · [hollapay.id](https://hollapay.id)
+- 🏢 **Hollateknologi** — the software house behind it · [hollateknologi.id](https://hollateknologi.id)
+- 🎬 **Dracin Sub Indo** · [dracinsubindo.com](https://dracinsubindo.com)
+- 🖥️ **PC Build It** — custom PC builds · [pcbuildit.com](https://pcbuildit.com)
+- 🗄️ **Radiusku** — VPS & server hosting · [radiusku.com](https://radiusku.com)
+
+---
+
 ## ✨ Key Features
 
 ### 1. Interactive 3D Low-Poly Office

@@ -52,7 +52,13 @@ jobs:
                   ':!:docs/notes-backend.md')
           fail=0
 
-          ids="hol""la|natural""ine|radius""ku|drac""in|pcbuild""it"
+          # CONSCIOUS DECISION (README-LINKS-1): the operator's own product
+          # domains (holla/pay gateway, radiusku, dracin, pcbuildit) are
+          # deliberately published in README "Made by" for attribution — they
+          # are NOT leaks. This rule now only guards what stays private: the
+          # LLM provider name (natural+ine). Authoring-machine paths and public
+          # IPs below are unchanged and still enforced.
+          ids="natural""ine"
           if echo "$files" | xargs grep -InE "$ids" ; then
             echo "::error::private identifier found in a published file"
             fail=1
