@@ -365,14 +365,11 @@ The plan is a real building, and the navigation grid is generated from it:
 
 ### 📋 Kanban board panel
 
-![Kanban board panel floating over the 3D office](docs/papan%20kanban.png)
-
-The **Papan** (board) panel, floating over the 3D office: seven columns —
-**TODO** (3 cards), **DIKERJAKAN** (1), **REVIEW** (empty), **SELESAI** (8),
-**TERHAMBAT** (empty), **ARSIP** (empty), **STATUS LAIN** (empty). Visible cards
-carry real task titles and ids (e.g. `A2A-2 … t_9766a6ca` in DIKERJAKAN); the
-panel header shows the tabs + Tugas, Ruang rapat, Agent, Cron, Papan, Sistem,
-Chat, 3D, Kanban, Sprite.
+The **Papan** (board) panel: seven columns — **TODO**, **DIKERJAKAN**, **REVIEW**,
+**SELESAI**, **TERHAMBAT**, **ARSIP**, **STATUS LAIN**. Cards carry real task titles
+and ids, and the panel opens over the 3D office instead of replacing it. The office
+top bar holds the panels — + Tugas, Ruang rapat, Agent, Cron, Papan, Sistem, Chat —
+with a 3D / Kanban / Sprite switch beside them.
 
 ---
 
