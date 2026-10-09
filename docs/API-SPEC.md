@@ -991,7 +991,11 @@ server-to-server) — the panel cannot know what a browser would send:
 {"id":"origin","label":"Origin boleh menulis","status":"unknown","detail":"tidak bisa dipastikan — panel diminta tanpa header Origin (buka panel ini dari browser untuk memeriksa)","fix":""}
 ```
 
-Full probe (2026-10-09, 13 checks, trimmed details):
+Full probe (2026-10-09, 13 checks, trimmed details — pre-restart, gateway stale).
+Gateway di-restart jam 13:17 WIB; probe pasca-restart (13:25) menunjukkan
+kombinasi jujur yang baru: `restart: pass` ("gateway start lebih baru dari
+config — served yang tersimpan sudah aktif"), `served: pass` (2 siap:
+jun, mkt-1), `origin: unknown` (tetap sah tanpa header `Origin`).
 
 ```json
 {"readAt":"2026-10-09T06:16:39.968Z","hermesBin":"/usr/local/bin/hermes","checks":[
