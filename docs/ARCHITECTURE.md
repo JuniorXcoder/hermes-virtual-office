@@ -288,9 +288,9 @@ The cost is bounded: one request per interval per open tab, against a local CLI.
 
 ## 8. Doctor & self-repair: honest state, then self-healing
 
-The **Siap pakai?** panel (`GET /api/hermes/doctor`, `src/lib/hermes/doctor.ts`,
-rendered by `src/components/DoctorPanel.tsx`) checks every layer the office
-depends on — CLI, board, profiles, per-profile models, dangling
+The **Siap pakai?** engine (`GET /api/hermes/doctor`, `src/lib/hermes/doctor.ts`;
+UI panel `src/components/DoctorPanel.tsx` deleted, UI-CLEAN-1 — API only) checks
+every layer the office depends on — CLI, board, profiles, per-profile models, dangling
 `custom:<name>` providers, simulasi LLM keys, A2A platform, served entries
 (stale marked BASI, `local:true` flagged), gateway restart state, write-origin
 trust, per-served caller toolsets, global + profile-scope peers, and the

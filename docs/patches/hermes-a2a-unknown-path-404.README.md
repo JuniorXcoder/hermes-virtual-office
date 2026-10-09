@@ -65,8 +65,8 @@ curl -s -X POST http://127.0.0.1:9900/zz-tidak-ada \
 # Harus: GET=404; POST=HTTP 400 berisi "no agent is served at".
 ```
 
-Lalu buka panel **"Siap pakai?"** di aplikasi — pemeriksaan
-`A2A menolak path tak dikenal` harus `pass`.
+Lalu panggil `curl -s http://127.0.0.1:3300/api/hermes/doctor | python3 -m json.tool`
+(tanpa UI sejak UI-CLEAN-1) — pemeriksaan `A2A menolak path tak dikenal` harus `pass`.
 
 ## Setelah `hermes update`
 

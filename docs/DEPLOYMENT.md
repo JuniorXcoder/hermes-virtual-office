@@ -170,8 +170,10 @@ Jawaban untuk "kalau publik, pengguna lain harus setting di Hermes-nya juga?":
 **ya.** Aplikasi ini tidak membawa Hermes sendiri — ia menyetir instalasi Hermes
 yang sudah ada lewat CLI. Tanpa setup di bawah, kantor 3D-nya jalan tapi rapat
 A2A ditolak, toggle A2A tidak berpengaruh, dan tombol tulis bisa 403. Kalau
-ragu, buka panel **"Siap pakai?"** di topbar: ia memeriksa semuanya dan memberi
-langkah perbaikan yang bisa disalin.
+ragu, panggil pemeriksa **"Siap pakai?"** lewat API (tanpa UI sejak UI-CLEAN-1):
+`curl -s http://127.0.0.1:3300/api/hermes/doctor | python3 -m json.tool` —
+ia memeriksa semuanya dan tiap baris `fail` membawa langkah perbaikan (`fix`)
+yang menunjuk `POST /api/hermes/selfrepair`.
 
 ### 7.1 Nyalakan platform A2A
 
@@ -213,9 +215,9 @@ Tombol **Restart sekarang** di pop up memakai jalur resmi yang sama (route
 `/api/hermes/gateway-restart` hanya menjadwalkan; kalau unit host-nya tidak
 ada, route-nya bilang gagal + perintah manual — bukan sukses palsu).
 
-Panel "Siap pakai?" membandingkan mtime `config.yaml` dengan waktu start
-gateway dan bilang terus terang "Tersimpan, belum aktif — restart gateway"
-bila config lebih baru.
+Periksa `restart` di `GET /api/hermes/doctor` membandingkan mtime `config.yaml`
+dengan waktu start gateway dan bilang terus terang "Tersimpan, belum aktif —
+restart gateway" bila config lebih baru (tanpa UI sejak UI-CLEAN-1).
 
 ### 7.5 Akses dari luar loopback: ALLOWED_ORIGINS
 
@@ -242,8 +244,9 @@ ALLOWED_ORIGINS=203.0.113.10:3300,office.example.com
 ### 7.7 Kontrak Hermes yang dibutuhkan
 
 Perilaku sisi-Hermes yang aplikasi ini andalkan. Masing-masing bisa diperiksa
-sendiri (ganti `9900` dengan port A2A bila beda); panel **"Siap pakai?"**
-memeriksa yang bertanda dokter otomatis.
+sendiri (ganti `9900` dengan port A2A bila beda); pemeriksa **"Siap pakai?"**
+(`GET /api/hermes/doctor`, tanpa UI sejak UI-CLEAN-1) memeriksa yang bertanda
+dokter otomatis.
 
 1. **POST ke path agent tak dikenal DITOLAK, bukan dijawab agent default.**
    Butuh tambalan `docs/patches/hermes-a2a-unknown-path-404.README.md`

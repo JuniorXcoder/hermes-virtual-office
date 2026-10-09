@@ -5285,9 +5285,12 @@ void (async () => {
   //   start tak terparse = null = "tidak bisa dipastikan", bukan false.
   // - originVerdict: tanpa header = unknown; beda origin = fail; loopback
   //   lulus; host asing tanpa izin = fail + menyebut host itu.
-  // - Route doctor ada, GET + try/catch (penjaga error seragam). UI: panel
-  //   terdaftar di topbar OfficeApp, textarea perbaikan rows>=2, status TAK
-  //   PASTI tampil (bukan cuma LULUS/GAGAL).
+  // - Route doctor ada, GET + try/catch (penjaga error seragam). UI: topbar
+  //   OfficeApp TIDAK memuat tombol A2A/Siap pakai? dan TIDAK merender
+  //   DoctorPanel/A2aPanel (keduanya dihapus, UI-CLEAN-1); doctor + selfrepair
+  //   hidup sebagai API; string fix doctor menunjuk POST /api/hermes/selfrepair
+  //   (bukan "panel Siap pakai"); TAK PASTI tetap cabang sah di tipe
+  //   DoctorStatus (bukan cuma LULUS/GAGAL).
   // ───────────────────────────────────────────────────────────────────────────
   {
     const problems: string[] = []
@@ -5355,13 +5358,29 @@ void (async () => {
     if (!/try\s*\{/.test(dSrc)) problems.push('route doctor tanpa try/catch')
     if (!/runDoctor/.test(dSrc)) problems.push('route doctor tak memanggil runDoctor')
 
-    // 6. UI: tombol topbar + textarea rows>=2 + cabang TAK PASTI.
+    // 6. UI-CLEAN-1: topbar TANPA tombol A2A/Siap pakai?, TANPA panel hantu.
+    // DoctorPanel.tsx + A2aPanel.tsx dihapus — OfficeApp tak boleh menyebutnya,
+    // dan tak boleh ada tombol A2A/Siap pakai? di topbar. Mesin doctor tetap
+    // hidup sebagai API (route §5) + string fix menunjuk selfrepair.
     const oSrc = readFileSync(new URL('../src/components/OfficeApp.tsx', import.meta.url), 'utf8')
-    if (!/Siap pakai\?/.test(oSrc)) problems.push('topbar tanpa tombol Siap pakai?')
-    if (!/DoctorPanel/.test(oSrc)) problems.push('OfficeApp tak merender DoctorPanel')
-    const pSrc = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
-    if (!/rows=\{2\}/.test(pSrc)) problems.push('textarea perbaikan bukan rows=2')
-    if (!/TAK PASTI/.test(pSrc)) problems.push('UI tanpa cabang TAK PASTI')
+    if (/Siap pakai\?/.test(oSrc)) problems.push('topbar masih memuat tombol Siap pakai?')
+    if (/DoctorPanel/.test(oSrc)) problems.push('OfficeApp masih merender DoctorPanel (hantu)')
+    if (/A2aPanel/.test(oSrc)) problems.push('OfficeApp masih merender A2aPanel (hantu)')
+    if (/>(A2A|Siap pakai\?)</.test(oSrc)) problems.push('topbar masih memuat tombol A2A/Siap pakai?')
+    if (!existsSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url))) {
+      // panel dihapus = keadaan benar; jangan baca isinya lagi.
+    } else {
+      problems.push('DoctorPanel.tsx masih ada (kode hantu)')
+    }
+    if (!existsSync(new URL('../src/components/A2aPanel.tsx', import.meta.url))) {
+      // panel dihapus = keadaan benar; jangan baca isinya lagi.
+    } else {
+      problems.push('A2aPanel.tsx masih ada (kode hantu)')
+    }
+    const docSrc6 = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
+    if (/panel Siap pakai/.test(docSrc6)) problems.push('string fix doctor masih menunjuk panel yang sudah dihapus')
+    if (!/POST \/api\/hermes\/selfrepair/.test(docSrc6)) problems.push('string fix doctor tak menunjuk POST /api/hermes/selfrepair')
+    if (!/tidak bisa dipastikan/.test(docSrc6)) problems.push('doctor tanpa cabang tak-pasti (unknown)')
 
     check('setup-1: doctor jujur — lulus/gagal/tak-pasti, basi ditandai, restart terdeteksi', problems.length === 0, problems.join(' | '))
   }
@@ -5879,11 +5898,12 @@ void (async () => {
     if (!/daftarkan ke A2A/.test(aspSrc)) problems.push('panel agent tanpa tombol daftarkan-ke-A2A')
     if (!/action, 'serve'/.test(aspSrc) && !/'serve', r\.name/.test(aspSrc)) problems.push('panel tak memanggil aksi serve')
     if (!/a2a === 'unlisted'/.test(aspSrc)) problems.push('tombol serve tak dibatasi baris unlisted')
-    const dpSrc = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
-    if (!/pratinjau perbaikan/.test(dpSrc)) problems.push('panel doctor tanpa tombol pratinjau')
-    if (!/selfrepair-result/.test(dpSrc)) problems.push('panel doctor tanpa laporan hasil')
-    if (!/keadaan SESUDAH/.test(dpSrc)) problems.push('panel doctor tanpa sebut doctor-sesudah')
-    if (!/rows=\{2\}/.test(dpSrc)) problems.push('textarea doctor bukan rows=2')
+    // UI-CLEAN-1: DoctorPanel dihapus — alur pratinjau→jalankan→laporan+
+    // doctor-sesudah sekarang milik ROUTE selfrepair (GET pratinjau, POST
+    // jalankan + runDoctor sesudah, § di atas sudah menegaskan). Jangan baca
+    // panel yang sudah tidak ada; tegaskan balasan POST memuat keduanya.
+    const srBody = srSrc.slice(srSrc.indexOf('export') < 0 ? 0 : srSrc.indexOf('export'))
+    if (!/result/.test(srBody) || !/doctor/.test(srBody)) problems.push('route selfrepair POST tak kembalikan result + doctor-sesudah')
     // NEGATIF UI: tombol serve HANYA di cabang unlisted — serve tanpa syarat
     // profil-ada akan 400 di server; pastikan cabang null (tanpa profil) tak
     // ikut dapat tombol (pola: `r.profile` di syarat yang sama).
@@ -5943,14 +5963,15 @@ void (async () => {
     if (!/removeA2aPeer/.test(agSrc2)) problems.push('route kill tanpa removeA2aPeer')
 
     // 5. Doctor + selfrepair memakai pemeriksa yang SAMA (jangan logika kedua):
-    // peer check di doctor, kind missingA2aPeer di selfrepair, UI baris peer.
+    // peer check di doctor, kind missingA2aPeer di selfrepair. UI-CLEAN-1:
+    // DoctorPanel dihapus — baris peerAdded/toolsetAdded sekarang milik tipe
+    // RepairResult di selfrepair.ts (dikembalikan route POST, bukan panel).
     const docSrc2 = readFileSync(new URL('../src/lib/hermes/doctor.ts', import.meta.url), 'utf8')
     if (!/id: 'peers'/.test(docSrc2)) problems.push('doctor tanpa periksa peers (nama-resolvable)')
     const srSrc2 = readFileSync(new URL('../src/lib/hermes/selfrepair.ts', import.meta.url), 'utf8')
     if (!/missingA2aPeer/.test(srSrc2)) problems.push('selfrepair tanpa kind missingA2aPeer')
     if (!/kunci platform_toolsets tidak ada/.test(srSrc2)) problems.push('selfrepair tak bedakan kunci-hilang dari baca-gagal')
-    const dpSrc2 = readFileSync(new URL('../src/components/DoctorPanel.tsx', import.meta.url), 'utf8')
-    if (!/peerAdded/.test(dpSrc2)) problems.push('panel doctor tanpa baris peerAdded')
+    if (!/peerAdded/.test(srSrc2)) problems.push('selfrepair tanpa baris peerAdded di RepairResult')
     // 6. Tombol serve = pratinjau + laporan memanggil (bukan cuma served):
     // panel spawn lapor toolset+peer, semua textarea >= 2 baris.
     const aspSrc2 = readFileSync(new URL('../src/components/AgentSpawnPanel.tsx', import.meta.url), 'utf8')

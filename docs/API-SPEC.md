@@ -986,13 +986,20 @@ host-specific alternative. Host binary paths are deliberately not written here.
 
 ---
 
-## 24. `GET /api/hermes/doctor` — panel "Siap pakai?"
+## 24. `GET /api/hermes/doctor` — "Siap pakai?" (API, tanpa UI)
 
 Read-only, changes nothing. The requester's `Host`/`Origin` are forwarded so
 the origin check judges the real browser (`src/app/api/hermes/doctor/route.ts`;
-`runDoctor` in `src/lib/hermes/doctor.ts`). House rule, same as the UI panel:
-what cannot be determined says so (`unknown`) — never a green light for
-"looks fine".
+`runDoctor` in `src/lib/hermes/doctor.ts`). House rule: what cannot be
+determined says so (`unknown`) — never a green light for "looks fine".
+
+> No UI (UI-CLEAN-1): the topbar carries no `A2A` / `Siap pakai?` button,
+> `src/components/DoctorPanel.tsx` + `src/components/A2aPanel.tsx` were
+> deleted. The same holds for §21 (`/api/hermes/selfrepair`) and the transcript
+> endpoint below (`/api/hermes/a2a/transcript`) — API only, no panel. Per-agent
+> A2A serve/unserve + the three-state "A2A Ready" checklist + the post-serve
+> restart notice live in the **Agent panel** (`src/components/AgentSpawnPanel.tsx`,
+> topbar **Agent** button or avatar click) and are untouched.
 
 | `id` | What it checks | `fail` means |
 |---|---|---|
@@ -1012,10 +1019,10 @@ what cannot be determined says so (`unknown`) — never a green light for
 
 Three states, all legitimate: `pass` / `fail` / `unknown`. `unknown` is an
 honest answer, e.g. `origin` requested without an `Origin` header (curl,
-server-to-server) — the panel cannot know what a browser would send:
+server-to-server) — the doctor cannot know what a browser would send:
 
 ```json
-{"id":"origin","label":"Origin boleh menulis","status":"unknown","detail":"tidak bisa dipastikan — panel diminta tanpa header Origin (buka panel ini dari browser untuk memeriksa)","fix":""}
+{"id":"origin","label":"Origin boleh menulis","status":"unknown","detail":"tidak bisa dipastikan — diminta tanpa header Origin (curl/server-ke-server; buka dari browser bila butuh nilai pasti)","fix":""}
 ```
 
 Full probe (2026-10-09, 13 checks, trimmed details — pre-restart, gateway stale).

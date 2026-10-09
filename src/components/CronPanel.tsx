@@ -270,7 +270,7 @@ export default function CronPanel({
       {err && <div className="vp-err">{err}</div>}
       {note && <div className="vp-ok">{note}</div>}
       {loading && <div className="vp-muted">memuat…</div>}
-      {/* jobs.json gagal dibaca = "tak terbaca", BUKAN "belum ada job" — pola A2aPanel. */}
+      {/* jobs.json gagal dibaca = "tak terbaca", BUKAN "belum ada job" — pola jujur (bedakan baca-gagal dari kosong). */}
       {jobsFailure && <div className="vp-err">jadwal tak terbaca (bukan &quot;tidak ada job&quot;): {jobsFailure}</div>}
 
       {screen === 'list' ? (

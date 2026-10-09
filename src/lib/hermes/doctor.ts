@@ -1,10 +1,12 @@
 /**
  * DOCTOR "Siap pakai?" — pemeriksaan menyeluruh sebelum pengguna baru bingung.
+ * (nama bersejarah panel UI yang sudah dihapus; mesin doctor tetap hidup
+ * sebagai API GET /api/hermes/doctor + POST /api/hermes/selfrepair).
  *
  * Kenapa file ini ada: kantor 3D-nya jalan, tapi tombol bisa gagal diam-diam
- * (rapat ditolak, A2A tidak nyala, chat gagal tanpa model). Panel doctor
- * memeriksa tiap lapisan dan menampilkan lulus/gagal + langkah perbaikan
- * yang bisa disalin.
+ * (rapat ditolak, A2A tidak nyala, chat gagal tanpa model). Doctor
+ * memeriksa tiap lapisan dan mengembalikan lulus/gagal + langkah perbaikan
+ * (string fix menunjuk endpoint selfrepair, bukan panel).
  *
  * ATURAN JUJUR (sama seperti SystemPanel): yang tidak bisa dipastikan bilang
  * "tidak bisa dipastikan" (status 'unknown') — JANGAN lampu hijau untuk yang
@@ -150,13 +152,13 @@ function bareHost(host: string): string {
 }
 
 /**
- * Putusan tulis untuk Host/Origin yang meminta panel ini.
+ * Putusan tulis untuk Host/Origin peminta (cermin read-only doctor).
  *
  * Logikanya sama dengan local-guard.ts (itu yang dipakai route tulis —
  * ini cermin read-only untuk ditampilkan). allowedRaw = isi mentah
  * ALLOWED_ORIGINS (koma, boleh pakai skema).
  *
- * Tanpa header Origin (fetch server-ke-server, curl) = 'unknown': panel
+ * Tanpa header Origin (fetch server-ke-server, curl) = 'unknown': doctor
  * tidak bisa tahu browser akan mengirim apa — bilang begitu, bukan lulus.
  */
 export function originVerdict(
@@ -167,7 +169,7 @@ export function originVerdict(
   if (!hostHeader || !originHeader) {
     return {
       status: 'unknown',
-      detail: 'tidak bisa dipastikan — panel diminta tanpa header Origin (buka panel ini dari browser untuk memeriksa)',
+      detail: 'tidak bisa dipastikan — diminta tanpa header Origin (curl/server-ke-server; buka dari browser bila butuh nilai pasti)',
       fix: '',
     }
   }
@@ -180,7 +182,7 @@ export function originVerdict(
     return {
       status: 'fail',
       detail: `header Host/Origin tidak terbaca: Host="${hostHeader}" Origin="${originHeader}"`,
-      fix: 'buka panel dari browser biasa (bukan curl tanpa header)',
+      fix: 'panggil dari browser biasa (bukan curl tanpa header)',
     }
   }
   if (origin.host !== host.host) {
@@ -690,7 +692,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
             label: 'Agent bisa memanggil (toolset a2a)',
             status: 'fail',
             detail: 'dipanggil ya, memanggil tidak: ' + mute.join(', ') + ' — mereka bisa dihubungi tapi tidak bisa menghubungi siapa pun',
-            fix: 'tambah toolset a2a tiap profil itu (digabung, bukan ditimpa) — tekan "perbaiki" di panel Siap pakai (menyapu otomatis, idempoten)',
+            fix: 'tambah toolset a2a tiap profil itu (digabung, bukan ditimpa) — jalankan POST /api/hermes/selfrepair (lihat docs/API-SPEC.md § selfrepair; menyapu otomatis, idempoten)',
           })
         } else if (unreadable.length) {
           checks.push({
@@ -783,7 +785,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
               label: 'Nama agent bisa diresolusi (peer a2a_agents)',
               status: 'fail',
               detail: `peer hilang: ${missing.map((s) => `${peerKeyFor(s.profile)} → ${peerEntryUrl(s.profile)}`).join(', ')} — a2a_call("nama") menjawab unknown agent`,
-              fix: 'tekan "perbaiki" di panel Siap pakai (mendaftarkan peer yang hilang, idempoten)',
+              fix: 'jalankan POST /api/hermes/selfrepair — mendaftarkan peer yang hilang, idempoten (lihat docs/API-SPEC.md § selfrepair)',
             })
           } else if (profUnreadable.length) {
             checks.push({
@@ -799,7 +801,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
               label: 'Nama agent bisa diresolusi (peer a2a_agents)',
               status: 'fail',
               detail: `peer profil hilang: ${profMissing.join(', ')} — tool a2a_call tak muncul di sesi profil itu (gate scope-profil)`,
-              fix: 'tekan "perbaiki" di panel Siap pakai (menulis peer profil yang hilang, idempoten)',
+              fix: 'jalankan POST /api/hermes/selfrepair — menulis peer profil yang hilang, idempoten (lihat docs/API-SPEC.md § selfrepair)',
             })
           } else if (!served.length) {
             checks.push({

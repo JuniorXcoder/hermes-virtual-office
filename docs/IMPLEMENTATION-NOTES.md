@@ -137,8 +137,9 @@ The fix is copy-then-verify, in two places sharing one classifier:
 `GET /api/hermes/selfrepair` previews only; `POST` runs then returns a fresh
 doctor report (`src/app/api/hermes/selfrepair/route.ts`) so the operator sees
 the *new* state, not the plan. Both go through `previewRepairs()` /
-`runRepairs()` in `src/lib/hermes/selfrepair.ts`; the panel is
-`src/components/DoctorPanel.tsx`.
+`runRepairs()` in `src/lib/hermes/selfrepair.ts`; the former UI panel was
+`src/components/DoctorPanel.tsx` (deleted, UI-CLEAN-1 — the route returns
+`{ result, doctor }` directly).
 
 What one run sweeps (each kind is a `RepairKind`):
 
@@ -259,7 +260,7 @@ it (`notes-backend.md` §28).
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Unknown provider` at chat, panel showed a model | `model.provider: custom:<name>` with no profile-scope `custom_providers` def (§3) | Re-pick the model in the Agent form (copies the def, read-back verified) or press "perbaiki" in Siap pakai? |
+| `Unknown provider` at chat, panel showed a model | `model.provider: custom:<name>` with no profile-scope `custom_providers` def (§3) | Re-pick the model in the Agent form (copies the def, read-back verified) or `curl -s -X POST http://127.0.0.1:3300/api/hermes/selfrepair -H 'Content-Type: application/json' -d '{}'` |
 | Meeting runs one way only | Callee lacks `a2a` in `platform_toolsets.cli` and/or profile-scope peers — callable but cannot call (§2) | Self-repair (`missingA2aToolset` / `missingA2aPeer`), or serve again |
 | Unknown agent path answered by the default agent | Hermes fallthrough: patch missing (often lost to `hermes update`) (§6.1) | Re-apply `docs/patches/` (`git apply --check`, `git apply`, curl probe, restart); doctor `fallthrough` tells you |
 | Agent answers as the wrong profile | Served entry with `local: true` (§1) | Toggle serve again (office always writes `false`); doctor `served` flags it |

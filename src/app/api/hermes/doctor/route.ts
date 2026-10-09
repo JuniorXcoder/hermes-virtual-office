@@ -4,7 +4,8 @@ import { runDoctor } from '@/lib/hermes/doctor'
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/hermes/doctor — panel "Siap pakai?".
+ * GET /api/hermes/doctor — mesin "Siap pakai?" (API saja, tanpa UI;
+ * panel DoctorPanel.tsx sudah dihapus — lihat docs/API-SPEC.md).
  *
  * Read-only: tidak mengubah apa pun, hanya memeriksa. Host/Origin peminta
  * diteruskan supaya periksa origin menilai browser yang sebenarnya.

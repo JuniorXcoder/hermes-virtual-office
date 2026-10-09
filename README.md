@@ -119,13 +119,29 @@ The office is meant to be where you *run* the fleet, so the controls refuse to l
 - **Per-agent limits**, and **every refusal is audited.** A staff agent attempting a
   privileged action is refused *and* the refusal is written down.
 
-### 7. "Siap pakai?" health panel & self-repair
+### 7. "Siap pakai?" health checks & self-repair (API — tanpa UI)
 
 The office refuses to show a green light it cannot prove. The **Siap pakai?**
-panel (`src/components/DoctorPanel.tsx`, read-only `GET /api/hermes/doctor` →
-`runDoctor` in `src/lib/hermes/doctor.ts`) runs a dozen checks; every check
-returns `pass`, `fail`, or `unknown` ("tidak bisa dipastikan" — reported, never
-forced green).
+engine (read-only `GET /api/hermes/doctor` → `runDoctor` in
+`src/lib/hermes/doctor.ts`) runs a dozen checks; every check returns `pass`,
+`fail`, or `unknown` ("tidak bisa dipastikan" — reported, never forced green).
+There is currently **no UI** for it: the topbar carries no `A2A` / `Siap pakai?`
+button and `src/components/DoctorPanel.tsx` + `src/components/A2aPanel.tsx`
+were deleted (UI-CLEAN-1). Call the API directly with curl (port 3300 is the
+systemd unit; `npm run dev` serves 3001, `npm start` serves 3000):
+
+```bash
+curl -s http://127.0.0.1:3300/api/hermes/doctor | python3 -m json.tool
+curl -s http://127.0.0.1:3300/api/hermes/selfrepair | python3 -m json.tool  # pratinjau
+curl -s -X POST http://127.0.0.1:3300/api/hermes/selfrepair \
+  -H 'Content-Type: application/json' -d '{}' | python3 -m json.tool       # jalankan
+curl -s http://127.0.0.1:3300/api/hermes/a2a/transcript | python3 -m json.tool  # riwayat A2A
+```
+
+Per-agent A2A state (served/unlisted, the three-state "A2A Ready" checklist,
+the post-serve restart notice) lives in the **Agent panel**
+(`src/components/AgentSpawnPanel.tsx`, opened from the topbar **Agent** button
+or by clicking an avatar) — that enabler is untouched by UI-CLEAN-1.
 
 | Check (`id`) | pass means | fail means | unknown means |
 |---|---|---|---|
@@ -143,10 +159,9 @@ forced green).
 | Nama agent bisa diresolusi, peer a2a_agents (`peers`) | each served agent has a resolvable `<name>-local` peer | missing peer — `a2a_call("name")` fails with `unknown agent` | peer list unreadable |
 | A2A menolak path tak dikenal (`fallthrough`) | POST to an unknown path is rejected (`no agent is served at`), GET is 404 | unknown paths fall through to the default agent — misleading | A2A port unreachable |
 
-**Self-repair: preview first, then run, then doctor-after.** The same panel
-offers `pratinjau perbaikan` (read-only `GET /api/hermes/selfrepair` →
-`previewRepairs` in `src/lib/hermes/selfrepair.ts`) and, only after the operator
-approves, `POST` runs the repairs (`runRepairs`) and re-runs the doctor so the
+**Self-repair: preview first, then run, then doctor-after** (same API, no UI).
+`GET /api/hermes/selfrepair` previews (`previewRepairs` in
+`src/lib/hermes/selfrepair.ts`) and, only after the operator approves, `POST` runs the repairs (`runRepairs`) and re-runs the doctor so the
 new state is shown — not claimed. It sweeps seven kinds of rot, idempotently
 (healthy state → nothing changes): stale served entries, avatar bodies without
 a profile, duplicate avatar rows, leftover profile directories, dangling
@@ -162,12 +177,13 @@ re-installable patch and the five-item contract are documented at
 and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) §7.7 "Kontrak Hermes yang
 dibutuhkan". Read those two before blaming the office for a red check.
 
-**Check it yourself** (proof, not promises — replace `3000` with the port the
-office actually serves):
+**Check it yourself** (proof, not promises — 3300 is the systemd unit;
+`npm run dev` serves 3001, `npm start` serves 3000):
 
 ```bash
-curl -s http://127.0.0.1:3000/api/hermes/doctor | python3 -m json.tool
-curl -s http://127.0.0.1:3000/api/hermes/selfrepair | python3 -m json.tool
+curl -s http://127.0.0.1:3300/api/hermes/doctor | python3 -m json.tool
+curl -s http://127.0.0.1:3300/api/hermes/selfrepair | python3 -m json.tool
+curl -s http://127.0.0.1:3300/api/hermes/a2a/transcript | python3 -m json.tool
 # unknown A2A path must be REJECTED, not answered (needs docs/patches/ applied):
 curl -s -X POST http://127.0.0.1:9900/zz-tidak-ada \
   -H 'Content-Type: application/json' \
@@ -184,8 +200,12 @@ hermes config get custom_providers --json
 
 - **3D** isometric mode, an accessible **Kanban** board, and a low-cost **Sprite** mode for
   machines that should not render a full scene.
-- Every top-bar control — **+ Tugas, Ruang rapat, Agent, Cron, Papan, Sistem, Chat, A2A** —
+- Every top-bar control — **+ Tugas, Ruang rapat, Agent, Cron, Papan, Sistem, Chat** —
   opens a **fullscreen panel**, so a small screen gets the whole panel instead of a cramped drawer.
+  (UI-CLEAN-1 removed the **A2A** transcript viewer and the **Siap pakai?** health panel;
+  their APIs — `/api/hermes/a2a/transcript`, `/api/hermes/doctor`,
+  `/api/hermes/selfrepair` — stay, UI-less. Per-agent A2A serve/unserve lives in the
+  **Agent** panel.)
 - The 3D / Kanban / Sprite switch is intentionally kept **outside** the scrolling button row,
   so the view choice never slides off a phone screen.
 - Mobile viewport is handled honestly: `viewportFit: cover` plus safe-area insets, because
