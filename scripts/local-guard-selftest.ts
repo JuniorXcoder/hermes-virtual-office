@@ -21,7 +21,7 @@ const check = (label: string, got: boolean, want: boolean) => {
 // `ALLOWED_ORIGINS` is read at call time, so the public-IP cases only pass when it
 // is configured. The test asserts the CONFIGURED behaviour, because an unconfigured
 // deploy is exactly the broken state we are guarding against.
-process.env.ALLOWED_ORIGINS = '66.96.227.112:3300,office.example.com'
+process.env.ALLOWED_ORIGINS = '203.0.113.10:3300,office.example.com'
 
 console.log('=== HARUS DITERIMA (kalau tidak, tombol mati) ===')
 const valid: [string, string][] = [
@@ -29,9 +29,9 @@ const valid: [string, string][] = [
   ['127.0.0.1:3000', 'http://127.0.0.1:3000'],
   ['[::1]:3000', 'http://[::1]:3000'],
   // the public address the office is actually opened at — the bug this covers
-  ['66.96.227.112:3300', 'http://66.96.227.112:3300'],
+  ['203.0.113.10:3300', 'http://203.0.113.10:3300'],
   // a configured host on a different port is still that host
-  ['66.96.227.112:3300', 'http://66.96.227.112:3300'],
+  ['203.0.113.10:3300', 'http://203.0.113.10:3300'],
   // a named host from the list, with and without a port
   ['office.example.com:3300', 'http://office.example.com:3300'],
   ['office.example.com', 'http://office.example.com'],
@@ -44,13 +44,13 @@ console.log('\n=== HARUS DITOLAK (kalau tidak, ini lubang CSRF) ===')
 const invalid: [string | null, string | null][] = [
   // cross-site: Origin names somebody else
   ['localhost:3000', 'http://evil.test'],
-  ['66.96.227.112:3300', 'http://evil.test'],
+  ['203.0.113.10:3300', 'http://evil.test'],
   // a host we do not trust, even though host and origin agree
   ['office.example:3000', 'http://office.example:3000'],
   ['198.51.100.7:3300', 'http://198.51.100.7:3300'],
   // scheme mismatch
   ['localhost:3000', 'https://localhost:3000'],
-  ['66.96.227.112:3300', 'https://66.96.227.112:3300'],
+  ['203.0.113.10:3300', 'https://203.0.113.10:3300'],
   // missing headers (curl, a cross-site form post, a server-to-server call)
   ['localhost:3000', null],
   [null, 'http://localhost:3000'],
@@ -58,7 +58,7 @@ const invalid: [string | null, string | null][] = [
   // a subdomain is NOT the same host
   ['localhost:3000', 'http://evil.localhost:3000'],
   // a host that merely CONTAINS a trusted one
-  ['not66.96.227.112:3300', 'http://not66.96.227.112:3300'],
+  ['not203.0.113.10:3300', 'http://not203.0.113.10:3300'],
 ]
 for (const [host, origin] of invalid) {
   check(`${origin ?? '(tanpa origin)'} @ host ${host ?? '(tanpa host)'}`, localOriginAllowed(host, origin), false)
@@ -73,7 +73,7 @@ console.log('\n=== TANPA ALLOWED_ORIGINS (deploy yang belum dikonfigurasi) ===')
   // the public address must NOT be silently allowed — an operator has to opt in
   check(
     'IP publik ditolak (harus diisi di ALLOWED_ORIGINS)',
-    localOriginAllowed('66.96.227.112:3300', 'http://66.96.227.112:3300'),
+    localOriginAllowed('203.0.113.10:3300', 'http://203.0.113.10:3300'),
     false,
   )
   process.env.ALLOWED_ORIGINS = saved

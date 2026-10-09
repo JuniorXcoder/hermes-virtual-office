@@ -35,9 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # This repo is published, so check the files that actually ship. Both rules
-      # below caught real leaks during development: a private provider name and key
-      # variable, and absolute paths from the machine it was written on.
+      # This repo is published, so check the files that actually ship. All three
+      # rules below caught real leaks during development: a private provider name
+      # and key variable, absolute paths from the machine it was written on, and
+      # the operator's real public WAN address used as an example/fixture.
       #
       # The patterns are assembled from fragments at runtime so this workflow does
       # not match itself — it is a tracked .yml file, and a literal pattern here
@@ -62,6 +63,32 @@ jobs:
           paths="/root/(hermes-virtual-office|infra|panel)|/home/[a-z]+/infra"
           if echo "$files" | xargs grep -InE "$paths" ; then
             echo "::error::authoring-machine path found in a published file"
+            fail=1
+          fi
+
+          # A real public WAN address once shipped here as an example/fixture, and
+          # the two rules above could not see it. Any non-documentation public
+          # IPv4 in a published file fails the build: loopback, RFC 1918
+          # private ranges, and RFC 5737 documentation blocks are allowed, and
+          # so is the exempt file above. The quad pattern is assembled from
+          # fragments for the same self-match reason.
+          oct="[0-9]{1,3}"
+          dot="\."
+          quad="$oct$dot$oct$dot$oct$dot$oct"
+          pub_ips=$(echo "$files" | xargs grep -hoE "$quad" 2>/dev/null | sort -u)
+          bad_ips=""
+          for ip in $pub_ips; do
+            case "$ip" in
+              127.*|10.*|192.168.*|192.0.2.*|198.51.100.*|203.0.113.*) continue ;;
+              172.1[6-9].*|172.2[0-9].*|172.3[01].*) continue ;;
+              *) bad_ips="$bad_ips $ip" ;;
+            esac
+          done
+          if [ -n "$bad_ips" ]; then
+            for ip in $bad_ips; do
+              echo "$files" | xargs grep -InE "$ip"
+            done
+            echo "::error::public IPv4 address found in a published file (use an RFC 5737 documentation address instead)"
             fail=1
           fi
 

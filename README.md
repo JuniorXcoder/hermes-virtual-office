@@ -382,8 +382,27 @@ The numbers are the point: a lane 1.8 m wide for a 1.8 m car is invisible at nor
 it is a number now instead of an opinion.
 
 CI runs typecheck, the self-test and a production build on every push, plus a
-publish-hygiene job that fails if a private identifier or an authoring-machine
-path reaches a published file.
+publish-hygiene job that fails if a private identifier, an authoring-machine
+path, or a non-documentation public IPv4 address reaches a published file.
+
+Pre-push hygiene check — run this before you push. CI only sees tracked files,
+never history, so the history scan below is on you:
+
+```bash
+files=$(git ls-files '*.ts' '*.tsx' '*.md' '*.json' '*.example' '*.yml' '*.mjs' ':!:docs/notes-backend.md')
+# credential-shaped strings: keys, tokens, private keys, JWTs, password URLs
+echo "$files" | xargs grep -InEi 'api[_-]?key|secret|passwd|token|bearer|BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{10,}|[a-z]+://[^ ]*:[^ ]+@'
+# IPv4: every address printed must be loopback, RFC 1918 private, or RFC 5737
+# documentation (192.0.2.x, 198.51.100.x, 203.0.113.x) — nothing else
+echo "$files" | xargs grep -hoE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u
+# history: the same credential shapes across every commit (CI cannot see this)
+git log -p --all | grep -InEi 'api[_-]?key|secret|passwd|token|bearer|BEGIN [A-Z ]*PRIVATE KEY|eyJ[A-Za-z0-9_-]{10,}|[a-z]+://[^ ]*:[^ ]+@'
+```
+
+The credential greps may match ordinary words in prose (e.g. "token" in a doc
+sentence) — what you are looking for is a secret *value*, not the word. The
+IPv4 line must list only allowed ranges. Any example IP in a new file must be
+an RFC 5737 documentation address, never a real public one.
 
 ---
 

@@ -36,7 +36,7 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
  * Comma-separated `host[:port]` entries; a scheme prefix is tolerated so an
  * operator can paste a full origin. Example:
  *
- *   ALLOWED_ORIGINS=66.96.227.112:3300,office.example.com
+ *   ALLOWED_ORIGINS=203.0.113.10:3300,office.example.com
  */
 function configuredHosts(): string[] {
   return (process.env.ALLOWED_ORIGINS || '')
