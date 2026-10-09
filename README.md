@@ -346,7 +346,11 @@ Detailed architectural specifications are documented in [docs/ARCHITECTURE.md](d
 
 ## 📐 Layout
 
-![office room](docs/office%20room.png)
+### 🎬 Demo video
+
+[![Watch the demo — Hermes Agent Virtual Office](https://img.youtube.com/vi/ezEthYDU_bw/maxresdefault.jpg)](https://youtu.be/ezEthYDU_bw)
+
+[Watch on YouTube](https://youtu.be/ezEthYDU_bw) — *"Hermes Agent Virtual Office - Command Control AI Hermes"* by Kang Njun.
 
 The plan is a real building, and the navigation grid is generated from it:
 
@@ -359,9 +363,16 @@ The plan is a real building, and the navigation grid is generated from it:
 - Every enclosed room has a doorway that is open in **both** the model and the navigation
   grid, so nothing is walkable-only-on-paper.
 
-![standby room](docs/standby%20room.png)
-![new meeting](docs/new%20meeting.png)
-![meeting room](docs/meeting%20room.png)
+### 📋 Kanban board panel
+
+![Kanban board panel floating over the 3D office](docs/papan%20kanban.png)
+
+The **Papan** (board) panel, floating over the 3D office: seven columns —
+**TODO** (3 cards), **DIKERJAKAN** (1), **REVIEW** (empty), **SELESAI** (8),
+**TERHAMBAT** (empty), **ARSIP** (empty), **STATUS LAIN** (empty). Visible cards
+carry real task titles and ids (e.g. `A2A-2 … t_9766a6ca` in DIKERJAKAN); the
+panel header shows the tabs + Tugas, Ruang rapat, Agent, Cron, Papan, Sistem,
+Chat, 3D, Kanban, Sprite.
 
 ---
 
@@ -393,7 +404,7 @@ Two commands cover the invariants a screenshot cannot:
 
 ```bash
 npm run typecheck   # types, including the layout and pose tables
-npm run selftest    # 112 measured invariants
+npm run selftest    # 113 measured invariants
 ```
 
 `npm run selftest` asserts what actually broke while this was built. It covers four kinds of
@@ -437,6 +448,12 @@ The credential greps may match ordinary words in prose (e.g. "token" in a doc
 sentence) — what you are looking for is a secret *value*, not the word. The
 IPv4 line must list only allowed ranges. Any example IP in a new file must be
 an RFC 5737 documentation address, never a real public one.
+
+Before committing a screenshot, eyeball it: CI only scans text files, never
+images, so a visible address bar, real IP/URL, token, or internal name in a
+screenshot passes CI silently. Quick check — open the file, zoom to 100%, and
+confirm no browser chrome, no address bar, no IP/URL, no token, and no internal
+name is readable. Crop before committing if any is.
 
 ---
 
