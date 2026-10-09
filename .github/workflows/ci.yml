@@ -23,7 +23,20 @@ jobs:
         run: npm run typecheck
 
       - name: Invariant self-test
-        run: npm run selftest
+        run: |
+          set +e
+          npm run selftest 2>&1 | tee /tmp/selftest.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            # Raw Actions logs need a token to read; annotations are readable
+            # from the public check-runs API — so a failure explains itself to
+            # anyone (including a CI-only agent) instead of just turning red.
+            grep -E "FAIL |FAILED|Error|error" /tmp/selftest.log | sed -n '1,25p' | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            echo "::error::Invariant self-test exited with code $code"
+          fi
+          exit "$code"
 
       - name: Build
         run: npm run build
