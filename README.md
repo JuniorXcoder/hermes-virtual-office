@@ -363,6 +363,10 @@ The plan is a real building, and the navigation grid is generated from it:
 - Every enclosed room has a doorway that is open in **both** the model and the navigation
   grid, so nothing is walkable-only-on-paper.
 
+### 🏢 The office as built
+
+![Isometric view of the built office — pool courtyard, gym turf, one work room per division, cafeteria and meeting rooms — with a label over every agent](docs/office-3d.jpg)
+
 ### 📋 Kanban board panel
 
 The **Papan** (board) panel: seven columns — **TODO**, **DIKERJAKAN**, **REVIEW**,
