@@ -324,7 +324,7 @@ does not need because it drives profiles through the kanban CLI.
 { "action": "kill", "name": "carol" }
 ```
 
-- `action`: `"spawn"`, `"hide"`, `"kill"`, `"create"` or `"set-model"` (required)
+- `action`: `"spawn"`, `"hide"`, `"kill"`, `"create"`, `"set-model"`, `"serve"` or `"unserve"` (required)
 - `name`: must be a profile the install knows (required)
 
 Responses:
@@ -734,3 +734,406 @@ adding SSE would mean inventing a second source of truth.
   requests mean many child processes.
 - **`taskLog`** reads only a tail (bounded by the CLI's `--tail`) so a chatty task
   cannot stream unbounded output into the browser.
+
+---
+
+## 19. `GET /api/hermes/agents` — full shape
+
+`§6` shows the short menu. The real payload carries the A2A state, the
+permission table and the restart flag (`src/app/api/hermes/agents/route.ts`
+`GET`, lines 57–153):
+
+```json
+{
+  "available": [
+    {
+      "name": "jun", "total": 7, "profile": true, "inOffice": true,
+      "model": "cmc/deepseek/deepseek-v4.1-flash",
+      "role": "ceo", "division": "exec", "soulExists": true, "domains": [],
+      "a2a": "served", "reason": null
+    }
+  ],
+  "hidden": ["default"],
+  "permissions": { "ceo": { "allow": ["jeda semua", "…"], "deny": [], "anyTask": true } },
+  "domainOwners": { "seo": "mkt-1" },
+  "needsGatewayRestart": true
+}
+```
+
+- `a2a` is the honest status: `served` = listed in `platforms.a2a.agents`,
+  `unlisted` = profile exists but not registered, `null` = not a profile at
+  all. `served` does **not** mean callable — the list is read once at gateway
+  boot, so it applies only after a restart.
+- `needsGatewayRestart` is `boolean | null` from the same comparator the
+  doctor uses (`mtime config.yaml` vs gateway start, `readNeedsGatewayRestart`
+  / `needsRestart` in `src/lib/hermes/doctor.ts`). `null` = cannot be
+  determined — the UI shows grey, never green.
+- `permissions` is `agentPermissionSummary()` from the single table in
+  `src/lib/hermes/control.ts` (`AGENT_PERMISSIONS`).
+- `domainOwners` maps each office domain to its owner via `ownersForDomains`
+  (`src/lib/hermes/a2a.ts`); a domain with no owner is `null` — shown as-is,
+  never invented.
+- `reason` is `hidden` (membership toggle), `unknown` (profile exists but not
+  shown), `no_profile` (assignee with no profile on disk), else `null`.
+
+Raw probe (`GET /api/hermes/agents`, 2026-10-09, trimmed):
+
+```json
+{"available":[{"name":"jun","total":7,"profile":true,"inOffice":true,"model":"cmc/deepseek/deepseek-v4.1-flash","role":"ceo","division":"exec","soulExists":true,"domains":[],"a2a":"served","reason":null},{"name":"mkt-1","total":0,"profile":true,"inOffice":true,"a2a":"served","reason":null}],"hidden":["default"],"permissions":{"ceo":{"allow":["jeda semua","spawn/sembunyikan","kill","buat profil","ganti model","arahkan task","gerakkan task"],"deny":[],"anyTask":true}}}
+```
+
+---
+
+## 20. `POST /api/hermes/agents` with `action: "serve"` / `"unserve"`
+
+Registers or removes the profile's A2A entry (`upsertServedAgent` /
+`removeServedAgent` in `src/lib/hermes/a2a-served.ts`; handler at
+`src/app/api/hermes/agents/route.ts` lines 255–339).
+
+```json
+{ "action": "serve", "name": "jun" }
+```
+
+Success (`200`):
+
+```json
+{
+  "success": true, "action": "serve", "name": "jun",
+  "a2aNote": "Terdaftar. Berlaku setelah gateway di-restart — sampai itu, agent belum bisa dipanggil.",
+  "peerAdded": true, "peerError": null, "peerProfiles": ["mkt-1"],
+  "toolsetAdded": true, "toolsetError": null,
+  "needsGatewayRestart": true
+}
+```
+
+`serve` also registers the `<name>-local` peer (global + every other served
+profile's scope, `ensureA2aPeer`) and merges the `a2a` toolset into the profile
+(`ensureA2aToolset`, never overwrites the list) — so the agent can be CALLED
+and can CALL. Both are idempotent; a failure is reported honestly in
+`peerError` / `toolsetError` **without** undoing the registration.
+`unserve` answers symmetrically with `"Tercabut dari config. Berlaku setelah
+gateway di-restart — sampai itu, path A2A-nya masih dijawab."`
+
+Honest refusals, probed 2026-10-09 (headers
+`Host: 127.0.0.1:3300`, `Origin: http://127.0.0.1:3300`):
+
+- Unknown profile → `400 invalid_request` (handler lines 257–269):
+
+```json
+{"error":{"code":"invalid_request","message":"profil \"zz-tidak-ada-9x9\" tidak dikenal — tidak ada profil di disk untuk didaftarkan","status":400}}
+```
+
+- On-behalf-of an agent → `400 refused` (serve/unserve is operator-only,
+  lines 200–223; `denyAudit` records it):
+
+```json
+{"error":{"code":"refused","message":"hanya operator yang boleh mendaftarkan entri A2A — mengubah config gateway bukan wewenang agent","status":400}}
+```
+
+```json
+{"error":{"code":"refused","message":"hanya operator yang boleh mencabut entri A2A — mengubah config gateway bukan wewenang agent","status":400}}
+```
+
+**"Berlaku setelah gateway di-restart" is load-bearing, not boilerplate.**
+The served list is read once at boot (`peerBaseUrl` / A2A notes in code); a
+green toggle without a restart is a lie the UI must not tell — see
+`POST /api/hermes/gateway-restart` (§23) and the doctor `restart` check (§24).
+
+---
+
+## 21. `GET` / `POST /api/hermes/selfrepair`
+
+The app fixing its own broken state (`src/app/api/hermes/selfrepair/route.ts`;
+logic in `src/lib/hermes/selfrepair.ts`). Both are idempotent: healthy state →
+nothing changes.
+
+`GET` = preview only, read-only, no write guard (like doctor):
+
+```json
+{ "success": true, "planned": [], "unfixable": [] }
+```
+
+`planned[]` items have `kind` (`staleServed` | `deadAvatar` | `dupAvatar` |
+`strayProfileDir` | `danglingProvider` | `missingA2aToolset` |
+`missingA2aPeer`), `target`, and an honest `what` sentence.
+`unfixable[]` items name what is broken plus why this module cannot fix it —
+`null` owner, unreadable source, or "tidak bisa dipastikan" are reported
+verbatim, never swallowed into success.
+
+`POST` = runs the repairs (existing writers only, backup before writing),
+then re-checks the doctor and returns **both** — not a "fixed" claim. Write
+guard required (changes gateway config + office DB):
+
+```json
+{
+  "success": true,
+  "result": {
+    "a2aRemoved": [], "avatarRemoved": [], "avatarMerged": [],
+    "toolsetAdded": [], "peerAdded": [], "providerFixed": [], "dirsRemoved": [],
+    "failed": [{ "target": "…", "why": "…sebab nyata…" }],
+    "unfixable": []
+  },
+  "doctor": { "readAt": "…", "hermesBin": "…", "checks": […] }
+}
+```
+
+Raw probe, healthy host (2026-10-09) — empty plan, empty failures:
+
+- `GET /api/hermes/selfrepair` → `{"success":true,"planned":[],"unfixable":[]}`
+- `POST /api/hermes/selfrepair` →
+  `{"success":true,"result":{"a2aRemoved":[],"avatarRemoved":[],"avatarMerged":[],"toolsetAdded":[],"peerAdded":[],"providerFixed":[],"dirsRemoved":[],"failed":[],"unfixable":[]},"doctor":{"readAt":"2026-10-09T06:18:36.059Z",…}}`
+
+---
+
+## 22. `POST /api/hermes/meeting/cancel`
+
+Cancels the live meeting (`src/app/api/hermes/meeting/cancel/route.ts`;
+`cancelMeeting` in `src/lib/hermes/meeting.ts` lines 589–609). Stops at the
+turn boundary — the running turn finishes, the runner quits before the next
+one, never mid-archive-write. `{ id? }` without id targets the meeting holding
+the execution slot.
+
+Three honest answers, all probed:
+
+- `200 cancel_requested` — new request, flag raised; the runner finalises:
+
+```json
+{ "ok": true, "cancel_requested": true, "meeting": { "id": "m…", "state": "running" } }
+```
+
+- `200 already_cancelled` — idempotent double-cancel (meeting already
+  `done` / `cancelled` / `error`):
+
+```json
+{ "ok": true, "already_cancelled": true, "meeting": { "id": "m…", "state": "cancelled" } }
+```
+
+- `404 no_running_meeting` — no lie of success when nothing runs (probed
+  2026-10-09, empty board):
+
+```json
+{"error":{"code":"no_running_meeting","message":"tidak ada rapat yang berjalan","status":404}}
+```
+
+A still-queued meeting with zero turns finalises immediately so the operator
+never waits on a runner that never started. See `docs/MEETING-PROTOCOL.md`
+for what the archive looks like.
+
+---
+
+## 23. `POST /api/hermes/gateway-restart`
+
+Schedules a gateway restart (`src/app/api/hermes/gateway-restart/route.ts`).
+Why it exists: A2A served entries are read once at boot, so every serve
+demands a restart. The route does NOT restart itself — it schedules the
+`gw-restart.service` unit (own cgroup, PID + port verification, result to
+Telegram) via `systemctl --user start --no-block`.
+
+Write guard applies (privileged action). Without a valid origin → `403`
+(probed 2026-10-09, no `Origin` header):
+
+```json
+{"error":{"code":"forbidden_origin","message":"origin \"(tidak ada)\" tidak diizinkan menulis. Tambahkan \"127.0.0.1:3300\" ke ALLOWED_ORIGINS di .env.local, lalu restart.","status":403}}
+```
+
+Success (same day, valid origin) only means *scheduled*, not restarted:
+
+```json
+{"success":true,"scheduled":true,"message":"Restart dijadwalkan lewat gw-restart.service — halaman ini akan kehilangan sambungan sebentar. Hasilnya (berhasil ATAU gagal) dilaporkan ke Telegram."}
+```
+
+Failure (unit missing, systemctl error) → `502` with `scheduled: false`,
+the real error, and the manual path — never fake success:
+
+```json
+{
+  "success": false, "scheduled": false,
+  "message": "Restart TIDAK dijadwalkan — unit gw-restart.service gagal dijalankan. Jalankan manual dari shell di mesin yang sama:",
+  "manual": ["hermes gateway restart", "systemctl --user start gw-restart.service"],
+  "error": "…"
+}
+```
+
+The manual command is `hermes gateway restart` (portable); the unit is the
+host-specific alternative. Host binary paths are deliberately not written here.
+
+---
+
+## 24. `GET /api/hermes/doctor` — panel "Siap pakai?"
+
+Read-only, changes nothing. The requester's `Host`/`Origin` are forwarded so
+the origin check judges the real browser (`src/app/api/hermes/doctor/route.ts`;
+`runDoctor` in `src/lib/hermes/doctor.ts`). House rule, same as the UI panel:
+what cannot be determined says so (`unknown`) — never a green light for
+"looks fine".
+
+| `id` | What it checks | `fail` means |
+|---|---|---|
+| `cli` | `hermes --version` answers | binary missing / un-runnable |
+| `board` | task list readable via CLI | `HERMES_BIN` / board wrong |
+| `profiles` | ≥1 profile on disk | none at all |
+| `models` | every profile has a default model | chat to the named ones will fail |
+| `model-providers` | `custom:<name>` resolves in the profile's own scope (only when a custom provider is used) | `Unknown provider` at chat time |
+| `simulasi` | `AI_BASE_URL` + `AI_API_KEY` set | simulasi meetings answer "not configured" (a2a needs none of this) |
+| `a2a-platform` | `platforms.a2a` enabled + port | A2A server not up |
+| `served` | served entries fresh (`local:false`), stale ones named not counted | none fresh / stale / `local:true` (wrong identity) |
+| `restart` | `mtime config.yaml` vs gateway start | stored but NOT active — restart |
+| `origin` | requesting browser may write | writes will 403 |
+| `caller` | every served profile has the `a2a` toolset (called + can-call) | reachable but mute — one-way meetings |
+| `peers` | `a2a_agents.<slug>-local` global + in every other served profile's scope | `a2a_call("name")` → `unknown agent` / tool missing from session |
+| `fallthrough` | unknown A2A path refused, never answered by the default agent | fallthrough bug — reinstall `docs/patches/hermes-a2a-unknown-path-404.README.md` |
+
+Three states, all legitimate: `pass` / `fail` / `unknown`. `unknown` is an
+honest answer, e.g. `origin` requested without an `Origin` header (curl,
+server-to-server) — the panel cannot know what a browser would send:
+
+```json
+{"id":"origin","label":"Origin boleh menulis","status":"unknown","detail":"tidak bisa dipastikan — panel diminta tanpa header Origin (buka panel ini dari browser untuk memeriksa)","fix":""}
+```
+
+Full probe (2026-10-09, 13 checks, trimmed details):
+
+```json
+{"readAt":"2026-10-09T06:16:39.968Z","hermesBin":"/usr/local/bin/hermes","checks":[
+{"id":"cli","status":"pass"},{"id":"board","status":"pass"},
+{"id":"profiles","status":"pass"},{"id":"models","status":"pass"},
+{"id":"model-providers","status":"pass"},{"id":"simulasi","status":"pass"},
+{"id":"a2a-platform","status":"pass"},{"id":"served","status":"pass"},
+{"id":"restart","status":"fail","detail":"config.yaml lebih baru dari start gateway — entri served tersimpan tapi BELUM aktif"},
+{"id":"origin","status":"unknown"},
+{"id":"caller","status":"pass"},{"id":"peers","status":"pass"},
+{"id":"fallthrough","status":"pass"}]}
+```
+
+Note the honest combination on a real host: everything green except
+`restart: fail` (a serve is stored but not active yet) and `origin: unknown`
+(probed without a browser). That is the panel telling the truth, not a broken
+panel.
+
+---
+
+## 25. Routes the old spec never mentioned
+
+Every `route.ts` under `src/app/api/hermes` exists and answers; these had no
+section at all. Each mutating route enforces the same-origin write guard
+(`assertLocalWriteRequest`, `src/lib/local-guard.ts`) — reads always work,
+writes without a trusted `Origin` get `403 forbidden_origin`.
+
+### `GET /api/hermes/office` · `POST /api/hermes/office`
+
+The office's own store (`data/office.db` via `src/lib/office/db.ts`) — room
+name and avatar positions. Deliberately separate from the Hermes CLI routes:
+a broken Hermes install still renders the room.
+`GET` seeds the dummy roster on first run (idempotent) → `{ name, avatars }`.
+`POST` actions: `setName`, `saveAvatars` (malformed rows dropped, not fatal),
+`claimAvatar` (one agent = one canonical `agent:<name>` row; needs
+`avatarId` + `name`, else `400`). Unknown action → `400 invalid_request`.
+
+### `GET` / `POST /api/hermes/control` — KENDALI
+
+The only endpoint that changes system state (`src/lib/hermes/control.ts` is
+the single rulebook; the route owns no rules of its own).
+`GET` → `{ pause, estopPath, actions, audit, agentPermissions }`; `pause` is
+read from the `$HERMES_HOME/ESTOP` sentinel — opening the panel can never
+pause the system.
+`POST` runs ONE closed-list action: `pauseAll` (needs a reason ≥3 chars),
+`resumeAll`, `unblock` / `promote` / `release` (need `t_<hex8>` task id;
+`unblock` needs a reason), `setFallback` (chain recomputed server-side from
+measured providers, never taken from the client). Unknown action →
+`400 invalid_request`; rule refusal → `400 refused` (also audit-logged);
+`pauseAll` stops NEW work only — in-flight work is never killed. Replies name
+what happened (`{ ok: true, did, pause }`), never bare "ok".
+
+### `GET /api/hermes/board`
+
+The answering board: `{ board, pause, notRead }`. Detail (`kanban show`,
+~1.4 s each) is fetched only for `blocked`/`running`/`review` tasks, max 40 —
+`notRead` names how many were cut, so the cut is visible, not silent.
+
+### `GET /api/hermes/approvals`
+
+Read-only: `{ policy, patterns, pending, blockedAgents, health, notRead }`.
+No path here approves, refuses, or edits anything — `suggest --apply` is
+never called. Same 40-task detail budget as board.
+
+### `GET /api/hermes/observability?days=30&hours=24`
+
+Read-only command state: `{ health, providers, fallback, status, usage,
+errors, errorsRecent }`. Every section carries `ageSeconds` so the panel can
+call data STALE. Health judges the short window (30 min), not `hours`.
+
+### `GET /api/hermes/toolsets`
+
+The real Hermes toolset list (`hermes tools list --platform cli`, parsed) for
+the create-agent form's `advertised_toolsets` — the form picks from this
+instead of inventing names. → `{ toolsets: [{ name, enabled }] }`; CLI down →
+`503 hermes_unavailable`.
+
+### `GET /api/hermes/a2a/live` · `GET /api/hermes/a2a/transcript`
+
+A2A calls between agents (protocol truth), not meetings. Both read `source='a2a'`
+session exports per profile + `a2a_conversations/ctx-*.jsonl`, memoised 20 s
+(N CLI exports behind them). `live` → `{ pairs, at }` (who is talking to whom
+right now, for avatar movement); `transcript` → the conversations. Failures →
+`502 a2a_live_failed` / `a2a_transcript_failed`.
+
+### Verification & evidence
+
+- `GET /api/hermes/tasks/{id}/verification` — independent check of ONE task:
+  worker claims vs review trail from `kanban show` events. Read failure →
+  `502`, never an empty "unverified".
+- `POST /api/hermes/tasks/verification` — batch marks (`{ ids }` in body
+  because the list rides the body; still read-only): `{ mode: "ringkas",
+  cap: 40, marks }`, ids past the cap are `unchecked` (neutral, not judged).
+- `GET /api/hermes/tasks/{id}/evidence` and `POST
+  /api/hermes/tasks/evidence` — same shape for work evidence (summary, last
+  run outcome + metadata, log, attachments).
+- Unknown task id anywhere → `404` (`not_found` / `invalid_request`), e.g.
+  `GET /api/hermes/tasks/zz-tidak-ada` →
+
+```json
+{"error":{"code":"not_found","message":"tugas \"zz-tidak-ada\" tidak ada di board","status":404}}
+```
+
+### `GET /api/hermes/meeting/actions?from=<id>` · `GET /api/hermes/cron/actions?from=<id>`
+
+Proposals, never writes — creating goes through `POST /api/hermes/tasks`
+(batch shape). Meeting actions parse the minutes' `## TINDAK LANJUT` section
+(live or archived) and resolve each owner against the live roster (`suggested`
+is `null` when the minutes named nobody known — the UI opens the picker
+rather than assigning to nobody; empty items = normal, "agreed nothing").
+Cron actions emit one item only when `failureStreak > 0`, carrying the real
+`lastError`. Unknown id → `404 invalid_request` (probed):
+
+```json
+{"error":{"code":"invalid_request","message":"rapat \"zz-tidak-ada\" tidak ditemukan","status":404}}
+{"error":{"code":"invalid_request","message":"job \"zz\" tidak ditemukan","status":404}}
+```
+
+---
+
+## 26. Corrections to older sections of this same file
+
+Probed against code 2026-10-09; the old text was wrong on these points:
+
+- `§8` action list omitted `serve` / `unserve` (fixed above).
+- `§10`: a second start does **not** queue — `startMeeting`
+  (`src/lib/hermes/meeting.ts`) throws `masih ada rapat yang berjalan` when
+  `busy`, and the route answers `409 meeting_failed`. One meeting per server
+  process; the loser is refused, not queued.
+- `§10` validation today: unknown names are **named** in a `400` (a2a mode
+  uses the serve-reject text naming who), not silently dropped; `<2` known →
+  `400`; unserved participants in a2a mode → `409 meeting_failed` naming who
+  (`missingServed` + `formatReject`, `src/lib/hermes/meeting-a2a.ts`).
+- `§10` modes: `a2a` = real agents, anything else = `simulasi` (the old
+  `roundtable` value in the example request is not a mode — it falls back to
+  `simulasi`). `GET` archives expose the stored `mode` plus `cancelled` and
+  `ctxIds`, which `§9` did not list.
+- Error table (`§1`): the live code also emits `refused` (400, agent
+  permission / operator-only), `no_running_meeting` (404), `no_profile`
+  (409), `forbidden_origin` (403), `not_found` (404), `selfrepair_failed`
+  (502/503), `doctor_failed` / `board_failed` / `approvals_failed` /
+  `observability_failed` / `a2a_live_failed` / `a2a_transcript_failed` /
+  `meeting_actions_failed` / `cron_actions_failed` / `verification_failed` /
+  `evidence_failed` (502/503), `office_db_failed` / `office_write_failed`
+  (500), `no_candidate` (400).
