@@ -36,7 +36,9 @@ const BACKOFF_MS = Number(process.env.MEETING_TURN_BACKOFF_MS || 4000)
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 const AI_KEY = process.env.AI_API_KEY || ''
 const AI_URL = (process.env.AI_BASE_URL || '').replace(/\/$/, '')
-const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini'
+const AI_MODEL = process.env.AI_MODEL || 'gpt-6-luna'
+// Reasoning models reject max_tokens and a non-default temperature; other servers keep them.
+const REASONING_MODEL = /^(gpt-[5-9]|o\d)/.test(AI_MODEL)
 
 /** One meeting at a time per server; a second start is rejected (409), not queued. */
 const meetings = new Map<string, Meeting>()
@@ -249,8 +251,7 @@ async function complete(system: string, user: string): Promise<string> {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    temperature: 0.6,
-    max_tokens: 400,
+    ...(REASONING_MODEL ? { max_completion_tokens: 2000 } : { temperature: 0.6, max_tokens: 400 }),
     // Some gateways stream SSE frames regardless; asking explicitly keeps the
     // body parseable either way because extractContent() handles both.
     stream: false,
