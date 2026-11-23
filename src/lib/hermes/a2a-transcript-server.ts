@@ -20,7 +20,7 @@ import { execFile } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { hermesHome } from './kanban'
+import { hermesHome, mapLimit } from './kanban'
 import {
   dedupeCtxMessages,
   parseCaller,
@@ -217,8 +217,13 @@ export async function readA2aTranscript(profiles: string[]): Promise<A2aTranscri
   const outbound: A2aOutbound[] = []
   const unreadable: string[] = []
 
-  for (const profile of profiles) {
+  // Satu export CLI PER PROFIL, jadi dibatasi: 17 export berurutan terukur ~51s, dan
+  // kantor menayangkannya beberapa detik sekali. Empat sejalin kurang lebih membagi empat.
+  const results = await mapLimit(profiles, 4, async (profile) => {
     const { docs, error } = await exportA2a(profile)
+    return { profile, docs, error }
+  })
+  for (const { profile, docs, error } of results) {
     if (error) {
       unreadable.push(profile)
       continue

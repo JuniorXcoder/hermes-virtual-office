@@ -335,7 +335,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
 
   // Modul berat diimpor malas: kalau CLI mati, doctor tetap bisa menilai
   // origin tanpa menarik seluruh jembatan kanban.
-  const { listProfiles, listTasks, profileModel, profileCustomProviders, hermesHome } = await import('./kanban')
+  const { listProfiles, listTasks, profileModel, profileCustomProviders, hermesHome, mapLimit } = await import('./kanban')
   const { isConfigured } = await import('./meeting')
   const { listServedAgents } = await import('./a2a-served')
 
@@ -410,7 +410,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
       fix: '',
     })
   } else {
-    const models = await Promise.all(profiles.map(async (p) => ({ p, ...(await profileModel(p)) })))
+    const models = await mapLimit(profiles, 4, async (p) => ({ p, ...(await profileModel(p)) }))
     // NOTE: `models` also feeds the dangling-provider verdict below — keep the
     // two loops over the same snapshot, not two separate reads.
     const missing = models.filter((m) => !m.model).map((m) => m.p)
@@ -442,7 +442,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
       })
       .filter((n): n is string => !!n)
     if (customNames.length) {
-      const defs = await Promise.all(profiles.map(async (p) => ({ p, defs: await profileCustomProviders(p) })))
+      const defs = await mapLimit(profiles, 4, async (p) => ({ p, defs: await profileCustomProviders(p) }))
       const dangling: string[] = []
       const unreadable: string[] = []
       for (const m of models) {
@@ -676,9 +676,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
           fix: '',
         })
       } else {
-        const rows = await Promise.all(
-          served.map(async (s) => ({ s, tools: await profileToolsets(s.profile).catch(() => null) })),
-        )
+        const rows = await mapLimit(served, 4, async (s) => ({ s, tools: await profileToolsets(s.profile).catch(() => null) }))
         const mute: string[] = []
         const unreadable: string[] = []
         for (const r of rows) {
@@ -764,9 +762,7 @@ export async function runDoctor(opts: { host: string | null; origin: string | nu
           // 10c. Peer PROFIL: gate tool Hermes baca scope profil — served tanpa
           // peer di profil served lain = tool a2a_call tak muncul di sesinya.
           const { listProfilePeers } = await import('./kanban')
-          const profRows = await Promise.all(
-            served.map(async (s) => ({ s, mine: await listProfilePeers(s.profile).catch(() => null) })),
-          )
+          const profRows = await mapLimit(served, 4, async (s) => ({ s, mine: await listProfilePeers(s.profile).catch(() => null) }))
           const profUnreadable = profRows.filter((r) => r.mine === null).map((r) => r.s.profile)
           const profMissing: string[] = []
           for (const r of profRows) {
