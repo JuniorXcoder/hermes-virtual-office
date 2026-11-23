@@ -198,6 +198,24 @@ export async function previewRepairs(): Promise<RepairPreview> {
         })
       }
     }
+    // Kursi roster hanya sah kalau kosong. Bila nama placeholder cocok dengan profil
+    // nyata, kursi itu sudah diklaim orang — baris `dummy:<div>:<i>` sisa adalah tubuh
+    // KEDUA untuk orang yang sama. Cocokkan nama yang DINORMALISASI, bukan koordinat:
+    // mengklaim memindahkan agent:<name> ke meja kursi, tapi avatar berjalan setelahnya
+    // sehingga posisi kedua baris bisa terpisah. Nama hanya berbeda spasi/huruf —
+    // bandingkan alfanumerik huruf kecil.
+    const norm = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const haveNorm = new Set([...have].map(norm))
+    for (const r of rows) {
+      if (r.kind !== 'dummy' || !isLiveSlot(r)) continue
+      if (haveNorm.has(norm(r.name))) {
+        planned.push({
+          kind: 'deadAvatar',
+          target: r.avatarId,
+          what: `hapus placeholder ganda "${r.avatarId}" (profil "${r.name}" sudah ada)`,
+        })
+      }
+    }
     for (const [name, ids] of findDuplicateAvatars(rows.map((r) => ({ avatarId: r.avatarId, name: r.name })))) {
       // Baris mayat yang ikut terencana hapus jangan dihitung ganda juga.
       const live = ids.filter((id) => !planned.some((p) => p.kind === 'deadAvatar' && p.target === id))
