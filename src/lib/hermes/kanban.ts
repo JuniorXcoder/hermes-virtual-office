@@ -45,6 +45,29 @@ const READ_VERBS = new Set(['list', 'show', 'runs', 'log', 'assignees', 'attachm
 const READ_TTL_MS = 3000
 const readCache = new Map<string, { at: number; out: string }>()
 
+/** Jalankan `fn` untuk `items` dengan paling banyak `limit` sejalan, urutan dipertahankan.
+ *
+ *  Setiap `hermes -p <role> config get …` adalah START CLI penuh, bukan lookup murah.
+ *  Fan-out tanpa batas ke seluruh roster membebani host kecil: 17 pembacaan sejalan
+ *  terukur ~33s masing-masing di kotak 2-vCPU (vs ~3s sendiri) dan melampaui timeout
+ *  baca 20s — tampil sebagai kolom kosong, bukan error. */
+export async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return out
+}
+
 /** Env without the agent-session markers the CLI treats as "inside a worker". */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }

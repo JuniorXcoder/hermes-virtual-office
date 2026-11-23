@@ -9,6 +9,7 @@ import {
   listAssignees,
   listProfiles,
   listTasks,
+  mapLimit,
   profileModel,
   purgeTasks,
   removeA2aPeer,
@@ -76,10 +77,8 @@ export async function GET() {
     // Each profile's default model costs one CLI read (`-p <name> config get
     // model`), so they run in parallel and only for profiles that exist on disk —
     // an assignee left over from a deleted profile has no config to read.
-    const models = await Promise.all(
-      roster.map(async (name) =>
-        profiles.includes(name) ? (await profileModel(name)).model : null,
-      ),
+    const models = await mapLimit(roster, 4, async (name) =>
+      profiles.includes(name) ? (await profileModel(name)).model : null,
     )
     // role/division/soul/domains dari listAgents (baca SOUL.md + fallback keyword).
     const agentMeta = new Map(agents.map((a) => [a.name, a]))
