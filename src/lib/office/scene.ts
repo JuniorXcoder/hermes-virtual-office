@@ -467,7 +467,13 @@ export function createScene(
     for (const row of all) {
       const existing = byName.get(row.name)
       const data = agentByName.get(row.name) ?? dummyAgent(row)
-      const kind: 'dummy' | 'agent' = agentByName.has(row.name) ? 'agent' : 'dummy'
+      // Baris kanonik `agent:<name>` TIDAK PERNAH diturunkan statusnya menjadi dummy.
+      // Hasil baca roster bisa kosong (CLI sempat tak tersedia saat restart gateway);
+      // memercayainya di sini menuliskan `kind:'dummy'` balik ke DB — menghapus catatan
+      // bahwa di kursi itu duduk agent sungguhan. id avatar adalah catatan permanen
+      // siapa yang memakai kursi itu.
+      const kind: 'dummy' | 'agent' =
+        row.avatarId.startsWith('agent:') || agentByName.has(row.name) ? 'agent' : 'dummy'
       if (existing) {
         if (existing.leaving) existing.leaving = false
         const changed =
